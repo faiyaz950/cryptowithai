@@ -1,0 +1,42 @@
+# ── Secrets — never commit ────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Dependencies ──────────────────────────────────────────
+node_modules/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ── Build output ──────────────────────────────────────────
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# ── Local data ────────────────────────────────────────────
+*.sqlite3
+*.db
+
+# ── OS / editor ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Logs ──────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ── Vercel ────────────────────────────────────────────────
+.vercel
+
+# Vite cache
+.vite/
