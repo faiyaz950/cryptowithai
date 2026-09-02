@@ -827,7 +827,7 @@ textarea:focus-visible {
 
 /* Size modifiers — declared last so they win over the base .trade-* rules.
    Tailwind utilities live in @layer utilities and lose to unlayered CSS,
-   so toolbar sizing has to be expressed here rather than as w-*/h-* classes. */
+   so toolbar sizing has to be expressed here rather than as width/height utilities. */
 .trade-size-sm { height: 34px; }
 .trade-w-symbol { width: 100%; }
 .trade-w-bars { width: 78px; }
