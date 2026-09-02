@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Finowings AI — Frontend
 
-## Getting Started
+Next.js 16 app: AI chat, portfolio tracking, and a crypto trading terminal
+(live Delta Exchange candles, EMA overlays, backtesting and strategies).
 
-First, run the development server:
+## Deploying on Vercel
+
+This app lives in a **subdirectory** of the monorepo, so the Vercel project must
+be configured with:
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `arjunai/frontend-nextjs` |
+| Framework Preset | Next.js (auto-detected) |
+
+Leaving Root Directory empty makes Vercel build the repository root, which has no
+app in it — the deployment then serves a `404: NOT_FOUND`.
+
+## Environment variables
+
+Set these in **Project → Settings → Environment Variables**. Each value is the
+public URL of a backend you have deployed; the defaults below only work locally.
+
+| Variable | Points at | Local default |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | `arjunai/backend` (FastAPI, chat/AI) | `http://localhost:8001` |
+| `NEXT_PUBLIC_CRYPTO_API_URL` | `cryptoproject` (Flask) — note the `/api` suffix | `http://127.0.0.1:2000/api` |
+| `CRYPTO_API_URL` | `cryptoproject` — same host, **no** `/api` suffix | `http://127.0.0.1:2000` |
+
+`NEXT_PUBLIC_*` variables are inlined at build time, so changing one requires a
+**redeploy**, not just a save.
+
+Without these the site still builds and renders; the trade page simply reports
+that the backend is offline.
+
+## Local development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Runs on http://127.0.0.1:3003. Copy `.env.example` to `.env.local` first if you
+need to point at non-default backend ports.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The crypto backend is started separately:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+cd ../../cryptoproject && python3 backend_api.py
+```
