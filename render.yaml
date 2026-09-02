@@ -1,0 +1,31 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploys the FastAPI backend. Render reads this file from the repository root.
+services:
+  - type: web
+    name: cryptowithai-backend
+    runtime: python
+    rootDir: arjunai/backend
+    plan: free
+    healthCheckPath: /health
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      # requirements.txt pins fastapi 0.115 / pydantic 2.9, which are built
+      # and tested against 3.12.
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      # sync:false => Render prompts for the value instead of storing it here,
+      # so no key material ever lands in the repository.
+      - key: GEMINI_API_KEY
+        sync: false
+      # Must be the deployed frontend origin, no trailing slash. It is added to
+      # the CORS allow-list; without it the browser blocks every chat request.
+      - key: FRONTEND_URL
+        sync: false
+      # Optional — enable whichever extra providers you want available.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
