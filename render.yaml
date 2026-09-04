@@ -1,31 +1,44 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
-# Deploys the FastAPI backend. Render reads this file from the repository root.
+#
+# Ek hi backend service deploy hoti hai: AI chat (FastAPI) aur crypto trading
+# (Flask) dono `backend/main.py` ke andar mount hain, isliye ek hi process,
+# ek hi URL aur ek hi env var set.
+#
+# Frontend alag se Vercel par jaata hai (Root Directory = frontend).
 services:
   - type: web
-    name: cryptowithai-backend
+    name: cryptoandai-backend
     runtime: python
-    rootDir: arjunai/backend
+    rootDir: backend
     plan: free
     healthCheckPath: /health
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      # requirements.txt pins fastapi 0.115 / pydantic 2.9, which are built
-      # and tested against 3.12.
+      # requirements.txt fastapi 0.115 / pydantic 2.9 par pin hai, jo 3.12 par tested hai.
       - key: PYTHON_VERSION
         value: "3.12.7"
-      # sync:false => Render prompts for the value instead of storing it here,
-      # so no key material ever lands in the repository.
+      # sync:false => Render value maangta hai, repo mein koi key nahi jaati.
+
+      # ── AI chat ─────────────────────────────────────────
       - key: GEMINI_API_KEY
         sync: false
-      # Must be the deployed frontend origin, no trailing slash. It is added to
-      # the CORS allow-list; without it the browser blocks every chat request.
-      - key: FRONTEND_URL
-        sync: false
-      # Optional — enable whichever extra providers you want available.
       - key: OPENAI_API_KEY
         sync: false
       - key: CLAUDE_API_KEY
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      # Deployed frontend ka origin, bina trailing slash. CORS allow-list mein
+      # jaata hai — iske bina browser har chat request block kar dega.
+      - key: FRONTEND_URL
+        sync: false
+
+      # ── Crypto trading (Delta Exchange) ─────────────────
+      - key: DELTA_API_KEY
+        sync: false
+      - key: DELTA_SECRET_KEY
+        sync: false
+      # Session tokens aur stored API keys encrypt karne ke liye.
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
