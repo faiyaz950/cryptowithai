@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...par template commit hona chahiye, warna naye setup ko pata hi nahi chalega
+# ki kaunse vars chahiye.
+!.env.example
 
 # vercel
 .vercel
