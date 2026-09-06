@@ -273,9 +273,23 @@ export async function fetchMarketInfo(symbol: string): Promise<MarketInfo> {
   return cryptoFetch<MarketInfo>(`/market-info?${q}`);
 }
 
-export async function checkCryptoHealth(): Promise<boolean> {
+/**
+ * Free hosting tiers (Render waghairah) instance ko inactivity ke baad so jaane
+ * dete hain, aur jagne mein 50-90 second lag jaate hain. Pehle yahan 3s ka
+ * timeout tha — jo localhost par theek tha, par sote hue backend par hamesha
+ * fail hota tha aur UI "Backend offline" dikha deta tha jabki backend bilkul
+ * theek hota tha, bas jag raha hota tha.
+ */
+const HEALTH_TIMEOUT_MS = 90_000;
+
+/** Local dev backend hai ya deployed? Error messages isse tay hote hain. */
+export function isLocalBackend(): boolean {
+  return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(CRYPTO_API);
+}
+
+export async function checkCryptoHealth(timeoutMs = HEALTH_TIMEOUT_MS): Promise<boolean> {
   try {
-    const res = await fetch(`${CRYPTO_API}/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${CRYPTO_API}/health`, { signal: AbortSignal.timeout(timeoutMs) });
     return res.ok;
   } catch {
     return false;

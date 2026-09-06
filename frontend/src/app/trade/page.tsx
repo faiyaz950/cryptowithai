@@ -27,6 +27,7 @@ import {
   candlesSpanDays,
   checkCryptoHealth,
   fetchCandles,
+  isLocalBackend,
   fetchDeltaPositions,
   fetchDemoOrders,
   fetchMarketInfo,
@@ -130,6 +131,9 @@ function TradeTerminal() {
       setCandles(candleRes.candles ?? []);
       setMarket(info?.success ? info : null);
       setUpdatedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      // Data aa gaya matlab backend zinda hai — health check ke jawab ka intezaar
+      // karne ki zarurat nahi (sote hue instance par wo 90s tak le sakta hai).
+      setOnline(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Crypto backend connect nahi ho raha (port 2000)");
       setCandles([]);
@@ -309,8 +313,17 @@ function TradeTerminal() {
           <div className="trade-panel flex items-start gap-3 px-4 py-3 text-[13px]" style={{ borderColor: "rgba(217, 119, 6, 0.3)", background: "rgba(217, 119, 6, 0.05)" }}>
             <Activity className="w-4 h-4 mt-0.5 flex-none" style={{ color: "var(--amber)" }} />
             <span style={{ color: "var(--text-secondary)" }}>
-              Backend band hai. Repo ke <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>backend</code>{" "}folder mein{" "}
-              <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>uvicorn main:app --port 8000</code>{" "}chalao.
+              {isLocalBackend() ? (
+                <>
+                  Backend band hai. Repo ke <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>backend</code>{" "}folder mein{" "}
+                  <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>uvicorn main:app --port 8000</code>{" "}chalao.
+                </>
+              ) : (
+                <>
+                  Backend se jawab nahi mila. Free hosting par instance so jaata hai aur
+                  jagne mein ek minute tak lag sakta hai — <b>Refresh</b> dabakar dobara koshish karein.
+                </>
+              )}
             </span>
           </div>
         )}
