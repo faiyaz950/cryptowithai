@@ -70,6 +70,12 @@ function fmtDay(timeMs: number): string {
 export default function StrategyRunner({ def, initialValues, onActiveChange }: Props) {
   const router = useRouter();
   const [values, setValues] = useState<StrategyValues>(initialValues);
+  /**
+   * Bhaari kaam (indicators + 4000-bar chart redraw + option chain fetch) har
+   * keystroke par chalta tha, jisse number fields mein type karna atakta tha.
+   * Inputs `values` par turant chalte hain; analysis typing rukne ke baad.
+   */
+  const [settledValues, setSettledValues] = useState<StrategyValues>(initialValues);
   const [active, setActive] = useState(false);
 
   // Chart kitne din pehle tak dikhaye — default backtest window ke barabar.
@@ -134,7 +140,12 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
 
   /* ── Analysis ────────────────────────────────────────── */
 
-  const analysis = useMemo(() => def.analyze(candles, values), [def, candles, values]);
+  useEffect(() => {
+    const id = window.setTimeout(() => setSettledValues(values), 250);
+    return () => window.clearTimeout(id);
+  }, [values]);
+
+  const analysis = useMemo(() => def.analyze(candles, settledValues), [def, candles, settledValues]);
   const { signal, overlays } = analysis;
 
   // Signal badalne par hi log likho, har poll par nahi.
@@ -432,7 +443,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
           </div>
         </section>
 
-        {def.optionChain && <OptionChainPanel def={def} values={values} tone={signal.tone} />}
+        {def.optionChain && <OptionChainPanel def={def} values={settledValues} tone={signal.tone} />}
 
         {def.backtestable !== false && (
           <BacktestResults

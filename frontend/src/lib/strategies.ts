@@ -934,9 +934,13 @@ const otmDirectional: StrategyDef = {
     const score = checks.filter((c) => c.ok).length;
     const failed = checks.filter((c) => !c.ok).map((c) => c.label);
 
+    // VWAP ek hi baar — pehle ye map ke andar tha, matlab har candle ke liye
+    // poori series dobara banti thi (4000 candles = ~1.6 crore operations har
+    // render par). Chart overlay entry timeframe ka VWAP dikhata hai.
+    const entryVwap = vwap(candles);
     const decorated = attachEma(candles, [fast, slow]).map((candle, i) => ({
       ...candle,
-      vwap: vwap(candles)[i],
+      vwap: entryVwap[i],
     })) as Candle[];
 
     let signal: LiveSignal;
