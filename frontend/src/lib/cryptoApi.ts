@@ -417,6 +417,13 @@ export interface OptionContract {
   hours_to_expiry: number | null;
   delta: number;
   abs_delta: number;
+  /** Per din premium decay (USD). OTM buying mein sabse bada risk. */
+  theta: number | null;
+  /** Per 1% IV point premium change. */
+  vega: number | null;
+  /** Per $1 spot move delta kitna badlega. */
+  gamma: number | null;
+  rho: number | null;
   iv: number | null;
   premium: number | null;
   best_bid: number | null;
