@@ -1,7 +1,19 @@
-import { BarChart3, Boxes, Gauge, TrendingUp, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, Boxes, Gauge, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
 import type { BacktestParams, Candle } from "./cryptoApi";
-import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS } from "./cryptoApi";
-import { crossDirection, ema, findDivergence, macd, rsi } from "./indicators";
+import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, intervalMinutes } from "./cryptoApi";
+import {
+  adx,
+  averageVolume,
+  crossDirection,
+  ema,
+  findDivergence,
+  lastSwingHigh,
+  lastSwingLow,
+  macd,
+  resample,
+  rsi,
+  vwap,
+} from "./indicators";
 
 const RANGE_COLOR = "#0891b2";
 
@@ -75,6 +87,18 @@ export interface StrategyDef {
   defaults: StrategyValues;
   /** Backend engine strategy ko kaise chalata hai — jahan approximation hai wahan honest note. */
   engineNote?: string;
+  /**
+   * `false` ho to backtest button chhupta hai. Kuch strategies (jaise options
+   * wali) ko humara candle-based engine imaandari se backtest nahi kar sakta —
+   * galat number dikhane se behtar hai kuch na dikhana.
+   */
+  backtestable?: boolean;
+  /** Signal aane par option chain se strike bhi chunna hai? */
+  optionChain?: {
+    /** Bullish signal par kaunsa option — call ya put. */
+    bullish: "call" | "put";
+    bearish: "call" | "put";
+  };
   analyze: (candles: Candle[], values: StrategyValues) => StrategyAnalysis;
   toBacktest: (values: StrategyValues) => BacktestParams;
 }
@@ -759,7 +783,211 @@ const rangeBreakout: StrategyDef = {
   },
 };
 
-export const STRATEGIES: StrategyDef[] = [emaCrossover, rsiDivergence, macdStrategy, customEma, rangeBreakout];
+/**
+ * Strategy A — OTM Directional Option Buying.
+ *
+ * Spec "app algo strategy.docx" se: 15M par market regime tay hota hai, 5M par
+ * entry confirm hoti hai, aur 6-point entry score minimum 5/6 hona chahiye tabhi
+ * trade. Strike fixed "5% OTM" se nahi, Delta band (0.25-0.35) se chunta hai —
+ * wo kaam option chain panel karta hai.
+ *
+ * Regime timeframe = entry timeframe x3 (doc ka 5M/15M pair). Candles ek hi baar
+ * entry timeframe par aati hain aur 15M unhi se resample hota hai, isliye dono
+ * hamesha ek hi data par bane rehte hain.
+ */
+const otmDirectional: StrategyDef = {
+  id: "otm-directional",
+  name: "OTM Directional",
+  category: "Options · directional",
+  blurb:
+    "15M par trend regime (EMA + VWAP + ADX), 5M par breakout entry. Strong bullish par OTM Call, strong bearish par OTM Put.",
+  logic:
+    "Pehle 15M par regime: EMA 9 > EMA 21, price VWAP ke upar, aur ADX 20 se upar — tabhi market ko trending maana jata hai. Phir 5M par entry confirmation: EMA 9 > EMA 21, price recent swing high ke upar close kare, aur volume average se zyada ho. Chhe conditions ka score banta hai aur kam se kam 5/6 chahiye. Bearish taraf sab ulta — SELL nahi, OTM Put buy. Strike Delta 0.25-0.35 band se chunta hai, fixed percentage se nahi.",
+  accent: "#7c3aed",
+  icon: Target,
+  backtestable: false,
+  optionChain: { bullish: "call", bearish: "put" },
+  engineNote:
+    "Ye options strategy hai — humara backtest engine sirf perpetual candles par chalta hai, isliye iska backtest button nahi hai. Signal engine poora doc ke hisaab se hai; premium par SL/target aur time-exit rules parameters mein hain par unhe execute karne ke liye options order routing chahiye, jo abhi nahi hai.",
+  fields: [
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 100, onCard: true },
+    { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 3, max: 200, onCard: true },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "adx_min", label: "ADX minimum", kind: "number", group: "signal", min: 10, max: 60, onCard: true, hint: "Isse neeche market range-bound maana jata hai." },
+    { key: "volume_lookback", label: "Volume average · bars", kind: "number", group: "signal", min: 5, max: 100 },
+    { key: "swing_span", label: "Swing span · bars", kind: "number", group: "signal", min: 1, max: 10 },
+    { key: "min_score", label: "Minimum score (of 6)", kind: "number", group: "signal", min: 3, max: 6 },
+    ...marketFields,
+    { key: "delta_min", label: "Strike delta · min", kind: "number", group: "risk", min: 0.05, max: 0.9, step: 0.01 },
+    { key: "delta_max", label: "Strike delta · max", kind: "number", group: "risk", min: 0.05, max: 0.9, step: 0.01 },
+    { key: "sl_premium_pct", label: "Stop loss · % premium", kind: "number", group: "risk", min: 10, max: 90, hint: "Doc: 40-50% premium loss par exit." },
+    { key: "tp1_pct", label: "Partial book · % gain", kind: "number", group: "risk", min: 20, max: 500, hint: "+100% par aadhi quantity book." },
+    { key: "tp2_pct", label: "Final target · % gain", kind: "number", group: "risk", min: 20, max: 1000 },
+    { key: "time_exit_hours", label: "Expiry se pehle exit · hours", kind: "number", group: "risk", min: 0.5, max: 24, step: 0.5 },
+    { key: "max_spread_pct", label: "Max bid/ask spread · %", kind: "number", group: "risk", min: 0.5, max: 30, step: 0.5 },
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "5m",
+    ema_fast: 9,
+    ema_slow: 21,
+    adx_period: 14,
+    adx_min: 20,
+    volume_lookback: 20,
+    swing_span: 3,
+    min_score: 5,
+    delta_min: 0.25,
+    delta_max: 0.35,
+    sl_premium_pct: 45,
+    tp1_pct: 100,
+    tp2_pct: 200,
+    time_exit_hours: 2,
+    max_spread_pct: 5,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const slow = num(values, "ema_slow", 21);
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMin = num(values, "adx_min", 20);
+    const volLookback = num(values, "volume_lookback", 20);
+    const span = Math.max(1, num(values, "swing_span", 3));
+    const minScore = num(values, "min_score", 5);
+
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+      { key: "vwap", label: "VWAP", color: THIRD_COLOR },
+    ];
+
+    // Regime timeframe = entry ka 3x (5M -> 15M), doc ke pair ke hisaab se.
+    const entryMinutes = intervalMinutes(str(values, "timeframe", "5m"));
+    const regime = resample(candles, entryMinutes * 3);
+    if (candles.length < 60 || regime.length < adxPeriod * 2 + 2) {
+      return emptyAnalysis(candles, overlays);
+    }
+
+    // ── 15M regime ──────────────────────────────────────
+    const rCloses = regime.map((c) => c.close);
+    const rFast = ema(rCloses, fast);
+    const rSlow = ema(rCloses, slow);
+    const rVwap = vwap(regime);
+    const rAdx = adx(regime, adxPeriod);
+    const rLast = regime.length - 1;
+
+    const emaFastNow = rFast[rLast];
+    const emaSlowNow = rSlow[rLast];
+    const vwapNow = rVwap[rLast];
+    const adxNow = rAdx[rLast].adx;
+    const regimePrice = regime[rLast].close;
+    // Doc section 3/4: core conditions ke upar "additional confirmation" —
+    // EMA 9 ka slope bhi bias ki taraf hona chahiye, tabhi regime maana jayega.
+    const emaSlopeUp = rFast[rLast] > rFast[rLast - 1];
+    const emaSlopeDown = rFast[rLast] < rFast[rLast - 1];
+    const regimeAvgVol = averageVolume(regime, volLookback);
+    const regimeVolOk = regimeAvgVol != null && regime[rLast].volume > regimeAvgVol;
+
+    const trendUp = emaFastNow > emaSlowNow;
+    const aboveVwap = vwapNow != null && regimePrice > vwapNow;
+    const belowVwap = vwapNow != null && regimePrice < vwapNow;
+    const adxOk = adxNow != null && adxNow >= adxMin;
+
+    // ── 5M entry ────────────────────────────────────────
+    const closes = candles.map((c) => c.close);
+    const eFast = ema(closes, fast);
+    const eSlow = ema(closes, slow);
+    const last = candles.length - 1;
+    const entryPrice = candles[last].close;
+    const entryTrendUp = eFast[last] > eSlow[last];
+    const avgVol = averageVolume(candles, volLookback);
+    const volOk = avgVol != null && (candles[last].volume ?? 0) > avgVol;
+    // Swing pivot mein aakhri `span` bars abhi confirm nahi hote, isliye breakout
+    // check unse pehle wale confirmed swing ke against hota hai.
+    const swingHigh = lastSwingHigh(candles, span);
+    const swingLow = lastSwingLow(candles, span);
+    const brokeHigh = swingHigh != null && entryPrice > swingHigh;
+    const brokeLow = swingLow != null && entryPrice < swingLow;
+
+    const bullish = trendUp && aboveVwap && emaSlopeUp;
+    const bearish = !trendUp && belowVwap && emaSlopeDown;
+    const direction: "bull" | "bear" | null = bullish ? "bull" : bearish ? "bear" : null;
+    // Slope ke alawa sab theek ho to user ko wajah dikhni chahiye.
+    const slopeBlocked = !direction && ((trendUp && aboveVwap) || (!trendUp && belowVwap));
+
+    // ── Entry score (doc: 6 confirmations, minimum 5) ───
+    const checks = direction === "bear"
+      ? [
+          { label: `EMA ${fast} < EMA ${slow} (15M)`, ok: !trendUp },
+          { label: "Price < VWAP (15M)", ok: belowVwap },
+          { label: `ADX >= ${adxMin}`, ok: adxOk },
+          { label: "Volume confirmation", ok: volOk || regimeVolOk },
+          { label: "Swing low breakdown", ok: brokeLow },
+          { label: "Entry timeframe confirmation", ok: !entryTrendUp },
+        ]
+      : [
+          { label: `EMA ${fast} > EMA ${slow} (15M)`, ok: trendUp },
+          { label: "Price > VWAP (15M)", ok: aboveVwap },
+          { label: `ADX >= ${adxMin}`, ok: adxOk },
+          { label: "Volume confirmation", ok: volOk || regimeVolOk },
+          { label: "Swing high breakout", ok: brokeHigh },
+          { label: "Entry timeframe confirmation", ok: entryTrendUp },
+        ];
+    const score = checks.filter((c) => c.ok).length;
+    const failed = checks.filter((c) => !c.ok).map((c) => c.label);
+
+    const decorated = attachEma(candles, [fast, slow]).map((candle, i) => ({
+      ...candle,
+      vwap: vwap(candles)[i],
+    })) as Candle[];
+
+    let signal: LiveSignal;
+    if (!adxOk) {
+      signal = {
+        headline: "NO TRADE — market trending nahi hai",
+        detail: `ADX ${adxNow?.toFixed(1) ?? "—"} aur threshold ${adxMin} hai. Range regime mein ye strategy entry nahi leti.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else if (direction === "bull" && score >= minScore) {
+      signal = {
+        headline: "BUY CALL — bullish setup confirmed",
+        detail: `Entry score ${score}/6. Strike Delta ${num(values, "delta_min", 0.25)}-${num(values, "delta_max", 0.35)} band se — neeche option chain dekhein.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (direction === "bear" && score >= minScore) {
+      signal = {
+        headline: "BUY PUT — bearish setup confirmed",
+        detail: `Entry score ${score}/6. Strike Delta ${num(values, "delta_min", 0.25)}-${num(values, "delta_max", 0.35)} band se — neeche option chain dekhein.`,
+        tone: "sell",
+        readouts: [],
+      };
+    } else {
+      const bias = direction === "bull" ? "Bullish" : direction === "bear" ? "Bearish" : "Mixed";
+      const reasons = [...failed];
+      if (slopeBlocked) reasons.push(`EMA ${fast} ka slope bias ke against hai`);
+      signal = {
+        headline: `${bias} — abhi entry nahi (${score}/6)`,
+        detail: reasons.length ? `Baaki hai: ${reasons.join(", ")}.` : `Minimum ${minScore}/6 chahiye.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Entry score", value: `${score}/6`, color: score >= minScore ? "var(--green)" : "var(--text-primary)" },
+      { label: `ADX ${adxPeriod} (15M)`, value: adxNow?.toFixed(1) ?? "—", color: adxOk ? "var(--green)" : "var(--red)" },
+      { label: "VWAP (15M)", value: price(vwapNow), color: THIRD_COLOR },
+      { label: "Price", value: price(candles[last].close) },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    // backtestable: false hai, par interface ke liye sabse nazdeek mapping.
+    return { ...baseParams(values), ema9: num(values, "ema_fast", 9), ema21: num(values, "ema_slow", 21), ema50: num(values, "ema_slow", 21) };
+  },
+};
+
+export const STRATEGIES: StrategyDef[] = [emaCrossover, rsiDivergence, macdStrategy, customEma, rangeBreakout, otmDirectional];
 
 export function getStrategy(id: string | undefined): StrategyDef | undefined {
   return STRATEGIES.find((s) => s.id === id);

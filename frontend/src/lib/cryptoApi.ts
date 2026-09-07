@@ -409,6 +409,65 @@ export async function fetchScreener(params: {
   return cryptoFetch<ScreenerResponse>(`/screener?${q}`);
 }
 
+export interface OptionContract {
+  symbol: string;
+  strike: number;
+  spot: number | null;
+  expiry: string | null;
+  hours_to_expiry: number | null;
+  delta: number;
+  abs_delta: number;
+  iv: number | null;
+  premium: number | null;
+  best_bid: number | null;
+  best_ask: number | null;
+  spread_pct: number | null;
+  oi: number;
+  oi_value_usd: number;
+  volume: number;
+  turnover_usd: number;
+  rejected_for: string[];
+}
+
+export interface OptionChainResponse {
+  success: boolean;
+  underlying: string;
+  option_type: "call" | "put";
+  delta_band: [number, number];
+  selected: OptionContract | null;
+  candidates: OptionContract[];
+  rejected: OptionContract[];
+  total_scanned: number;
+  error?: string;
+}
+
+/** Underlying symbol se option chain ka underlying nikalo: BTCUSDT -> BTC. */
+export function optionUnderlying(symbol: string): string {
+  return symbol.toUpperCase().replace(/USDT?$/, "").replace(/^1000/, "");
+}
+
+/**
+ * Directional option buying ke liye chain — backend delta band aur liquidity
+ * filters laga kar ek `selected` strike bhi de deta hai.
+ */
+export async function fetchOptionChain(params: {
+  underlying: string;
+  optionType: "call" | "put";
+  minDelta: number;
+  maxDelta: number;
+  maxSpreadPct?: number;
+}): Promise<OptionChainResponse> {
+  const q = new URLSearchParams({
+    underlying: params.underlying,
+    option_type: params.optionType,
+    min_delta: String(params.minDelta),
+    max_delta: String(params.maxDelta),
+  });
+  if (params.maxSpreadPct != null) q.set("max_spread_pct", String(params.maxSpreadPct));
+  return cryptoFetch<OptionChainResponse>(`/options/chain?${q}`);
+}
+
 export function symbolLabel(symbol: string): string {
+
   return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace("USDT", "/USDT");
 }

@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Activity, AlertCircle, Info, Play, Power, RefreshCw, RotateCcw } from "lucide-react";
 import BacktestResults from "@/components/trade/BacktestResults";
+import OptionChainPanel from "@/components/trade/OptionChainPanel";
 import {
   CHART_RANGES,
   CRYPTO_INTERVALS,
@@ -254,14 +255,16 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
                 Activate live monitor
               </button>
             )}
-            <button
-              type="button"
-              disabled={btRunning}
-              className="trade-btn trade-btn-ghost trade-btn-lg w-full"
-              onClick={() => void handleBacktest()}
-            >
-              {btRunning ? "Backtest chal raha hai…" : "Run backtest"}
-            </button>
+            {def.backtestable !== false && (
+              <button
+                type="button"
+                disabled={btRunning}
+                className="trade-btn trade-btn-ghost trade-btn-lg w-full"
+                onClick={() => void handleBacktest()}
+              >
+                {btRunning ? "Backtest chal raha hai…" : "Run backtest"}
+              </button>
+            )}
           </div>
 
           {def.engineNote && (
@@ -429,13 +432,17 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
           </div>
         </section>
 
-        <BacktestResults
-          running={btRunning}
-          result={btResult}
-          fallbackSymbol={symbol}
-          fallbackTimeframe={timeframe}
-          emptyHint={<>Left panel se parameters set karke <b>Run backtest</b>{" "}dabao — trades, win rate aur P&amp;L yahan aayenge.</>}
-        />
+        {def.optionChain && <OptionChainPanel def={def} values={values} tone={signal.tone} />}
+
+        {def.backtestable !== false && (
+          <BacktestResults
+            running={btRunning}
+            result={btResult}
+            fallbackSymbol={symbol}
+            fallbackTimeframe={timeframe}
+            emptyHint={<>Left panel se parameters set karke <b>Run backtest</b>{" "}dabao — trades, win rate aur P&amp;L yahan aayenge.</>}
+          />
+        )}
       </div>
     </div>
   );
