@@ -474,6 +474,60 @@ export async function fetchOptionChain(params: {
   return cryptoFetch<OptionChainResponse>(`/options/chain?${q}`);
 }
 
+export interface SpreadLeg extends OptionContract {
+  expiry_key: string;
+}
+
+export interface DebitSpread {
+  expiry: string | null;
+  hours_to_expiry: number | null;
+  spot: number | null;
+  long_leg: SpreadLeg;
+  short_leg: SpreadLeg;
+  width: number;
+  net_debit: number;
+  net_debit_mark: number;
+  max_loss: number;
+  max_profit: number;
+  risk_reward: number | null;
+  breakeven: number;
+  net_delta: number | null;
+  net_theta: number | null;
+  net_vega: number | null;
+  net_gamma: number | null;
+  liquidity_usd: number;
+}
+
+export interface SpreadResponse {
+  success: boolean;
+  underlying: string;
+  option_type: "call" | "put";
+  strategy: "bull_call_spread" | "bear_put_spread";
+  requested_width: number;
+  selected: DebitSpread | null;
+  alternatives: DebitSpread[];
+  expiries_scanned: number;
+  error?: string;
+}
+
+/** Debit spread (Strategy B) ke liye dono legs — backend hi strikes chunta hai. */
+export async function fetchOptionSpread(params: {
+  underlying: string;
+  optionType: "call" | "put";
+  width: number;
+  longDelta: number;
+  maxSpreadPct?: number;
+}): Promise<SpreadResponse> {
+  const q = new URLSearchParams({
+    underlying: params.underlying,
+    option_type: params.optionType,
+    width: String(params.width),
+    long_delta: String(params.longDelta),
+  });
+  if (params.maxSpreadPct != null) q.set("max_spread_pct", String(params.maxSpreadPct));
+  return cryptoFetch<SpreadResponse>(`/options/spread?${q}`);
+}
+
 export function symbolLabel(symbol: string): string {
 
   return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace("USDT", "/USDT");

@@ -1,4 +1,4 @@
-import { BarChart3, Boxes, Gauge, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, Boxes, Gauge, Layers, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
 import type { BacktestParams, Candle } from "./cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, intervalMinutes } from "./cryptoApi";
 import {
@@ -93,6 +93,11 @@ export interface StrategyDef {
    * galat number dikhane se behtar hai kuch na dikhana.
    */
   backtestable?: boolean;
+  /** Signal aane par debit spread ke dono legs chunne hain? */
+  optionSpread?: {
+    bullish: "call" | "put";
+    bearish: "call" | "put";
+  };
   /** Signal aane par option chain se strike bhi chunna hai? */
   optionChain?: {
     /** Bullish signal par kaunsa option — call ya put. */
@@ -991,7 +996,206 @@ const otmDirectional: StrategyDef = {
   },
 };
 
-export const STRATEGIES: StrategyDef[] = [emaCrossover, rsiDivergence, macdStrategy, customEma, rangeBreakout, otmDirectional];
+/**
+ * Strategy B — Debit Spreads (Bull Call / Bear Put).
+ *
+ * Spec doc section 11-14. Strategy A se teen farq hain:
+ *  1. ADX band 20-30 — ye "moderate" trend ke liye hai. Bahut strong momentum
+ *     (ADX 30+) par spread ka short leg upside kaat deta hai, wahan naked buy
+ *     (Strategy A) behtar baithti hai.
+ *  2. Do legs — near-the-money BUY + `width` door SELL.
+ *  3. Risk math capped hai: max loss = net debit, max profit = width - debit.
+ *     Exits bhi usi par lagte hain, premium % par nahi.
+ */
+const debitSpread: StrategyDef = {
+  id: "debit-spread",
+  name: "Debit Spread",
+  category: "Options · moderate trend",
+  blurb:
+    "Moderate trend (ADX 20-30) par do-leg spread: bullish mein Bull Call, bearish mein Bear Put. Risk aur reward dono capped.",
+  logic:
+    "Trend ho par bahut strong na ho — 15M par EMA 9 > EMA 21, price VWAP ke upar, aur ADX 20 se 30 ke beech. 5M par breakout aur volume confirmation. Tab near-the-money call BUY karke usse upar wali call SELL kar dete hain (Bull Call Spread); bearish mein put ke saath ulta (Bear Put Spread). Short leg premium ghatata hai, theta ka nuksaan kam karta hai, par profit bhi cap kar deta hai — maximum profit = strike width minus net debit. Exit: debit ka 40-50% doob jaaye to SL, maximum profit ka 70-80% mil jaaye to book, aur expiry se 1-2 ghante pehle mandatory.",
+  accent: "#0891b2",
+  icon: Layers,
+  backtestable: false,
+  optionSpread: { bullish: "call", bearish: "put" },
+  engineNote:
+    "Ye do-leg options strategy hai — candle-based backtest engine ise imaandari se test nahi kar sakta, isliye backtest button nahi hai. Legs, debit, breakeven aur R:R live chain se aate hain; orders khud lagane honge.",
+  fields: [
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 100, onCard: true },
+    { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 3, max: 200, onCard: true },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "adx_min", label: "ADX minimum", kind: "number", group: "signal", min: 5, max: 60, onCard: true },
+    { key: "adx_max", label: "ADX maximum", kind: "number", group: "signal", min: 10, max: 90, onCard: true, hint: "Isse upar trend strong hai — wahan naked buy behtar." },
+    { key: "volume_lookback", label: "Volume average · bars", kind: "number", group: "signal", min: 5, max: 100 },
+    { key: "swing_span", label: "Swing span · bars", kind: "number", group: "signal", min: 1, max: 10 },
+    { key: "min_score", label: "Minimum score (of 5)", kind: "number", group: "signal", min: 2, max: 5 },
+    ...marketFields,
+    { key: "spread_width", label: "Strike width", kind: "number", group: "risk", min: 100, step: 100, hint: "Dono strikes ke beech ka fasla — max profit isi se bandha hai." },
+    { key: "long_delta", label: "Long leg delta", kind: "number", group: "risk", min: 0.2, max: 0.8, step: 0.05, hint: "0.5 = near the money, jaisa doc ka example." },
+    { key: "sl_debit_pct", label: "Stop loss · % of debit", kind: "number", group: "risk", min: 10, max: 90, hint: "Doc: debit ka 40-50% doobne par exit." },
+    { key: "tp_max_profit_pct", label: "Target · % of max profit", kind: "number", group: "risk", min: 20, max: 100, hint: "Doc: max profit ka 70-80%." },
+    { key: "time_exit_hours", label: "Expiry se pehle exit · hours", kind: "number", group: "risk", min: 0.5, max: 24, step: 0.5 },
+    { key: "max_spread_pct", label: "Max bid/ask spread · %", kind: "number", group: "risk", min: 0.5, max: 30, step: 0.5 },
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "5m",
+    ema_fast: 9,
+    ema_slow: 21,
+    adx_period: 14,
+    adx_min: 20,
+    adx_max: 30,
+    volume_lookback: 20,
+    swing_span: 3,
+    min_score: 4,
+    spread_width: 2000,
+    long_delta: 0.5,
+    sl_debit_pct: 45,
+    tp_max_profit_pct: 75,
+    time_exit_hours: 1.5,
+    max_spread_pct: 8,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const slow = num(values, "ema_slow", 21);
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMin = num(values, "adx_min", 20);
+    const adxMax = num(values, "adx_max", 30);
+    const volLookback = num(values, "volume_lookback", 20);
+    const span = Math.max(1, num(values, "swing_span", 3));
+    const minScore = num(values, "min_score", 4);
+
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+      { key: "vwap", label: "VWAP", color: THIRD_COLOR },
+    ];
+
+    const entryMinutes = intervalMinutes(str(values, "timeframe", "5m"));
+    const regime = resample(candles, entryMinutes * 3);
+    if (candles.length < 60 || regime.length < adxPeriod * 2 + 2) {
+      return emptyAnalysis(candles, overlays);
+    }
+
+    const rCloses = regime.map((c) => c.close);
+    const rFast = ema(rCloses, fast);
+    const rSlow = ema(rCloses, slow);
+    const rVwap = vwap(regime);
+    const rAdx = adx(regime, adxPeriod);
+    const rLast = regime.length - 1;
+
+    const vwapNow = rVwap[rLast];
+    const adxNow = rAdx[rLast].adx;
+    const regimePrice = regime[rLast].close;
+    const regimeAvgVol = averageVolume(regime, volLookback);
+    const regimeVolOk = regimeAvgVol != null && regime[rLast].volume > regimeAvgVol;
+
+    const trendUp = rFast[rLast] > rSlow[rLast];
+    const aboveVwap = vwapNow != null && regimePrice > vwapNow;
+    const belowVwap = vwapNow != null && regimePrice < vwapNow;
+    // Yahi Strategy A se asli farq hai — band, threshold nahi.
+    const adxInBand = adxNow != null && adxNow >= adxMin && adxNow <= adxMax;
+    const adxTooStrong = adxNow != null && adxNow > adxMax;
+
+    const entryVwap = vwap(candles);
+    const closes = candles.map((c) => c.close);
+    const eFast = ema(closes, fast);
+    const eSlow = ema(closes, slow);
+    const last = candles.length - 1;
+    const entryPrice = candles[last].close;
+    const entryTrendUp = eFast[last] > eSlow[last];
+    const avgVol = averageVolume(candles, volLookback);
+    const volOk = avgVol != null && (candles[last].volume ?? 0) > avgVol;
+    const swingHigh = lastSwingHigh(candles, span);
+    const swingLow = lastSwingLow(candles, span);
+    const brokeHigh = swingHigh != null && entryPrice > swingHigh;
+    const brokeLow = swingLow != null && entryPrice < swingLow;
+
+    const direction: "bull" | "bear" | null =
+      trendUp && aboveVwap ? "bull" : !trendUp && belowVwap ? "bear" : null;
+
+    // Doc section 12 ki 5 conditions.
+    const checks = direction === "bear"
+      ? [
+          { label: `EMA ${fast} < EMA ${slow} (15M)`, ok: !trendUp },
+          { label: "Price < VWAP (15M)", ok: belowVwap },
+          { label: `ADX ${adxMin}-${adxMax} band mein`, ok: adxInBand },
+          { label: "Swing low breakdown (5M)", ok: brokeLow && !entryTrendUp },
+          { label: "Volume confirmation", ok: volOk || regimeVolOk },
+        ]
+      : [
+          { label: `EMA ${fast} > EMA ${slow} (15M)`, ok: trendUp },
+          { label: "Price > VWAP (15M)", ok: aboveVwap },
+          { label: `ADX ${adxMin}-${adxMax} band mein`, ok: adxInBand },
+          { label: "Swing high breakout (5M)", ok: brokeHigh && entryTrendUp },
+          { label: "Volume confirmation", ok: volOk || regimeVolOk },
+        ];
+    const score = checks.filter((c) => c.ok).length;
+    const failed = checks.filter((c) => !c.ok).map((c) => c.label);
+
+    const decorated = attachEma(candles, [fast, slow]).map((candle, i) => ({
+      ...candle,
+      vwap: entryVwap[i],
+    })) as Candle[];
+
+    let signal: LiveSignal;
+    if (adxNow != null && adxNow < adxMin) {
+      signal = {
+        headline: "NO TRADE — trend kamzor hai",
+        detail: `ADX ${adxNow.toFixed(1)}, band ${adxMin}-${adxMax}. Range mein spread ka debit theta khaa jaata hai.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else if (adxTooStrong) {
+      signal = {
+        headline: "Trend bahut strong — spread ke liye nahi",
+        detail: `ADX ${adxNow?.toFixed(1)} band ke upar hai. Itne strong move mein short leg upside kaat dega — naked buy (OTM Directional) behtar baithegi.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else if (direction === "bull" && score >= minScore) {
+      signal = {
+        headline: "BULL CALL SPREAD — bullish setup confirmed",
+        detail: `Score ${score}/5. Near-the-money call BUY + ${num(values, "spread_width", 2000)} upar wali call SELL — neeche legs dekhein.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (direction === "bear" && score >= minScore) {
+      signal = {
+        headline: "BEAR PUT SPREAD — bearish setup confirmed",
+        detail: `Score ${score}/5. Near-the-money put BUY + ${num(values, "spread_width", 2000)} neeche wali put SELL — neeche legs dekhein.`,
+        tone: "sell",
+        readouts: [],
+      };
+    } else {
+      const bias = direction === "bull" ? "Bullish" : direction === "bear" ? "Bearish" : "Mixed";
+      signal = {
+        headline: `${bias} — abhi entry nahi (${score}/5)`,
+        detail: failed.length ? `Baaki hai: ${failed.join(", ")}.` : `Minimum ${minScore}/5 chahiye.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Entry score", value: `${score}/5`, color: score >= minScore ? "var(--green)" : "var(--text-primary)" },
+      {
+        label: `ADX ${adxPeriod} (15M)`,
+        value: adxNow?.toFixed(1) ?? "—",
+        color: adxInBand ? "var(--green)" : adxTooStrong ? "var(--amber)" : "var(--red)",
+      },
+      { label: "VWAP (15M)", value: price(vwapNow), color: THIRD_COLOR },
+      { label: "Price", value: price(entryPrice) },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), ema9: num(values, "ema_fast", 9), ema21: num(values, "ema_slow", 21), ema50: num(values, "ema_slow", 21) };
+  },
+};
+
+export const STRATEGIES: StrategyDef[] = [emaCrossover, rsiDivergence, macdStrategy, customEma, rangeBreakout, otmDirectional, debitSpread];
 
 export function getStrategy(id: string | undefined): StrategyDef | undefined {
   return STRATEGIES.find((s) => s.id === id);

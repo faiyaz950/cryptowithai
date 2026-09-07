@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Activity, AlertCircle, Info, Play, Power, RefreshCw, RotateCcw } from "lucide-react";
 import BacktestResults from "@/components/trade/BacktestResults";
 import OptionChainPanel from "@/components/trade/OptionChainPanel";
+import SpreadPanel from "@/components/trade/SpreadPanel";
 import {
   CHART_RANGES,
   CRYPTO_INTERVALS,
@@ -444,6 +445,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
         </section>
 
         {def.optionChain && <OptionChainPanel def={def} values={settledValues} tone={signal.tone} />}
+        {def.optionSpread && <SpreadPanel def={def} values={settledValues} tone={signal.tone} />}
 
         {def.backtestable !== false && (
           <BacktestResults
