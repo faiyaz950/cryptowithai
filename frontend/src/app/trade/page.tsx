@@ -68,6 +68,13 @@ function fmtCompact(n: number): string {
   return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n);
 }
 
+/**
+ * Market data kitni der mein refresh ho. Chart par aakhri candle abhi ban rahi
+ * hoti hai, isliye bina refresh ke page jitni der khula rahe utna hi purana
+ * data dikhata rehta hai.
+ */
+const MARKET_POLL_MS = 30_000;
+
 /** "1m" stays "1m", "1h" becomes "1H" — short labels for the segmented control. */
 function shortInterval(value: string): string {
   return value.endsWith("m") ? value : value.toUpperCase();
@@ -157,6 +164,34 @@ function TradeTerminal() {
 
   useEffect(() => {
     loadMarket();
+  }, [loadMarket]);
+
+  // Live refresh. Tab background mein ho to poll band — chhupe hue tab ke liye
+  // request bhejna free-tier backend par bekaar kharcha hai. Wapas dikhne par
+  // turant ek refresh, taaki purana data na dikhe.
+  useEffect(() => {
+    let timer: number | undefined;
+
+    const start = () => {
+      window.clearInterval(timer);
+      timer = window.setInterval(() => void loadMarket(), MARKET_POLL_MS);
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        window.clearInterval(timer);
+        return;
+      }
+      void loadMarket();
+      start();
+    };
+
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [loadMarket]);
 
   useEffect(() => {
@@ -275,8 +310,9 @@ function TradeTerminal() {
             <div className="flex-1" />
 
             {updatedAt && (
-              <span className="hidden xl:block text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
-                Updated {updatedAt}
+              <span className="hidden xl:flex items-center gap-1.5 text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
+                <span className="trade-dot" style={{ color: "var(--green)" }} aria-hidden />
+                Updated {updatedAt} · har {MARKET_POLL_MS / 1000}s
               </span>
             )}
             <button type="button" onClick={askAi} className="trade-btn trade-btn-primary">
