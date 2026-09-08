@@ -1,8 +1,9 @@
-import { BarChart3, Boxes, Gauge, Layers, Target, TrendingUp, Zap, type LucideIcon } from "lucide-react";
+import { BarChart3, Boxes, Gauge, Layers, Target, TrendingUp, Waves, Zap, type LucideIcon } from "lucide-react";
 import type { BacktestParams, Candle } from "./cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, intervalMinutes } from "./cryptoApi";
 import {
   adx,
+  atr,
   averageVolume,
   crossDirection,
   ema,
@@ -93,6 +94,8 @@ export interface StrategyDef {
    * galat number dikhane se behtar hai kuch na dikhana.
    */
   backtestable?: boolean;
+  /** Range regime par iron condor ke chaar legs chunne hain? */
+  optionCondor?: boolean;
   /** Signal aane par debit spread ke dono legs chunne hain? */
   optionSpread?: {
     bullish: "call" | "put";
@@ -1195,7 +1198,170 @@ const debitSpread: StrategyDef = {
   },
 };
 
-export const STRATEGIES: StrategyDef[] = [emaCrossover, rsiDivergence, macdStrategy, customEma, rangeBreakout, otmDirectional, debitSpread];
+/**
+ * Strategy C — Iron Condor.
+ *
+ * Spec doc section 15-20. A aur B trend par paise banate hain; ye uske ulta hai —
+ * market kahin na jaaye to profit. Isliye regime check bhi ulta hai: ADX 20 se
+ * NEECHE, EMA flat, price range ke andar.
+ *
+ * Doc saaf kehta hai "ye daily trade nahi karega" — signal kam aayenge, aur wahi
+ * theek hai.
+ */
+const ironCondor: StrategyDef = {
+  id: "iron-condor",
+  name: "Iron Condor",
+  category: "Options · range",
+  blurb:
+    "Range market (ADX < 20, flat EMA) mein chaar legs bech-khareed kar premium collect karti hai. Trend aaya to nuksaan.",
+  logic:
+    "Market kahin nahi jaa raha — ADX 20 se neeche, EMA 9 aur 21 lagbhag barabar, price apni range ke andar, aur volatility shaant. Tab upar ek call bech kar usse door wali call khareedte hain, aur neeche ek put bech kar usse door wali put. Short legs ~0.15-0.20 delta par, protection ~0.05-0.10 par. Price dono short strikes ke beech rahe to poora credit milta hai. Max loss = bada wing minus credit. Exit: credit ka aadha profit ban jaaye to book, ya nuksaan credit ke 1.5 guna ho jaaye to nikal jao. Short strike ka delta bahut badh jaaye to bhi turant nikalna hai.",
+  accent: "#d97706",
+  icon: Waves,
+  backtestable: false,
+  optionCondor: true,
+  engineNote:
+    "Chaar-leg options position — candle backtest engine ise test nahi kar sakta, isliye backtest button nahi hai. Legs, credit aur breakevens live chain se aate hain; orders khud lagane honge.",
+  fields: [
+    { key: "adx_max", label: "ADX maximum", kind: "number", group: "signal", min: 5, max: 40, onCard: true, hint: "Isse upar trend hai — condor ke liye nahi." },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 100 },
+    { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 3, max: 200 },
+    { key: "ema_gap_pct", label: "EMA gap · max %", kind: "number", group: "signal", min: 0.01, max: 2, step: 0.01, onCard: true, hint: "EMA 9 aur 21 itne paas hon tabhi 'flat' maana jayega." },
+    { key: "range_lookback", label: "Range lookback · bars", kind: "number", group: "signal", min: 20, max: 300 },
+    { key: "range_buffer_pct", label: "Range edge buffer · %", kind: "number", group: "signal", min: 1, max: 40, hint: "Price range ke kinare se itna door ho — warna breakout ka risk." },
+    { key: "atr_spike_mult", label: "ATR spike limit · x", kind: "number", group: "signal", min: 1, max: 5, step: 0.1, hint: "Current ATR apne average se itna guna se zyada ho to volatility spike." },
+    ...marketFields,
+    { key: "short_delta", label: "Short legs delta", kind: "number", group: "risk", min: 0.05, max: 0.4, step: 0.005, hint: "Doc: 0.15-0.20." },
+    { key: "long_delta", label: "Protection delta", kind: "number", group: "risk", min: 0.01, max: 0.2, step: 0.005, hint: "Doc: 0.05-0.10." },
+    { key: "max_iv_pct", label: "Max IV · %", kind: "number", group: "risk", min: 10, max: 200, hint: "Isse upar IV elevated maani jayegi — doc naye entries block karta hai." },
+    { key: "tp_credit_pct", label: "Target · % of credit", kind: "number", group: "risk", min: 10, max: 100, hint: "Doc: credit ka ~50% profit book." },
+    { key: "sl_credit_mult", label: "Stop loss · x credit", kind: "number", group: "risk", min: 1, max: 5, step: 0.1, hint: "Doc: 1.5x credit, configurable." },
+    { key: "emergency_delta", label: "Emergency exit delta", kind: "number", group: "risk", min: 0.2, max: 0.8, step: 0.05, hint: "Short strike ka delta isse upar gaya to defensive action." },
+    { key: "time_exit_hours", label: "Expiry se pehle exit · hours", kind: "number", group: "risk", min: 1, max: 72, step: 1 },
+    { key: "max_spread_pct", label: "Max bid/ask spread · %", kind: "number", group: "risk", min: 0.5, max: 30, step: 0.5 },
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "15m",
+    adx_max: 20,
+    adx_period: 14,
+    ema_fast: 9,
+    ema_slow: 21,
+    ema_gap_pct: 0.15,
+    range_lookback: 96,
+    range_buffer_pct: 15,
+    atr_spike_mult: 1.8,
+    short_delta: 0.175,
+    long_delta: 0.075,
+    max_iv_pct: 60,
+    tp_credit_pct: 50,
+    sl_credit_mult: 1.5,
+    emergency_delta: 0.35,
+    time_exit_hours: 12,
+    max_spread_pct: 10,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const slow = num(values, "ema_slow", 21);
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMax = num(values, "adx_max", 20);
+    const gapLimit = num(values, "ema_gap_pct", 0.15);
+    const lookback = Math.max(20, num(values, "range_lookback", 96));
+    const bufferPct = num(values, "range_buffer_pct", 15);
+    const atrMult = num(values, "atr_spike_mult", 1.8);
+
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+    ];
+    if (candles.length < Math.max(lookback, adxPeriod * 3) + 2) {
+      return emptyAnalysis(candles, overlays);
+    }
+
+    const closes = candles.map((c) => c.close);
+    const eFast = ema(closes, fast);
+    const eSlow = ema(closes, slow);
+    const adxSeries = adx(candles, adxPeriod);
+    const atrSeries = atr(candles, adxPeriod);
+    const last = candles.length - 1;
+    const spot = candles[last].close;
+
+    const adxNow = adxSeries[last].adx;
+    const adxCalm = adxNow != null && adxNow < adxMax;
+
+    // EMA "≈" ka matlab: dono ke beech ka fasla price ke % mein chhota ho.
+    const emaGapPct = (Math.abs(eFast[last] - eSlow[last]) / spot) * 100;
+    const emaFlat = emaGapPct <= gapLimit;
+
+    // Established range: pichhle N bars ka high/low.
+    const window = candles.slice(-lookback);
+    const rangeHigh = Math.max(...window.map((c) => c.high));
+    const rangeLow = Math.min(...window.map((c) => c.low));
+    const rangeSize = rangeHigh - rangeLow;
+    const buffer = (rangeSize * bufferPct) / 100;
+    const insideRange = rangeSize > 0 && spot > rangeLow + buffer && spot < rangeHigh - buffer;
+    // Breakout: aakhri kuch bars mein range toota to nahi.
+    const recent = candles.slice(-Math.max(3, Math.round(lookback / 12)));
+    const noBreakout =
+      rangeSize > 0 &&
+      !recent.some((c) => c.high > rangeHigh - buffer * 0.2 || c.low < rangeLow + buffer * 0.2);
+
+    // Volatility spike (doc section 6) — ATR apne average se kitna upar hai.
+    const atrNow = atrSeries[last];
+    const atrValues = atrSeries.slice(-lookback).filter((v): v is number => v != null);
+    const atrAvg = atrValues.length ? atrValues.reduce((a, b) => a + b, 0) / atrValues.length : null;
+    const atrCalm = atrNow != null && atrAvg != null && atrAvg > 0 ? atrNow / atrAvg <= atrMult : false;
+
+    const checks = [
+      { label: `ADX < ${adxMax}`, ok: adxCalm },
+      { label: `EMA gap <= ${gapLimit}%`, ok: emaFlat },
+      { label: "Price range ke andar", ok: insideRange },
+      { label: "Koi fresh breakout nahi", ok: noBreakout },
+      { label: "Volatility shaant (ATR)", ok: atrCalm },
+    ];
+    const score = checks.filter((c) => c.ok).length;
+    const failed = checks.filter((c) => !c.ok).map((c) => c.label);
+    const decorated = attachEma(candles, [fast, slow]);
+
+    let signal: LiveSignal;
+    if (score === checks.length) {
+      signal = {
+        headline: "IRON CONDOR — range regime confirmed",
+        detail: `Range ${price(rangeLow)}-${price(rangeHigh)}. Neeche legs aur credit dekhein; entry se pehle IV bhi check karein.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else if (!adxCalm) {
+      signal = {
+        headline: "NO TRADE — market trend mein hai",
+        detail: `ADX ${adxNow?.toFixed(1) ?? "—"}, chahiye ${adxMax} se kam. Trending market condor ke short strikes tod deta hai.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: `Range ban raha hai — abhi entry nahi (${score}/5)`,
+        detail: `Baaki hai: ${failed.join(", ")}.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Setup score", value: `${score}/5`, color: score === checks.length ? "var(--green)" : "var(--text-primary)" },
+      { label: `ADX ${adxPeriod}`, value: adxNow?.toFixed(1) ?? "—", color: adxCalm ? "var(--green)" : "var(--red)" },
+      { label: "EMA gap", value: `${emaGapPct.toFixed(2)}%`, color: emaFlat ? "var(--green)" : "var(--red)" },
+      { label: "Range", value: `${price(rangeLow)} – ${price(rangeHigh)}` },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), ema9: num(values, "ema_fast", 9), ema21: num(values, "ema_slow", 21), ema50: num(values, "ema_slow", 21) };
+  },
+};
+
+export const STRATEGIES: StrategyDef[] = [emaCrossover, rsiDivergence, macdStrategy, customEma, rangeBreakout, otmDirectional, debitSpread, ironCondor];
 
 export function getStrategy(id: string | undefined): StrategyDef | undefined {
   return STRATEGIES.find((s) => s.id === id);

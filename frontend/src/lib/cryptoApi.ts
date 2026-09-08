@@ -528,6 +528,59 @@ export async function fetchOptionSpread(params: {
   return cryptoFetch<SpreadResponse>(`/options/spread?${q}`);
 }
 
+export interface IronCondor {
+  expiry: string | null;
+  hours_to_expiry: number | null;
+  spot: number | null;
+  short_call: SpreadLeg;
+  long_call: SpreadLeg;
+  short_put: SpreadLeg;
+  long_put: SpreadLeg;
+  call_wing: number;
+  put_wing: number;
+  net_credit: number;
+  net_credit_mark: number;
+  max_profit: number;
+  max_loss: number;
+  risk_reward: number | null;
+  breakeven_low: number;
+  breakeven_high: number;
+  profit_zone_low: number;
+  profit_zone_high: number;
+  net_delta: number | null;
+  net_theta: number | null;
+  net_vega: number | null;
+  net_gamma: number | null;
+  liquidity_usd: number;
+}
+
+export interface CondorResponse {
+  success: boolean;
+  underlying: string;
+  short_delta_target: number;
+  long_delta_target: number;
+  selected: IronCondor | null;
+  alternatives: IronCondor[];
+  expiries_scanned: number;
+  error?: string;
+}
+
+/** Iron condor (Strategy C) ke chaaron legs — backend delta bands se chunta hai. */
+export async function fetchIronCondor(params: {
+  underlying: string;
+  shortDelta: number;
+  longDelta: number;
+  maxSpreadPct?: number;
+}): Promise<CondorResponse> {
+  const q = new URLSearchParams({
+    underlying: params.underlying,
+    short_delta: String(params.shortDelta),
+    long_delta: String(params.longDelta),
+  });
+  if (params.maxSpreadPct != null) q.set("max_spread_pct", String(params.maxSpreadPct));
+  return cryptoFetch<CondorResponse>(`/options/condor?${q}`);
+}
+
 export function symbolLabel(symbol: string): string {
 
   return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace("USDT", "/USDT");

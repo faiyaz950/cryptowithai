@@ -7,6 +7,7 @@ import { Activity, AlertCircle, Info, Play, Power, RefreshCw, RotateCcw } from "
 import BacktestResults from "@/components/trade/BacktestResults";
 import OptionChainPanel from "@/components/trade/OptionChainPanel";
 import SpreadPanel from "@/components/trade/SpreadPanel";
+import CondorPanel from "@/components/trade/CondorPanel";
 import {
   CHART_RANGES,
   CRYPTO_INTERVALS,
@@ -446,6 +447,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
 
         {def.optionChain && <OptionChainPanel def={def} values={settledValues} tone={signal.tone} />}
         {def.optionSpread && <SpreadPanel def={def} values={settledValues} tone={signal.tone} />}
+        {def.optionCondor && <CondorPanel def={def} values={settledValues} />}
 
         {def.backtestable !== false && (
           <BacktestResults
