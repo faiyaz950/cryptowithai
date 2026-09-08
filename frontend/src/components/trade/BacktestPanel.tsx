@@ -5,7 +5,7 @@ import { AlertCircle, Play } from "lucide-react";
 import BacktestResults from "@/components/trade/BacktestResults";
 import type { BacktestParams, BacktestResult } from "@/lib/cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS } from "@/lib/cryptoApi";
-import { RANGE_TIMEZONES } from "@/lib/strategies";
+import { RANGE_TIMEZONES, STRATEGIES } from "@/lib/strategies";
 
 interface Props {
   defaults: Partial<BacktestParams>;
@@ -40,6 +40,33 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
   // Range breakout engine RSI hamesha use karta hai aur no-entry window ignore karta hai.
   const isRange = params.strategy === "range-breakout";
 
+  /**
+   * Dropdown registry se banti hai, hardcoded list se nahi — warna nayi strategy
+   * add karne par ye panel peeche reh jaata hai.
+   *
+   * Sirf wahi strategies aati hain jo backend ke do engines par imaandari se
+   * chal sakti hain. Options wali (`backtestable: false`) yahan nahi hain: unhe
+   * chalane par backtest EMA crossover ka result de deta, jiska us strategy se
+   * koi taalluk nahi hota — aur galat number dikhane se na dikhana behtar hai.
+   */
+  const backtestable = STRATEGIES.filter((d) => d.backtestable !== false);
+  const [strategyId, setStrategyId] = useState<string>(() => backtestable[0]?.id ?? "custom-ema");
+  const selectedDef = STRATEGIES.find((d) => d.id === strategyId);
+
+  const pickStrategy = (id: string) => {
+    const def = STRATEGIES.find((d) => d.id === id);
+    if (!def || def.backtestable === false) return;
+    setStrategyId(id);
+    // Us strategy ke apne parameters le aao, par market/window jaisa hai waisa rakho.
+    setParams((prev) => ({
+      ...def.toBacktest(def.defaults),
+      symbol: prev.symbol,
+      timeframe: prev.timeframe,
+      days: prev.days,
+      lots: prev.lots,
+    }));
+  };
+
   const set = <K extends keyof BacktestParams>(key: K, value: BacktestParams[K]) => {
     setParams((prev) => ({ ...prev, [key]: value }));
   };
@@ -50,21 +77,27 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
       <div className="trade-panel xl:sticky xl:top-[116px]">
         <div className="trade-panel-head">
           <span className="trade-panel-title">Backtest settings</span>
-          <span className="trade-badge trade-badge-blue">{isRange ? "Range" : "EMA"}</span>
+          <span className="trade-badge trade-badge-blue">{isRange ? "Range engine" : "EMA engine"}</span>
         </div>
 
         <div className="trade-panel-body space-y-5">
           <section>
             <div className="trade-section-label">Strategy</div>
             <select
-              value={params.strategy}
-              onChange={(e) => set("strategy", e.target.value as BacktestParams["strategy"])}
+              value={strategyId}
+              onChange={(e) => pickStrategy(e.target.value)}
               className="trade-select font-semibold"
               aria-label="Strategy"
             >
-              <option value="ema-crossover">EMA Crossover</option>
-              <option value="range-breakout">Range Breakout</option>
+              {backtestable.map((def) => (
+                <option key={def.id} value={def.id}>{def.name}</option>
+              ))}
             </select>
+            {selectedDef?.engineNote && (
+              <p className="text-[11.5px] mt-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                {selectedDef.engineNote}
+              </p>
+            )}
           </section>
 
           <section>
