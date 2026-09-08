@@ -11,6 +11,7 @@ import {
   Layers,
   RefreshCw,
   Radar,
+  Sigma,
   Sparkles,
   TrendingDown,
   TrendingUp,
@@ -21,6 +22,7 @@ import TradePanel from "@/components/trade/TradePanel";
 import BacktestPanel from "@/components/trade/BacktestPanel";
 import StrategyCards from "@/components/trade/StrategyCards";
 import Screener from "@/components/trade/Screener";
+import OptionsAnalytics from "@/components/trade/OptionsAnalytics";
 import {
   CHART_RANGES,
   barsForDays,
@@ -49,13 +51,14 @@ const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
   loading: () => <div className="w-full h-full shimmer" />,
 });
 
-type Tab = "markets" | "screener" | "backtest" | "strategies";
+type Tab = "markets" | "screener" | "backtest" | "strategies" | "options";
 
 const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screener", icon: Radar },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
   { id: "strategies", label: "Strategies", icon: Layers },
+  { id: "options", label: "Options", icon: Sigma },
 ];
 
 function fmtUsd(n: number): string {
@@ -508,6 +511,8 @@ function TradeTerminal() {
             }}
           />
         )}
+
+        {tab === "options" && <OptionsAnalytics />}
 
         {tab === "backtest" && (
           <BacktestPanel

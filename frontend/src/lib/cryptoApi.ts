@@ -581,6 +581,78 @@ export async function fetchIronCondor(params: {
   return cryptoFetch<CondorResponse>(`/options/condor?${q}`);
 }
 
+export interface StrikeRow {
+  strike: number;
+  call_iv: number | null;
+  put_iv: number | null;
+  call_oi: number;
+  put_oi: number;
+}
+
+export interface OptionChainStats {
+  expiry_key: string;
+  expiry: string | null;
+  hours_to_expiry: number;
+  atm_strike: number | null;
+  atm_iv: number | null;
+  call_oi: number;
+  put_oi: number;
+  call_volume: number;
+  put_volume: number;
+  pcr_oi: number | null;
+  pcr_volume: number | null;
+  max_pain: { strike: number; value: number } | null;
+  strikes: StrikeRow[];
+}
+
+export interface OptionsAnalytics {
+  success: boolean;
+  underlying: string;
+  spot: number | null;
+  totals: {
+    call_oi: number;
+    put_oi: number;
+    pcr_oi: number | null;
+    call_volume: number;
+    put_volume: number;
+    pcr_volume: number | null;
+    contracts: number;
+  };
+  term_structure: { expiry_key: string; hours_to_expiry: number; atm_iv: number | null }[];
+  chains: OptionChainStats[];
+  error?: string;
+}
+
+export interface FundingRow {
+  symbol: string;
+  mark_price: number | null;
+  funding_rate: number | null;
+  mark_basis: number | null;
+  oi_value_usd: number;
+  turnover_usd: number;
+  change_24h: number | null;
+}
+
+export interface FundingResponse {
+  success: boolean;
+  count: number;
+  rates: FundingRow[];
+  error?: string;
+}
+
+/** Poore option chain ka aggregate — IV smile, term structure, OI, PCR, max pain. */
+export async function fetchOptionsAnalytics(underlying: string): Promise<OptionsAnalytics> {
+  return cryptoFetch<OptionsAnalytics>(`/options/analytics?${new URLSearchParams({ underlying })}`);
+}
+
+/** Perpetuals ka funding rate — crowd kis taraf jhuki hai. */
+export async function fetchFunding(symbols?: string[]): Promise<FundingResponse> {
+  const q = new URLSearchParams();
+  if (symbols?.length) q.set("symbols", symbols.join(","));
+  const qs = q.toString();
+  return cryptoFetch<FundingResponse>(`/funding${qs ? `?${qs}` : ""}`);
+}
+
 export function symbolLabel(symbol: string): string {
 
   return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace("USDT", "/USDT");
