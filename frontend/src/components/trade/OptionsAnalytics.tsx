@@ -7,6 +7,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Line,
   LineChart,
   ReferenceLine,
@@ -391,9 +392,9 @@ export default function OptionsAnalytics() {
               <Key color={IV} label="ATM IV" />
             </div>
             <div className="trade-panel-body">
-              <div style={{ height: 230 }}>
+              <div style={{ height: 248 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={term} margin={{ top: 8, right: 12, bottom: 4, left: -8 }}>
+                  <AreaChart data={term} margin={{ top: 22, right: 16, bottom: 4, left: -8 }}>
                     <defs>
                       <linearGradient id="ivFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor={IV} stopOpacity={0.22} />
@@ -404,7 +405,9 @@ export default function OptionsAnalytics() {
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={{ stroke: "var(--tr-line)" }} />
                     {/* IV kabhi zero ke paas nahi jaati — 0 se shuru karne par 32-38% ka
                         asli farq flat dikhta hai. Line chart mein baseline zaroori nahi
-                        (bars ke liye hai, jo neeche OI chart mein rakha hai). */}
+                        (bars ke liye hai, jo neeche OI chart mein rakha hai).
+                        Axis floor (dataMin-2) ko data samajhna aasaan hai, isliye
+                        har point pe IV label bhi dikhate hain. */}
                     <YAxis domain={["dataMin - 2", "dataMax + 2"]} tick={{ fontSize: 11, fill: "var(--text-muted)" }} tickLine={false} axisLine={false} unit="%" width={46} tickFormatter={(v) => v.toFixed(0)} />
                     <Tooltip content={<ChartTooltip labelPrefix="Expiry in " format={(v) => `${v.toFixed(1)}%`} />} cursor={{ stroke: "var(--tr-line)" }} />
                     <Area
@@ -417,7 +420,15 @@ export default function OptionsAnalytics() {
                       fill="url(#ivFill)"
                       dot={{ r: 3, fill: "#fff", stroke: IV, strokeWidth: 2 }}
                       activeDot={{ r: 5, fill: IV, stroke: "#fff", strokeWidth: 2 }}
-                    />
+                    >
+                      <LabelList
+                        dataKey="iv"
+                        position="top"
+                        offset={10}
+                        formatter={(v) => (typeof v === "number" ? `${v.toFixed(1)}%` : "")}
+                        style={{ fontSize: 11, fontWeight: 600, fill: "var(--text-secondary)" }}
+                      />
+                    </Area>
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -446,7 +457,7 @@ export default function OptionsAnalytics() {
                     onClick={() => setExpiryKey(c.expiry_key)}
                   >
                     <span className="trade-expiry-dte">{fmtHours(c.hours_to_expiry)}</span>
-                    <span className="trade-expiry-iv">IV {pct(c.atm_iv, 0)}</span>
+                    <span className="trade-expiry-iv">IV {pct(c.atm_iv, 1)}</span>
                   </button>
                 ))}
               </div>
