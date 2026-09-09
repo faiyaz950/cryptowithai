@@ -53,13 +53,21 @@ const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
 
 type Tab = "markets" | "screener" | "backtest" | "strategies" | "options";
 
-const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
+/**
+ * Options tab abhi chhupa hua hai. Code poora maujood hai — wapas laane ke liye
+ * bas isko `true` kar dein, aur kuch badalne ki zarurat nahi.
+ */
+const SHOW_OPTIONS_TAB = false;
+
+const ALL_TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screener", icon: Radar },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
   { id: "strategies", label: "Strategies", icon: Layers },
   { id: "options", label: "Options", icon: Sigma },
 ];
+
+const TABS = ALL_TABS.filter((t) => t.id !== "options" || SHOW_OPTIONS_TAB);
 
 function fmtUsd(n: number): string {
   return n >= 1000
@@ -512,7 +520,7 @@ function TradeTerminal() {
           />
         )}
 
-        {tab === "options" && <OptionsAnalytics />}
+        {SHOW_OPTIONS_TAB && tab === "options" && <OptionsAnalytics />}
 
         {tab === "backtest" && (
           <BacktestPanel
