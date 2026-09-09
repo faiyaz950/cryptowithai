@@ -994,3 +994,206 @@ textarea:focus-visible {
 }
 .trade-chart-tip-row b { margin-left: auto; color: var(--text-primary); }
 .trade-chart-tip-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+
+/* ── Page masthead ─────────────────────────────────────────
+   Options page ke liye banaya gaya hero header. Baaki tabs ka header ek
+   sadha panel hai; yahan upar ek gradient hairline aur ek icon chip hai
+   taaki ye page apni alag pehchan rakhe bina design system chhode. */
+.trade-hero {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(37, 99, 235, .035), transparent 120px),
+    var(--bg-card);
+}
+.trade-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, #2563eb, #6366f1 45%, #a855f7);
+}
+.trade-hero-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  box-shadow: 0 6px 18px -8px rgba(79, 70, 229, .9);
+}
+
+/* Bada spot price — page ka anchor number. */
+.trade-hero-price {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── KPI rail ──────────────────────────────────────────────
+   Hairline gaps se bani strip. Border ki jagah 1px gap + background isliye
+   hai ki tiles ek hi surface ke tukde lagein, alag boxes nahi. */
+.trade-kpi-rail {
+  display: grid;
+  gap: 1px;
+  background: var(--tr-line-soft);
+  border-top: 1px solid var(--tr-line-soft);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 640px)  { .trade-kpi-rail { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .trade-kpi-rail { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+
+/* Paanch tiles do ya teen columns mein poore nahi bhartey — aakhri tile bachi
+   hui jagah le leti hai, warna rail ke neeche ka grey khaali dikhta hai. */
+.trade-kpi:last-child { grid-column: span 2; }
+@media (min-width: 1024px) { .trade-kpi:last-child { grid-column: span 1; } }
+
+.trade-kpi {
+  position: relative;
+  padding: 12px 16px 13px;
+  background: var(--bg-card);
+  transition: background .15s;
+}
+.trade-kpi:hover { background: var(--tr-field); }
+.trade-kpi-value {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  line-height: 1.15;
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.trade-kpi-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  margin-top: 3px;
+  color: var(--text-muted);
+}
+
+/* ── Market read cards ─────────────────────────────────────
+   Har card ek sawaal ka jawab deta hai. Left accent tone carry karta hai —
+   wahi pattern jo .trade-signal-box use karta hai. */
+.trade-read {
+  position: relative;
+  padding: 13px 15px 14px 16px;
+  border-radius: 12px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+  overflow: hidden;
+}
+.trade-read::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--read-tone, var(--tr-line));
+}
+.trade-read-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.trade-read-verdict {
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: -.015em;
+  line-height: 1.25;
+  margin-top: 6px;
+  color: var(--read-tone, var(--text-primary));
+}
+.trade-read-body {
+  font-size: 11.5px;
+  line-height: 1.6;
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+
+/* ── Expiry rail ───────────────────────────────────────────
+   Pehle yahan sirf "3d" jaise chips the. DTE ke saath us expiry ki ATM IV
+   bhi dikhti hai, to expiry chunne se pehle hi pata chal jaata hai kahan
+   volatility mehngi hai. */
+.trade-expiry-rail {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px;
+  scrollbar-width: none;
+}
+.trade-expiry-rail::-webkit-scrollbar { display: none; }
+.trade-expiry-chip {
+  flex: none;
+  min-width: 74px;
+  padding: 7px 12px 8px;
+  border-radius: 10px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.trade-expiry-chip:hover { border-color: var(--border-strong); background: var(--bg-card); }
+.trade-expiry-chip[data-active="true"] {
+  background: var(--bg-card);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.trade-expiry-dte {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.trade-expiry-iv {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-top: 1px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Legend key ────────────────────────────────────────────
+   Recharts ka apna legend chart ke neeche jagah kha jaata hai; panel head
+   mein rakhne se chart ki poori height data ko milti hai. */
+.trade-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.trade-key-swatch { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+
+/* ── In-cell data bar ──────────────────────────────────────
+   Funding rate ka number padhne se pehle hi uski magnitude dikh jaati hai.
+   Bar cell ke peeche rehta hai, isliye text ka contrast nahi girta. */
+.trade-databar {
+  position: relative;
+  isolation: isolate;
+}
+.trade-databar::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  right: 8px;
+  width: var(--bar-w, 0%);
+  border-radius: 3px;
+  background: var(--bar-color, var(--tr-line));
+  opacity: .13;
+  z-index: -1;
+}
