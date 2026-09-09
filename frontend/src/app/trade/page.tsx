@@ -54,10 +54,10 @@ const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
 type Tab = "markets" | "screener" | "backtest" | "strategies" | "options";
 
 /**
- * Options tab abhi chhupa hua hai. Code poora maujood hai — wapas laane ke liye
- * bas isko `true` kar dein, aur kuch badalne ki zarurat nahi.
+ * Options tab ka switch. Chhupana ho to `false` kar dein — code poora maujood
+ * rehta hai, aur kuch badalne ki zarurat nahi.
  */
-const SHOW_OPTIONS_TAB = false;
+const SHOW_OPTIONS_TAB = true;
 
 const ALL_TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
   { id: "markets", label: "Markets", icon: LineChart },
