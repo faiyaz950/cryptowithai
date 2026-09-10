@@ -63,14 +63,14 @@ type Tab = "markets" | "screener" | "backtest" | "strategies" | "mine" | "builde
  */
 const SHOW_OPTIONS_TAB = true;
 
-const ALL_TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
-  { id: "markets", label: "Markets", icon: LineChart },
-  { id: "screener", label: "Screener", icon: Radar },
-  { id: "backtest", label: "Backtest", icon: FlaskConical },
-  { id: "strategies", label: "Catalogue", icon: Layers },
-  { id: "mine", label: "My strategies", icon: FolderKanban },
-  { id: "builder", label: "Builder", icon: Wand2 },
-  { id: "options", label: "Options", icon: Sigma },
+const ALL_TABS: { id: Tab; label: string; short: string; icon: typeof LineChart }[] = [
+  { id: "markets", label: "Markets", short: "Mkt", icon: LineChart },
+  { id: "screener", label: "Screener", short: "Scan", icon: Radar },
+  { id: "backtest", label: "Backtest", short: "BT", icon: FlaskConical },
+  { id: "strategies", label: "Catalogue", short: "Cat", icon: Layers },
+  { id: "mine", label: "My strategies", short: "Mine", icon: FolderKanban },
+  { id: "builder", label: "Builder", short: "Build", icon: Wand2 },
+  { id: "options", label: "Options", short: "Opt", icon: Sigma },
 ];
 
 const TABS = ALL_TABS.filter((t) => t.id !== "options" || SHOW_OPTIONS_TAB);
@@ -290,31 +290,30 @@ function TradeTerminal() {
   );
 
   return (
-    <div className="trade-root h-full overflow-y-auto" style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
+    <div className="trade-root h-full overflow-y-auto">
       {/* ── Terminal top bar ─────────────────────────────── */}
       <header className="trade-topbar">
-        <div className="max-w-[1720px] mx-auto px-4 lg:px-6">
-          <div className="flex items-center gap-3 h-[60px]">
+        <div className="max-w-[1720px] mx-auto px-3 sm:px-4 lg:px-6">
+          <div className="flex items-center gap-2 sm:gap-3 h-[52px] sm:h-[58px]">
             <button type="button" onClick={() => router.push("/")} className="trade-iconbtn" aria-label="Back to chat">
               <ArrowLeft className="w-[17px] h-[17px]" />
             </button>
-            <Logo size={26} />
+            <Logo size={24} />
             <div className="min-w-0">
-              <h1 className="text-[14px] font-bold leading-tight tracking-tight">Crypto Terminal</h1>
+              <h1 className="text-[13px] sm:text-[14px] font-bold leading-tight tracking-tight">Crypto Terminal</h1>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span
                   className="trade-dot"
                   style={{ color: online === false ? "var(--red)" : "var(--green)" }}
                   aria-hidden
                 />
-                <p className="text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>
-                  {online === false ? "Backend offline" : "Delta Exchange · live"}
+                <p className="text-[10px] sm:text-[11px] font-medium truncate" style={{ color: "var(--text-muted)" }}>
+                  {online === false ? "Offline" : "Delta · live"}
                 </p>
               </div>
             </div>
 
-            {/* Live ticker — desktop only */}
-            <div className="trade-ticker ml-6 h-9">
+            <div className="trade-ticker ml-3 lg:ml-5">
               <div className="trade-ticker-item">
                 <span className="trade-ticker-label">{symbolLabel(symbol)}</span>
                 <span className="trade-ticker-value">{market ? fmtUsd(market.current_price) : "—"}</span>
@@ -341,39 +340,63 @@ function TradeTerminal() {
             {updatedAt && (
               <span className="hidden xl:flex items-center gap-1.5 text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
                 <span className="trade-dot" style={{ color: "var(--green)" }} aria-hidden />
-                Updated {updatedAt} · har {MARKET_POLL_MS / 1000}s
+                {updatedAt} · {MARKET_POLL_MS / 1000}s
               </span>
             )}
             <button type="button" onClick={askAi} className="trade-btn trade-btn-primary">
               <Sparkles className="w-4 h-4" />
-              Ask AI
+              <span className="hidden sm:inline">Ask AI</span>
             </button>
           </div>
 
-          {/* ── Tabs ──────────────────────────────────────── */}
-          <nav className="trade-tabs" role="tablist" aria-label="Trade sections">
-            {TABS.map((t) => {
-              const Icon = t.icon;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === t.id}
-                  data-active={tab === t.id}
-                  onClick={() => goTab(t.id)}
-                  className="trade-tab inline-flex items-center gap-2"
-                >
-                  <Icon className="w-[15px] h-[15px]" />
-                  {t.label}
-                </button>
-              );
-            })}
-          </nav>
+          {/* Mobile quote strip */}
+          <div className="trade-mob-quote" aria-label="Live quote">
+            <div className="trade-ticker-item">
+              <span className="trade-ticker-label">{symbolLabel(symbol)}</span>
+              <span className="trade-ticker-value">{market ? fmtUsd(market.current_price) : "—"}</span>
+            </div>
+            <div className="trade-ticker-item">
+              <span className="trade-ticker-label">24h</span>
+              <span className="trade-ticker-value" style={{ color: market ? changeColor : undefined }}>
+                {market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
+              </span>
+            </div>
+            <div className="trade-ticker-item">
+              <span className="trade-ticker-label">High</span>
+              <span className="trade-ticker-value">{market ? fmtUsd(market.high_24h) : "—"}</span>
+            </div>
+            <div className="trade-ticker-item">
+              <span className="trade-ticker-label">Low</span>
+              <span className="trade-ticker-value">{market ? fmtUsd(market.low_24h) : "—"}</span>
+            </div>
+          </div>
+
+          <div className="trade-tabs-wrap">
+            <nav className="trade-tabs" role="tablist" aria-label="Trade sections">
+              {TABS.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t.id}
+                    data-active={tab === t.id}
+                    onClick={() => goTab(t.id)}
+                    className="trade-tab inline-flex items-center gap-1.5 sm:gap-2"
+                  >
+                    <Icon className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px]" />
+                    <span className="trade-tab-full">{t.label}</span>
+                    <span className="trade-tab-short">{t.short}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-[1720px] mx-auto px-4 lg:px-6 py-5 space-y-4">
+      <main className="max-w-[1720px] mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-5 space-y-3 sm:space-y-4">
         {online === false && (
           <div className="trade-panel flex items-start gap-3 px-4 py-3 text-[13px]" style={{ borderColor: "rgba(217, 119, 6, 0.3)", background: "rgba(217, 119, 6, 0.05)" }}>
             <Activity className="w-4 h-4 mt-0.5 flex-none" style={{ color: "var(--amber)" }} />
@@ -394,7 +417,7 @@ function TradeTerminal() {
         )}
 
         {notice && (
-          <div className="trade-panel flex items-center gap-3 px-4 py-3 text-[13px]" style={{ borderColor: "rgba(37, 99, 235, 0.28)", background: "rgba(37, 99, 235, 0.05)" }}>
+          <div className="trade-panel flex items-center gap-3 px-4 py-3 text-[13px]" style={{ borderColor: "rgba(15, 118, 110, 0.28)", background: "rgba(15, 118, 110, 0.06)" }}>
             <span className="flex-1" style={{ color: "var(--text-secondary)" }}>{notice}</span>
             <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="trade-iconbtn trade-iconbtn-sm">
               <X className="w-3.5 h-3.5" />
@@ -403,7 +426,7 @@ function TradeTerminal() {
         )}
 
         {tab === "markets" && (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_368px] items-start">
+          <div className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] items-start">
             <section className="trade-panel overflow-hidden min-w-0">
               {/* Chart toolbar */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5 px-4 py-3">
@@ -514,7 +537,7 @@ function TradeTerminal() {
               </div>
             </section>
 
-            <aside className="xl:sticky xl:top-[116px]">
+            <aside className="xl:sticky xl:top-[128px]">
               <TradePanel
                 symbol={symbol}
                 lastPrice={market?.current_price}

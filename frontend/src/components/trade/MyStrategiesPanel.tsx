@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Archive,
+  ExternalLink,
   Pause,
   Pencil,
   Play,
@@ -14,6 +16,7 @@ import {
 import { symbolLabel } from "@/lib/cryptoApi";
 import {
   CUSTOM_STRATEGIES_CHANGED,
+  customStrategyHref,
   deleteCustomStrategy,
   listCustomStrategies,
   setCustomStrategyStatus,
@@ -230,7 +233,18 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                     >
                       <div className="ms-row-top">
                         <span className="ms-row-name">{s.name || "Untitled"}</span>
-                        <span className={`trade-badge ${statusBadge(s.status)}`}>{s.status}</span>
+                        <span className="flex items-center gap-1.5">
+                          <span className={`trade-badge ${statusBadge(s.status)}`}>{s.status}</span>
+                          <Link
+                            href={customStrategyHref(s.id)}
+                            className="trade-iconbtn trade-iconbtn-sm"
+                            aria-label={`Open ${s.name || "strategy"}`}
+                            onClick={(e) => e.stopPropagation()}
+                            title="Open & run"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                          </Link>
+                        </span>
                       </div>
                       <div className="ms-row-meta">
                         {s.market.direction} · {s.market.symbols.map(symbolLabel).join(", ") || "—"} · {s.market.interval}
@@ -309,9 +323,13 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
               </div>
 
               <div className="flex flex-wrap gap-2 pt-1">
-                <button type="button" className="trade-btn trade-btn-primary" onClick={() => onEdit(selectedStrategy.id)}>
+                <Link href={customStrategyHref(selectedStrategy.id)} className="trade-btn trade-btn-primary">
+                  <Play className="w-4 h-4" />
+                  Open & run
+                </Link>
+                <button type="button" className="trade-btn trade-btn-ghost" onClick={() => onEdit(selectedStrategy.id)}>
                   <Pencil className="w-4 h-4" />
-                  Edit in builder
+                  Edit
                 </button>
                 {selectedStrategy.status === "live" ? (
                   <button
@@ -326,17 +344,14 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                     Pause
                   </button>
                 ) : selectedStrategy.status !== "archived" ? (
-                  <button
-                    type="button"
+                  <Link
+                    href={customStrategyHref(selectedStrategy.id)}
                     className="trade-btn trade-btn-ghost"
-                    onClick={() => {
-                      setCustomStrategyStatus(selectedStrategy.id, "live");
-                      sync();
-                    }}
+                    onClick={() => setCustomStrategyStatus(selectedStrategy.id, "live")}
                   >
-                    <Play className="w-4 h-4" />
+                    <ExternalLink className="w-4 h-4" />
                     Go live
-                  </button>
+                  </Link>
                 ) : null}
                 {selectedStrategy.status !== "archived" && (
                   <button

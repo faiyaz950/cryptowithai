@@ -123,7 +123,7 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
     <div className="space-y-5">
       <div
         className="trade-panel flex flex-wrap items-center gap-3 px-4 py-3.5"
-        style={{ background: "linear-gradient(135deg, var(--accent-soft), #fff 55%)" }}
+        style={{ background: "linear-gradient(135deg, var(--accent-soft), #fff 58%)" }}
       >
         <div className="flex-1 min-w-0">
           <div className="text-[13.5px] font-bold tracking-tight">Apni custom strategy banana chahte ho?</div>

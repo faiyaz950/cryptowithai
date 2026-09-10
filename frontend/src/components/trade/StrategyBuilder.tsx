@@ -3,29 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import {
-  AlertTriangle,
-  ArrowLeft,
-  Check,
-  GitBranch,
-  Info,
-  LayoutDashboard,
-  LineChart,
-  Plus,
-  Rocket,
-  Save,
-  Trash2,
-  X,
-  Zap,
-} from "lucide-react";
-import { fetchCandles, symbolLabel, type Candle } from "@/lib/cryptoApi";
-import {
-  COMPARE_OPTIONS,
   EXCHANGES,
   INDICATOR_OPTIONS,
   INTERVAL_CHIPS,
   OPERATOR_OPTIONS,
+  STRATEGY_TEMPLATES,
   availableCoins,
   createBlankStrategy,
+  customStrategyHref,
   evaluateStrategyLive,
   getCustomStrategy,
   newCondition,
@@ -40,7 +25,28 @@ import {
   type ConditionGroup,
   type CustomStrategy,
   type IndicatorId,
+  type StrategyTemplate,
 } from "@/lib/strategyBuilder";
+import Link from "next/link";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ExternalLink,
+  GitBranch,
+  Info,
+  LayoutDashboard,
+  LayoutTemplate,
+  LineChart,
+  Plus,
+  Rocket,
+  Save,
+  Trash2,
+  X,
+  Zap,
+} from "lucide-react";
+import { fetchCandles, symbolLabel, type Candle } from "@/lib/cryptoApi";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
   ssr: false,
@@ -177,74 +183,137 @@ function ConditionRow({
   const needsPeriod = condition.indicator !== "price" && condition.indicator !== "volume";
 
   return (
-    <div className="sb-cond">
-      <span className="sb-when">WHEN</span>
-      <select
-        className="trade-select sb-cond-select"
-        value={condition.indicator}
-        onChange={(e) => {
-          const indicator = e.target.value as IndicatorId;
-          const def = INDICATOR_OPTIONS.find((i) => i.value === indicator);
-          onChange({ ...condition, indicator, period: def?.defaultPeriod ?? 14 });
-        }}
-      >
-        {INDICATOR_OPTIONS.map((i) => (
-          <option key={i.value} value={i.value}>{i.label}</option>
-        ))}
-      </select>
-      {needsPeriod && (
-        <input
-          type="number"
-          className="trade-input sb-cond-num"
-          value={condition.period}
-          min={1}
-          max={500}
-          onChange={(e) => onChange({ ...condition, period: Number(e.target.value) || 1 })}
-          aria-label="Period"
+    <div className="sb-cond-card">
+      <div className="sb-cond">
+        <span className="sb-when">WHEN</span>
+        <select
+          className="trade-select sb-cond-select"
+          value={condition.indicator}
+          onChange={(e) => {
+            const indicator = e.target.value as IndicatorId;
+            const def = INDICATOR_OPTIONS.find((i) => i.value === indicator);
+            onChange({ ...condition, indicator, period: def?.defaultPeriod ?? 14 });
+          }}
+        >
+          {INDICATOR_OPTIONS.map((i) => (
+            <option key={i.value} value={i.value}>{i.label}</option>
+          ))}
+        </select>
+        {needsPeriod && (
+          <input
+            type="number"
+            className="trade-input sb-cond-num"
+            value={condition.period}
+            min={1}
+            max={500}
+            onChange={(e) => onChange({ ...condition, period: Number(e.target.value) || 1 })}
+            aria-label="Period"
+          />
+        )}
+        <select
+          className="trade-select sb-cond-select"
+          value={condition.operator}
+          onChange={(e) => onChange({ ...condition, operator: e.target.value as Condition["operator"] })}
+        >
+          {OPERATOR_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        {canRemove && (
+          <button type="button" className="trade-iconbtn trade-iconbtn-sm" onClick={onRemove} aria-label="Remove">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      <div className="sb-cond-compare">
+        <Seg
+          size="sm"
+          value={condition.compareTo}
+          onChange={(compareTo) => onChange({ ...condition, compareTo })}
+          options={[
+            { value: "value", label: "Value" },
+            { value: "ema", label: "Indicator" },
+            { value: "price", label: "Price" },
+          ]}
         />
-      )}
-      <select
-        className="trade-select sb-cond-select"
-        value={condition.operator}
-        onChange={(e) => onChange({ ...condition, operator: e.target.value as Condition["operator"] })}
-      >
-        {OPERATOR_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
+        {condition.compareTo === "value" ? (
+          <input
+            type="number"
+            className="trade-input sb-cond-num"
+            value={condition.value}
+            step="any"
+            onChange={(e) => onChange({ ...condition, value: Number(e.target.value) })}
+            aria-label="Compare value"
+          />
+        ) : condition.compareTo === "ema" ? (
+          <div className="flex items-center gap-1.5">
+            <span className="sb-hint" style={{ margin: 0 }}>EMA</span>
+            <input
+              type="number"
+              className="trade-input sb-cond-num"
+              value={condition.comparePeriod}
+              min={1}
+              onChange={(e) => onChange({ ...condition, comparePeriod: Number(e.target.value) || 21 })}
+              aria-label="EMA period"
+            />
+          </div>
+        ) : (
+          <span className="sb-hint" style={{ margin: 0, alignSelf: "center" }}>Last close price</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TemplatePicker({
+  symbol,
+  onPick,
+  onBack,
+}: {
+  symbol: string;
+  onPick: (t: StrategyTemplate) => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="sb-root space-y-4">
+      <div className="trade-panel sb-header">
+        <div className="flex flex-wrap items-start gap-3">
+          <button type="button" onClick={onBack} className="trade-iconbtn mt-1" aria-label="Back">
+            <ArrowLeft className="w-[17px] h-[17px]" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <div className="trade-stat-label tracking-[0.1em]">Strategy builder</div>
+            <h2 className="text-[22px] font-extrabold tracking-tight mt-1">Proper strategy kaise banaye?</h2>
+            <p className="text-[13px] mt-1.5" style={{ color: "var(--text-secondary)" }}>
+              Ready template se shuru karo — market, entry conditions aur risk pehle se set.
+              Ya blank cockpit kholo aur khud design karo.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="sb-template-grid">
+        {STRATEGY_TEMPLATES.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className="sb-template-card"
+            style={{ ["--tpl-accent" as string]: t.accent }}
+            onClick={() => onPick(t)}
+          >
+            <div className="sb-template-tag">{t.tag}</div>
+            <div className="sb-template-name">{t.name}</div>
+            <p className="sb-template-blurb">{t.blurb}</p>
+            <span className="sb-template-cta">
+              Use template <ArrowRight className="w-3.5 h-3.5" />
+            </span>
+          </button>
         ))}
-      </select>
-      <select
-        className="trade-select sb-cond-select"
-        value={condition.compareTo}
-        onChange={(e) => onChange({ ...condition, compareTo: e.target.value as Condition["compareTo"] })}
-      >
-        {COMPARE_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-      {condition.compareTo === "value" ? (
-        <input
-          type="number"
-          className="trade-input sb-cond-num"
-          value={condition.value}
-          step="any"
-          onChange={(e) => onChange({ ...condition, value: Number(e.target.value) })}
-          aria-label="Value"
-        />
-      ) : condition.compareTo === "ema" ? (
-        <input
-          type="number"
-          className="trade-input sb-cond-num"
-          value={condition.comparePeriod}
-          min={1}
-          onChange={(e) => onChange({ ...condition, comparePeriod: Number(e.target.value) || 21 })}
-          aria-label="EMA period"
-        />
-      ) : null}
-      {canRemove && (
-        <button type="button" className="trade-iconbtn trade-iconbtn-sm" onClick={onRemove} aria-label="Remove">
-          <X className="w-3.5 h-3.5" />
-        </button>
-      )}
+      </div>
+      <p className="text-[12px] text-center" style={{ color: "var(--text-muted)" }}>
+        Template choose karne ke baad naam, coins, aur numbers tune kar sakte ho — phir Save / Deploy.
+        Symbol default: <b style={{ color: "var(--text-secondary)" }}>{symbolLabel(symbol)}</b>
+      </p>
     </div>
   );
 }
@@ -306,28 +375,41 @@ function FlowView({ strategy }: { strategy: CustomStrategy }) {
 }
 
 export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT", onBack, onSaved }: Props) {
-  const [strategy, setStrategy] = useState<CustomStrategy>(() => {
-    const blank = createBlankStrategy();
-    blank.market.symbols = [defaultSymbol];
-    return blank;
-  });
+  const [strategy, setStrategy] = useState<CustomStrategy>(() => createBlankStrategy(defaultSymbol));
   const [hydrated, setHydrated] = useState(!strategyId);
+  /** Nayi strategy par pehle templates dikhao. */
+  const [pickingTemplate, setPickingTemplate] = useState(!strategyId);
   const [view, setView] = useState<BuilderView>("cockpit");
   const [marketTab, setMarketTab] = useState<"instrument" | "session">("instrument");
-  const [riskTab, setRiskTab] = useState<"exits" | "size">("exits");
+  const [signalTab, setSignalTab] = useState<"entry" | "exit">("entry");
+  const [riskTab, setRiskTab] = useState<"exits" | "size" | "limits">("exits");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [coinPicker, setCoinPicker] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [runHref, setRunHref] = useState<string | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!strategyId) {
       setHydrated(true);
+      setPickingTemplate(true);
       return;
     }
     const existing = getCustomStrategy(strategyId);
-    if (existing) setStrategy(existing);
+    if (existing) {
+      setStrategy({
+        ...existing,
+        risk: {
+          ...createBlankStrategy().risk,
+          ...existing.risk,
+          dailyCapEnabled: existing.risk.dailyCapEnabled ?? true,
+          killSwitch: existing.risk.killSwitch ?? false,
+          killSwitchLosses: existing.risk.killSwitchLosses ?? 3,
+        },
+      });
+      setPickingTemplate(false);
+    }
     setHydrated(true);
   }, [strategyId]);
 
@@ -341,6 +423,16 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
   const patch = useCallback((fn: (s: CustomStrategy) => CustomStrategy) => {
     setStrategy((prev) => fn(prev));
   }, []);
+
+  const applyTemplate = (t: StrategyTemplate) => {
+    const next = t.apply(defaultSymbol);
+    // Editing existing id preserve? New create always new id from template.
+    if (strategyId) next.id = strategyId;
+    setStrategy(next);
+    setPickingTemplate(false);
+    setNotice(`Template applied: ${t.name} — ab tune karke Save / Deploy karo`);
+    setRunHref(null);
+  };
 
   useEffect(() => {
     const symbol = strategy.market.symbols[0] ?? defaultSymbol;
@@ -378,11 +470,12 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
       if (as === "live") {
         setCustomStrategyStatus(saved.id, "live");
         setStrategy({ ...saved, status: "live" });
-        setNotice("Strategy deploy ho gayi — My Strategies mein live dikhegi");
+        setNotice("Strategy deploy ho gayi — ab Open & run se live monitor chalao");
       } else {
         setStrategy(saved);
         setNotice("Draft save ho gaya");
       }
+      setRunHref(customStrategyHref(saved.id));
       onSaved?.(saved);
     } finally {
       setSaving(false);
@@ -404,6 +497,16 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
 
   if (!hydrated) {
     return <div className="trade-panel h-48 shimmer" />;
+  }
+
+  if (pickingTemplate) {
+    return (
+      <TemplatePicker
+        symbol={defaultSymbol}
+        onPick={applyTemplate}
+        onBack={onBack}
+      />
+    );
   }
 
   return (
@@ -466,6 +569,15 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
             <button
               type="button"
               className="trade-btn trade-btn-ghost"
+              onClick={() => setPickingTemplate(true)}
+              title="Change template"
+            >
+              <LayoutTemplate className="w-4 h-4" />
+              Templates
+            </button>
+            <button
+              type="button"
+              className="trade-btn trade-btn-ghost"
               disabled={saving}
               onClick={() => handleSave("draft")}
             >
@@ -480,11 +592,15 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
             >
               <Rocket className="w-4 h-4" />
               Deploy
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
-        <p className="sb-summary">{summary}</p>
+        <p className="sb-summary">
+          <span className="sb-reads">READS</span>
+          {summary}
+        </p>
 
         {(errors.length > 0 || warnings.length > 0) && (
           <div className="sb-issues">
@@ -501,6 +617,12 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
           <div className="sb-notice">
             <Zap className="w-3.5 h-3.5" style={{ color: "var(--accent)" }} />
             <span className="flex-1">{notice}</span>
+            {runHref && (
+              <Link href={runHref} className="trade-btn trade-btn-primary" style={{ height: 30, padding: "0 10px", fontSize: 12 }}>
+                <ExternalLink className="w-3.5 h-3.5" />
+                Open & run
+              </Link>
+            )}
             <button type="button" className="trade-iconbtn trade-iconbtn-sm" onClick={() => setNotice(null)}>
               <X className="w-3.5 h-3.5" />
             </button>
@@ -716,116 +838,123 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
                 <div className="sb-col-kicker">Signal</div>
                 <div className="sb-col-title">Entry & exit</div>
               </div>
+              <div className="sb-mini-tabs">
+                <button type="button" data-active={signalTab === "entry"} onClick={() => setSignalTab("entry")}>Entry</button>
+                <button type="button" data-active={signalTab === "exit"} onClick={() => setSignalTab("exit")}>Exit</button>
+              </div>
             </div>
             <div className="sb-col-body space-y-4">
-              <div>
-                <FieldLabel>Entry trigger</FieldLabel>
-                <Seg
-                  value={strategy.signal.triggerType}
-                  onChange={(triggerType) => patch((s) => ({ ...s, signal: { ...s.signal, triggerType } }))}
-                  options={[
-                    { value: "indicator", label: "Indicator" },
-                    { value: "time", label: "Time" },
-                  ]}
-                />
-              </div>
+              {signalTab === "entry" ? (
+                <>
+                  <div>
+                    <FieldLabel tip="Indicator cross ya fixed UTC time">Trigger</FieldLabel>
+                    <Seg
+                      value={strategy.signal.triggerType}
+                      onChange={(triggerType) => patch((s) => ({ ...s, signal: { ...s.signal, triggerType } }))}
+                      options={[
+                        { value: "indicator", label: "Indicator" },
+                        { value: "time", label: "Time" },
+                      ]}
+                    />
+                  </div>
 
-              {strategy.signal.triggerType === "time" ? (
-                <div>
-                  <FieldLabel tip="UTC time jab position open hogi">Entry time (UTC)</FieldLabel>
-                  <input
-                    type="time"
-                    className="trade-input w-full"
-                    value={strategy.signal.entryTime ?? "09:30"}
-                    onChange={(e) => patch((s) => ({ ...s, signal: { ...s.signal, entryTime: e.target.value } }))}
-                  />
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {strategy.signal.entryGroups.map((g, gi) => (
-                    <div key={g.id} className="sb-group">
-                      {gi > 0 && <div className="sb-or-badge">OR</div>}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="sb-hint">Group · conditions {g.join.toUpperCase()}</span>
-                        <div className="flex gap-1">
-                          <Seg
-                            size="sm"
-                            value={g.join}
-                            onChange={(join) => updateGroup(g.id, (gr) => ({ ...gr, join }))}
-                            options={[
-                              { value: "and", label: "AND" },
-                              { value: "or", label: "OR" },
-                            ]}
-                          />
-                          {strategy.signal.entryGroups.length > 1 && (
-                            <button
-                              type="button"
-                              className="trade-iconbtn trade-iconbtn-sm"
-                              onClick={() =>
-                                patch((s) => ({
-                                  ...s,
-                                  signal: {
-                                    ...s.signal,
-                                    entryGroups: s.signal.entryGroups.filter((x) => x.id !== g.id),
-                                  },
-                                }))
-                              }
-                              aria-label="Remove group"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                  {strategy.signal.triggerType === "time" ? (
+                    <div>
+                      <FieldLabel tip="UTC time jab position open hogi">Entry time (UTC)</FieldLabel>
+                      <input
+                        type="time"
+                        className="trade-input w-full"
+                        value={strategy.signal.entryTime ?? "09:30"}
+                        onChange={(e) => patch((s) => ({ ...s, signal: { ...s.signal, entryTime: e.target.value } }))}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {strategy.signal.entryGroups.map((g, gi) => (
+                        <div key={g.id} className="sb-group">
+                          {gi > 0 && <div className="sb-or-badge">OR</div>}
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="sb-hint">Group · conditions {g.join.toUpperCase()}</span>
+                            <div className="flex gap-1">
+                              <Seg
+                                size="sm"
+                                value={g.join}
+                                onChange={(join) => updateGroup(g.id, (gr) => ({ ...gr, join }))}
+                                options={[
+                                  { value: "and", label: "AND" },
+                                  { value: "or", label: "OR" },
+                                ]}
+                              />
+                              {strategy.signal.entryGroups.length > 1 && (
+                                <button
+                                  type="button"
+                                  className="trade-iconbtn trade-iconbtn-sm"
+                                  onClick={() =>
+                                    patch((s) => ({
+                                      ...s,
+                                      signal: {
+                                        ...s.signal,
+                                        entryGroups: s.signal.entryGroups.filter((x) => x.id !== g.id),
+                                      },
+                                    }))
+                                  }
+                                  aria-label="Remove group"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            {g.conditions.map((c) => (
+                              <ConditionRow
+                                key={c.id}
+                                condition={c}
+                                canRemove={g.conditions.length > 1}
+                                onChange={(next) =>
+                                  updateGroup(g.id, (gr) => ({
+                                    ...gr,
+                                    conditions: gr.conditions.map((x) => (x.id === c.id ? next : x)),
+                                  }))
+                                }
+                                onRemove={() =>
+                                  updateGroup(g.id, (gr) => ({
+                                    ...gr,
+                                    conditions: gr.conditions.filter((x) => x.id !== c.id),
+                                  }))
+                                }
+                              />
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            className="sb-link-btn mt-2"
+                            onClick={() => updateGroup(g.id, (gr) => ({ ...gr, conditions: [...gr.conditions, newCondition()] }))}
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add condition
+                          </button>
                         </div>
-                      </div>
-                      <div className="space-y-2">
-                        {g.conditions.map((c) => (
-                          <ConditionRow
-                            key={c.id}
-                            condition={c}
-                            canRemove={g.conditions.length > 1}
-                            onChange={(next) =>
-                              updateGroup(g.id, (gr) => ({
-                                ...gr,
-                                conditions: gr.conditions.map((x) => (x.id === c.id ? next : x)),
-                              }))
-                            }
-                            onRemove={() =>
-                              updateGroup(g.id, (gr) => ({
-                                ...gr,
-                                conditions: gr.conditions.filter((x) => x.id !== c.id),
-                              }))
-                            }
-                          />
-                        ))}
-                      </div>
+                      ))}
                       <button
                         type="button"
-                        className="sb-link-btn mt-2"
-                        onClick={() => updateGroup(g.id, (gr) => ({ ...gr, conditions: [...gr.conditions, newCondition()] }))}
+                        className="sb-link-btn"
+                        onClick={() =>
+                          patch((s) => ({
+                            ...s,
+                            signal: { ...s.signal, entryGroups: [...s.signal.entryGroups, newGroup()] },
+                          }))
+                        }
                       >
-                        <Plus className="w-3.5 h-3.5" /> Add condition
+                        <Plus className="w-3.5 h-3.5" /> Add group (OR)
                       </button>
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    className="sb-link-btn"
-                    onClick={() =>
-                      patch((s) => ({
-                        ...s,
-                        signal: { ...s.signal, entryGroups: [...s.signal.entryGroups, newGroup()] },
-                      }))
-                    }
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Add group (OR)
-                  </button>
-                </div>
-              )}
-
-              <div className="sb-divider" />
-              <div>
-                <div className="sb-label mb-2">Exit signal</div>
-                <div className="space-y-2">
+                  )}
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <p className="sb-hint">
+                    Position kab band ho — indicator signal ke alawa TP/SL Risk column mein set hote hain.
+                  </p>
                   <Toggle
                     checked={strategy.signal.exitOnSignal}
                     onChange={(exitOnSignal) => patch((s) => ({ ...s, signal: { ...s.signal, exitOnSignal } }))}
@@ -839,7 +968,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
                     hint="Indicator cross reverse direction"
                   />
                 </div>
-              </div>
+              )}
 
               {/* Live pulse */}
               <div className="sb-live" style={{ ["--live-tone" as string]: toneColor }}>
@@ -870,6 +999,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
               <div className="sb-mini-tabs">
                 <button type="button" data-active={riskTab === "exits"} onClick={() => setRiskTab("exits")}>Exits</button>
                 <button type="button" data-active={riskTab === "size"} onClick={() => setRiskTab("size")}>Size</button>
+                <button type="button" data-active={riskTab === "limits"} onClick={() => setRiskTab("limits")}>Limits</button>
               </div>
             </div>
             <div className="sb-col-body space-y-4">
@@ -1023,43 +1153,15 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
                   </label>
 
                   <button type="button" className="sb-link-btn" onClick={() => setShowAdvanced((v) => !v)}>
-                    {showAdvanced ? "Hide" : "Show"} advanced limits
+                    Advanced {showAdvanced ? "· hide" : "· none"}
                   </button>
                   {showAdvanced && (
-                    <div className="space-y-3 pt-1">
-                      <div>
-                        <FieldLabel>Max daily loss %</FieldLabel>
-                        <input
-                          type="number"
-                          className="trade-input w-full"
-                          value={strategy.risk.maxDailyLossPct}
-                          onChange={(e) =>
-                            patch((s) => ({
-                              ...s,
-                              risk: { ...s.risk, maxDailyLossPct: Number(e.target.value) || 0 },
-                            }))
-                          }
-                        />
-                      </div>
-                      <div>
-                        <FieldLabel>Max open positions</FieldLabel>
-                        <input
-                          type="number"
-                          className="trade-input w-full"
-                          value={strategy.risk.maxOpenPositions}
-                          min={1}
-                          onChange={(e) =>
-                            patch((s) => ({
-                              ...s,
-                              risk: { ...s.risk, maxOpenPositions: Number(e.target.value) || 1 },
-                            }))
-                          }
-                        />
-                      </div>
-                    </div>
+                    <p className="sb-hint">
+                      Extra exits (partial TP, breakeven) jaldi add honge. Abhi TP/SL + trailing kaafi hain.
+                    </p>
                   )}
                 </>
-              ) : (
+              ) : riskTab === "size" ? (
                 <div>
                   <FieldLabel tip="Har trade ka notional size (USDT)">Position size (USDT)</FieldLabel>
                   <input
@@ -1080,6 +1182,71 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
                       ${(strategy.risk.positionSizeUsd / Math.max(1, strategy.market.leverage)).toFixed(2)}
                     </b>
                   </p>
+                  <div className="mt-4">
+                    <FieldLabel>Max open positions</FieldLabel>
+                    <input
+                      type="number"
+                      className="trade-input w-full"
+                      value={strategy.risk.maxOpenPositions}
+                      min={1}
+                      onChange={(e) =>
+                        patch((s) => ({
+                          ...s,
+                          risk: { ...s.risk, maxOpenPositions: Number(e.target.value) || 1 },
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <Toggle
+                    checked={strategy.risk.dailyCapEnabled}
+                    onChange={(dailyCapEnabled) => patch((s) => ({ ...s, risk: { ...s.risk, dailyCapEnabled } }))}
+                    label="Daily cap"
+                    hint="Din ka loss limit hit hone par strategy pause"
+                  />
+                  {strategy.risk.dailyCapEnabled && (
+                    <div>
+                      <FieldLabel>Max daily loss %</FieldLabel>
+                      <input
+                        type="number"
+                        className="trade-input w-full"
+                        value={strategy.risk.maxDailyLossPct}
+                        min={0.1}
+                        step="0.1"
+                        onChange={(e) =>
+                          patch((s) => ({
+                            ...s,
+                            risk: { ...s.risk, maxDailyLossPct: Number(e.target.value) || 0 },
+                          }))
+                        }
+                      />
+                    </div>
+                  )}
+                  <Toggle
+                    checked={strategy.risk.killSwitch}
+                    onChange={(killSwitch) => patch((s) => ({ ...s, risk: { ...s.risk, killSwitch } }))}
+                    label="Kill switch"
+                    hint="Lagataar losing streak ke baad strategy band"
+                  />
+                  {strategy.risk.killSwitch && (
+                    <div>
+                      <FieldLabel>Stop after N losses</FieldLabel>
+                      <input
+                        type="number"
+                        className="trade-input w-full"
+                        value={strategy.risk.killSwitchLosses}
+                        min={1}
+                        onChange={(e) =>
+                          patch((s) => ({
+                            ...s,
+                            risk: { ...s.risk, killSwitchLosses: Number(e.target.value) || 1 },
+                          }))
+                        }
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
