@@ -1422,7 +1422,7 @@ textarea:focus-visible {
   border: 0;
   background: #cbd5e1;
   cursor: pointer;
-  flex-none;
+  flex: none;
   transition: background .15s;
 }
 .sb-switch[data-on="true"] { background: var(--accent); }
@@ -1640,7 +1640,7 @@ textarea:focus-visible {
   height: 16px;
   border-radius: 2px;
   background: var(--text-primary);
-  flex-none;
+  flex: none;
   z-index: 1;
 }
 .sb-risk-tp { height: 100%; background: linear-gradient(90deg, #34d399, #a7f3d0); }
