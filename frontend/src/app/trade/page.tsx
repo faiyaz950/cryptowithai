@@ -7,6 +7,7 @@ import {
   Activity,
   ArrowLeft,
   FlaskConical,
+  FolderKanban,
   LineChart,
   Layers,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
   Sparkles,
   TrendingDown,
   TrendingUp,
+  Wand2,
   X,
 } from "lucide-react";
 import Logo from "@/components/Logo";
@@ -23,6 +25,8 @@ import BacktestPanel from "@/components/trade/BacktestPanel";
 import StrategyCards from "@/components/trade/StrategyCards";
 import Screener from "@/components/trade/Screener";
 import OptionsAnalytics from "@/components/trade/OptionsAnalytics";
+import MyStrategiesPanel from "@/components/trade/MyStrategiesPanel";
+import StrategyBuilder from "@/components/trade/StrategyBuilder";
 import {
   CHART_RANGES,
   barsForDays,
@@ -51,7 +55,7 @@ const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
   loading: () => <div className="w-full h-full shimmer" />,
 });
 
-type Tab = "markets" | "screener" | "backtest" | "strategies" | "options";
+type Tab = "markets" | "screener" | "backtest" | "strategies" | "mine" | "builder" | "options";
 
 /**
  * Options tab ka switch. Chhupana ho to `false` kar dein — code poora maujood
@@ -63,7 +67,9 @@ const ALL_TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screener", icon: Radar },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
-  { id: "strategies", label: "Strategies", icon: Layers },
+  { id: "strategies", label: "Catalogue", icon: Layers },
+  { id: "mine", label: "My strategies", icon: FolderKanban },
+  { id: "builder", label: "Builder", icon: Wand2 },
   { id: "options", label: "Options", icon: Sigma },
 ];
 
@@ -108,7 +114,19 @@ function TradeTerminal() {
     const requested = searchParams.get("tab");
     return TABS.some((t) => t.id === requested) ? (requested as Tab) : "markets";
   });
+  /** Builder mein edit karte waqt — null = nayi strategy. */
+  const [builderId, setBuilderId] = useState<string | null>(() => searchParams.get("edit"));
   const [symbol, setSymbol] = useState("BTCUSDT");
+
+  const goTab = useCallback((next: Tab, editId: string | null = null) => {
+    setTab(next);
+    setBuilderId(next === "builder" ? editId : null);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", next);
+    if (next === "builder" && editId) params.set("edit", editId);
+    else params.delete("edit");
+    router.replace(`/trade?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
   const [interval, setInterval] = useState("1h");
   // Chart kitne din pehle tak dikhaye — bars isi se derive hote hain.
   const [historyDays, setHistoryDays] = useState(7);
@@ -343,7 +361,7 @@ function TradeTerminal() {
                   role="tab"
                   aria-selected={tab === t.id}
                   data-active={tab === t.id}
-                  onClick={() => setTab(t.id)}
+                  onClick={() => goTab(t.id)}
                   className="trade-tab inline-flex items-center gap-2"
                 >
                   <Icon className="w-[15px] h-[15px]" />
@@ -539,6 +557,25 @@ function TradeTerminal() {
             onTest={(params) => {
               setBacktestDefaults(params);
               void handleBacktest(params);
+            }}
+          />
+        )}
+
+        {tab === "mine" && (
+          <MyStrategiesPanel
+            onCreate={() => goTab("builder", null)}
+            onEdit={(id) => goTab("builder", id)}
+          />
+        )}
+
+        {tab === "builder" && (
+          <StrategyBuilder
+            key={builderId ?? "new"}
+            strategyId={builderId}
+            defaultSymbol={symbol}
+            onBack={() => goTab("mine")}
+            onSaved={() => {
+              /* stay in builder so user can keep editing / deploy */
             }}
           />
         )}

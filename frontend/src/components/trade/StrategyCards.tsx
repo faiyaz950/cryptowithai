@@ -121,13 +121,29 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
 
   return (
     <div className="space-y-5">
+      <div
+        className="trade-panel flex flex-wrap items-center gap-3 px-4 py-3.5"
+        style={{ background: "linear-gradient(135deg, var(--accent-soft), #fff 55%)" }}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="text-[13.5px] font-bold tracking-tight">Apni custom strategy banana chahte ho?</div>
+          <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            No-code Strategy Builder — indicators, risk, aur deploy ek jagah
+          </p>
+        </div>
+        <Link href="/trade?tab=builder" className="trade-btn trade-btn-primary">
+          Open builder
+          <ArrowRight className="w-4 h-4" />
+        </Link>
+      </div>
+
       {/* ── Header + live controls ────────────────────────── */}
       <div className="trade-panel">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5">
           <div className="min-w-0">
-            <h2 className="text-[19px] font-bold tracking-tight leading-tight">Trading Strategies</h2>
+            <h2 className="text-[19px] font-bold tracking-tight leading-tight">Strategy catalogue</h2>
             <p className="text-[12.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-              Har strategy abhi kya keh rahi hai — ek nazar mein
+              Ready-made strategies — har ek abhi kya keh rahi hai
             </p>
           </div>
 
