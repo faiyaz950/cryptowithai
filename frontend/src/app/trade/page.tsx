@@ -293,83 +293,76 @@ function TradeTerminal() {
     <div className="trade-root h-full overflow-y-auto">
       {/* ── Terminal top bar ─────────────────────────────── */}
       <header className="trade-topbar">
-        <div className="max-w-[1720px] mx-auto px-3 sm:px-4 lg:px-6">
-          <div className="flex items-center gap-2 sm:gap-3 h-[52px] sm:h-[58px]">
-            <button type="button" onClick={() => router.push("/")} className="trade-iconbtn" aria-label="Back to chat">
-              <ArrowLeft className="w-[17px] h-[17px]" />
-            </button>
-            <Logo size={24} />
-            <div className="min-w-0">
-              <div className="trade-brand-kicker">Finowings · Desk</div>
-              <h1 className="trade-brand-title">Crypto Terminal</h1>
-              <div className="trade-brand-meta">
-                <span
-                  className="trade-status-chip"
-                  data-offline={online === false}
-                >
-                  <span className="trade-dot" aria-hidden />
-                  {online === false ? "Offline" : "Delta live"}
-                </span>
+        <div className="trade-topbar-inner">
+          {/* Row 1 — brand + actions */}
+          <div className="trade-topbar-row">
+            <div className="trade-brand">
+              <button type="button" onClick={() => router.push("/")} className="trade-iconbtn" aria-label="Back to chat">
+                <ArrowLeft className="w-[17px] h-[17px]" />
+              </button>
+              <Logo size={26} />
+              <div className="trade-brand-text min-w-0">
+                <div className="trade-brand-kicker">Finowings · Desk</div>
+                <div className="trade-brand-line">
+                  <h1 className="trade-brand-title">Crypto Terminal</h1>
+                  <span className="trade-status-chip" data-offline={online === false}>
+                    <span className="trade-dot" aria-hidden />
+                    {online === false ? "Offline" : "Delta live"}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="trade-ticker ml-3 lg:ml-5">
-              <div className="trade-ticker-item">
-                <span className="trade-ticker-label">{symbolLabel(symbol)}</span>
-                <span className="trade-ticker-value">{market ? fmtUsd(market.current_price) : "—"}</span>
-              </div>
-              <div className="trade-ticker-item">
-                <span className="trade-ticker-label">24h</span>
-                <span className="trade-ticker-value inline-flex items-center gap-1" style={{ color: market ? changeColor : undefined }}>
-                  {market && <ChangeIcon className="w-3 h-3" />}
-                  {market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
+            <div className="trade-topbar-actions">
+              {updatedAt && (
+                <span className="trade-meta-chip hidden md:inline-flex">
+                  Sync {updatedAt}
+                  <span className="trade-meta-sep">·</span>
+                  {MARKET_POLL_MS / 1000}s
                 </span>
-              </div>
-              <div className="trade-ticker-item">
-                <span className="trade-ticker-label">High</span>
-                <span className="trade-ticker-value">{market ? fmtUsd(market.high_24h) : "—"}</span>
-              </div>
-              <div className="trade-ticker-item">
-                <span className="trade-ticker-label">Low</span>
-                <span className="trade-ticker-value">{market ? fmtUsd(market.low_24h) : "—"}</span>
-              </div>
+              )}
+              <button type="button" onClick={askAi} className="trade-btn trade-btn-primary trade-btn-ask">
+                <Sparkles className="w-4 h-4" />
+                Ask AI
+              </button>
             </div>
-
-            <div className="flex-1" />
-
-            {updatedAt && (
-              <span className="hidden xl:inline-flex items-center gap-1.5 trade-status-chip" style={{ opacity: 0.9 }}>
-                {updatedAt} · {MARKET_POLL_MS / 1000}s
-              </span>
-            )}
-            <button type="button" onClick={askAi} className="trade-btn trade-btn-primary">
-              <Sparkles className="w-4 h-4" />
-              <span className="hidden sm:inline">Ask AI</span>
-            </button>
           </div>
 
-          {/* Mobile quote strip */}
-          <div className="trade-mob-quote" aria-label="Live quote">
-            <div className="trade-ticker-item">
+          {/* Row 2 — open quote rail (not a cramped ticker box) */}
+          <div className="trade-quote-rail" aria-label="Live quote">
+            <div className="trade-quote-cell trade-quote-primary">
               <span className="trade-ticker-label">{symbolLabel(symbol)}</span>
-              <span className="trade-ticker-value">{market ? fmtUsd(market.current_price) : "—"}</span>
+              <span className="trade-ticker-value trade-quote-price">
+                {market ? fmtUsd(market.current_price) : "—"}
+              </span>
             </div>
-            <div className="trade-ticker-item">
-              <span className="trade-ticker-label">24h</span>
-              <span className="trade-ticker-value" style={{ color: market ? changeColor : undefined }}>
+            <div className="trade-quote-cell">
+              <span className="trade-ticker-label">24h change</span>
+              <span
+                className="trade-ticker-value trade-quote-change inline-flex items-center gap-1.5"
+                style={{ color: market ? changeColor : undefined }}
+              >
+                {market && <ChangeIcon className="w-3.5 h-3.5" />}
                 {market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
               </span>
             </div>
-            <div className="trade-ticker-item">
-              <span className="trade-ticker-label">High</span>
+            <div className="trade-quote-cell hidden sm:flex">
+              <span className="trade-ticker-label">24h high</span>
               <span className="trade-ticker-value">{market ? fmtUsd(market.high_24h) : "—"}</span>
             </div>
-            <div className="trade-ticker-item">
-              <span className="trade-ticker-label">Low</span>
+            <div className="trade-quote-cell hidden sm:flex">
+              <span className="trade-ticker-label">24h low</span>
               <span className="trade-ticker-value">{market ? fmtUsd(market.low_24h) : "—"}</span>
+            </div>
+            <div className="trade-quote-cell hidden lg:flex">
+              <span className="trade-ticker-label">24h volume</span>
+              <span className="trade-ticker-value">
+                {market ? fmtCompact(market.volume_24h) : "—"}
+              </span>
             </div>
           </div>
 
+          {/* Row 3 — section tabs */}
           <div className="trade-tabs-wrap">
             <nav className="trade-tabs" role="tablist" aria-label="Trade sections">
               {TABS.map((t) => {
@@ -382,9 +375,9 @@ function TradeTerminal() {
                     aria-selected={tab === t.id}
                     data-active={tab === t.id}
                     onClick={() => goTab(t.id)}
-                    className="trade-tab inline-flex items-center gap-1.5 sm:gap-2"
+                    className="trade-tab inline-flex items-center gap-2"
                   >
-                    <Icon className="w-[14px] h-[14px] sm:w-[15px] sm:h-[15px]" />
+                    <Icon className="w-[15px] h-[15px]" />
                     <span className="trade-tab-full">{t.label}</span>
                     <span className="trade-tab-short">{t.short}</span>
                   </button>
