@@ -300,16 +300,16 @@ function TradeTerminal() {
             </button>
             <Logo size={24} />
             <div className="min-w-0">
-              <h1 className="text-[13px] sm:text-[14px] font-bold leading-tight tracking-tight">Crypto Terminal</h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
+              <div className="trade-brand-kicker">Finowings · Desk</div>
+              <h1 className="trade-brand-title">Crypto Terminal</h1>
+              <div className="trade-brand-meta">
                 <span
-                  className="trade-dot"
-                  style={{ color: online === false ? "var(--red)" : "var(--green)" }}
-                  aria-hidden
-                />
-                <p className="text-[10px] sm:text-[11px] font-medium truncate" style={{ color: "var(--text-muted)" }}>
-                  {online === false ? "Offline" : "Delta · live"}
-                </p>
+                  className="trade-status-chip"
+                  data-offline={online === false}
+                >
+                  <span className="trade-dot" aria-hidden />
+                  {online === false ? "Offline" : "Delta live"}
+                </span>
               </div>
             </div>
 
@@ -338,8 +338,7 @@ function TradeTerminal() {
             <div className="flex-1" />
 
             {updatedAt && (
-              <span className="hidden xl:flex items-center gap-1.5 text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
-                <span className="trade-dot" style={{ color: "var(--green)" }} aria-hidden />
+              <span className="hidden xl:inline-flex items-center gap-1.5 trade-status-chip" style={{ opacity: 0.9 }}>
                 {updatedAt} · {MARKET_POLL_MS / 1000}s
               </span>
             )}

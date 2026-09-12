@@ -115,8 +115,8 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
   };
 
   const groups = [
-    { title: "Spot & perpetual", hint: "Coin ka bhaav directly — inka backtest chalta hai", defs: STRATEGIES.filter((d) => !isOptions(d)) },
-    { title: "Options", hint: "Do ya chaar leg positions — live signal + strike selection", defs: STRATEGIES.filter(isOptions) },
+    { title: "Futures & spot", hint: "Perp / coin price — inka backtest chalta hai · pro setups featured", defs: STRATEGIES.filter((d) => !isOptions(d)) },
+    { title: "Options", hint: "OTM, debit, condor — live signal + strike / legs selection", defs: STRATEGIES.filter(isOptions) },
   ];
 
   return (

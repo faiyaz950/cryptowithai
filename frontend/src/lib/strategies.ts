@@ -1,4 +1,4 @@
-import { BarChart3, Boxes, Gauge, Layers, Target, TrendingUp, Waves, Zap, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Boxes, Crosshair, Flame, Gauge, Layers, Shield, Target, TrendingUp, Waves, Zap, type LucideIcon } from "lucide-react";
 import type { BacktestParams, Candle } from "./cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, intervalMinutes } from "./cryptoApi";
 import {
@@ -1361,7 +1361,824 @@ const ironCondor: StrategyDef = {
   },
 };
 
-export const STRATEGIES: StrategyDef[] = [emaCrossover, rsiDivergence, macdStrategy, customEma, rangeBreakout, otmDirectional, debitSpread, ironCondor];
+/* ── Futures / perpetual · pro ─────────────────────────── */
+
+/**
+ * ATR Channel Breakout — futures trend continuation.
+ * Price jab ATR bands (EMA ± ATR×mult) todta hai aur ADX strong ho, tabhi entry.
+ */
+const atrChannelPro: StrategyDef = {
+  id: "atr-channel-pro",
+  name: "ATR Channel Breakout",
+  category: "Futures · breakout · pro",
+  blurb:
+    "EMA ke aas-paas ATR channel. Price channel todkar band ke bahar close kare aur ADX strong ho — futures trend entry.",
+  logic:
+    "Midline = EMA(period). Upper = midline + ATR×multiplier, lower = midline − ATR×multiplier. Bullish: close upper band ke upar + ADX ≥ min + volume average se upar. Bearish: close lower band ke neeche + same filters. Whipsaw kam karne ke liye ADX filter zaroori hai — sideways mein channel repeatedly toot-ta hai.",
+  accent: "#0ca678",
+  icon: Flame,
+  featured: true,
+  engineNote:
+    "Live signal ATR channel + ADX par chalta hai. Backtest backend ke EMA crossover engine par approximate hai (fast/slow = EMA period / 2×period) — ATR breakout ka exact replica nahi.",
+  fields: [
+    { key: "ema_period", label: "EMA period", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
+    { key: "atr_period", label: "ATR period", kind: "number", group: "signal", min: 5, max: 50, onCard: true },
+    { key: "atr_mult", label: "ATR multiplier", kind: "number", group: "signal", min: 0.5, max: 5, step: 0.1, onCard: true },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "adx_min", label: "ADX minimum", kind: "number", group: "signal", min: 10, max: 50, onCard: true },
+    { key: "volume_lookback", label: "Volume avg · bars", kind: "number", group: "signal", min: 5, max: 100 },
+    ...marketFields,
+    ...riskFields,
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "15m",
+    ema_period: 21,
+    atr_period: 14,
+    atr_mult: 2,
+    adx_period: 14,
+    adx_min: 22,
+    volume_lookback: 20,
+    sl_points: 500,
+    target_points: 1200,
+  },
+  analyze(candles, values) {
+    const emaPeriod = num(values, "ema_period", 21);
+    const atrPeriod = num(values, "atr_period", 14);
+    const mult = num(values, "atr_mult", 2);
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMin = num(values, "adx_min", 22);
+    const volLookback = num(values, "volume_lookback", 20);
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(emaPeriod), label: `EMA ${emaPeriod}`, color: FAST_COLOR },
+    ];
+    if (candles.length < Math.max(emaPeriod, atrPeriod, adxPeriod) + 5) {
+      return emptyAnalysis(candles, overlays);
+    }
+
+    const closes = candles.map((c) => c.close);
+    const mid = ema(closes, emaPeriod);
+    const atrLine = atr(candles, atrPeriod);
+    const adxLine = adx(candles, adxPeriod);
+    const avgVol = averageVolume(candles, volLookback);
+    const last = candles.length - 1;
+    const m = mid[last];
+    const a = atrLine[last];
+    const adxNow = adxLine[last]?.adx;
+    const upper = m != null && a != null ? m + a * mult : null;
+    const lower = m != null && a != null ? m - a * mult : null;
+    const prevUpper = mid[last - 1] != null && atrLine[last - 1] != null
+      ? (mid[last - 1] as number) + (atrLine[last - 1] as number) * mult
+      : null;
+    const prevLower = mid[last - 1] != null && atrLine[last - 1] != null
+      ? (mid[last - 1] as number) - (atrLine[last - 1] as number) * mult
+      : null;
+
+    const decorated = candles.map((c, i) => {
+      const next: Candle = { ...c, [emaKey(emaPeriod)]: mid[i] };
+      if (mid[i] != null && atrLine[i] != null) {
+        next.ema_9 = mid[i]! + atrLine[i]! * mult; // upper for chart readout reuse
+        next.ema_21 = mid[i]! - atrLine[i]! * mult; // lower
+      }
+      return next;
+    });
+
+    const close = candles[last].close;
+    const prevClose = candles[last - 1].close;
+    const volOk = avgVol != null && (candles[last].volume ?? 0) > avgVol;
+    const trendOk = adxNow != null && adxNow >= adxMin;
+    const breakUp = upper != null && prevUpper != null && prevClose <= prevUpper && close > upper;
+    const breakDown = lower != null && prevLower != null && prevClose >= prevLower && close < lower;
+
+    let signal: LiveSignal;
+    if (breakUp && trendOk && volOk) {
+      signal = {
+        headline: "LONG — ATR upper channel break",
+        detail: `Close ${price(close)} > upper ${price(upper)} · ADX ${adxNow?.toFixed(1)}`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (breakDown && trendOk && volOk) {
+      signal = {
+        headline: "SHORT — ATR lower channel break",
+        detail: `Close ${price(close)} < lower ${price(lower)} · ADX ${adxNow?.toFixed(1)}`,
+        tone: "sell",
+        readouts: [],
+      };
+    } else if (upper != null && close > upper && !trendOk) {
+      signal = { headline: "Break up — ADX weak, skip", detail: "Channel toot gaya par trend strength nahi.", tone: "neutral", readouts: [] };
+    } else if (lower != null && close < lower && !trendOk) {
+      signal = { headline: "Break down — ADX weak, skip", detail: "Channel toot gaya par trend strength nahi.", tone: "neutral", readouts: [] };
+    } else {
+      signal = { headline: "Inside ATR channel — wait", tone: "neutral", readouts: [] };
+    }
+
+    signal.readouts = [
+      { label: "Upper", value: price(upper), color: "var(--green)" },
+      { label: "Lower", value: price(lower), color: "var(--red)" },
+      { label: `ADX ${adxPeriod}`, value: adxNow?.toFixed(1) ?? "—", color: trendOk ? "var(--green)" : "var(--amber)" },
+      { label: "Volume", value: volOk ? "Above avg" : "Weak", color: volOk ? "var(--green)" : "var(--text-muted)" },
+    ];
+    return {
+      candles: decorated,
+      overlays: [
+        ...overlays,
+        { key: "ema_9", label: `Upper · ${mult}×ATR`, color: "#059669" },
+        { key: "ema_21", label: `Lower · ${mult}×ATR`, color: "#dc2626" },
+      ],
+      signal,
+    };
+  },
+  toBacktest(values) {
+    const period = num(values, "ema_period", 21);
+    return {
+      ...baseParams(values),
+      ema9: Math.max(2, Math.round(period / 2)),
+      ema21: period,
+      ema50: period * 2,
+    };
+  },
+};
+
+/**
+ * VWAP Reclaim — futures momentum after mean-reversion dip.
+ */
+const vwapReclaimPro: StrategyDef = {
+  id: "vwap-reclaim-pro",
+  name: "VWAP Reclaim",
+  category: "Futures · momentum · pro",
+  blurb:
+    "Price VWAP ke neeche dip karke wapas reclaim kare + EMA trend align + volume spike — futures long/short momentum.",
+  logic:
+    "UTC-day VWAP midline. Long: pehli bar VWAP ke neeche (ya touch), agli bar VWAP ke upar close + EMA fast > slow + volume > average. Short: mirror. Pro traders isko session open / trend day par use karte hain — VWAP reclaim often institutional flow ka signal hota hai.",
+  accent: "#0891b2",
+  icon: Crosshair,
+  featured: true,
+  engineNote:
+    "Live signal VWAP reclaim + EMA align + volume par. Backtest EMA crossover approximation hai — VWAP session logic backend engine mein nahi hai.",
+  fields: [
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
+    { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
+    { key: "volume_lookback", label: "Volume avg · bars", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
+    { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 2, max: 50 },
+    { key: "require_rsi", label: "RSI not extreme", kind: "toggle", group: "signal", hint: "Long par RSI < overbought, short par RSI > oversold." },
+    { key: "rsi_overbought", label: "RSI overbought", kind: "number", group: "signal", min: 50, max: 90, showIf: (v) => bool(v, "require_rsi") },
+    { key: "rsi_oversold", label: "RSI oversold", kind: "number", group: "signal", min: 10, max: 50, showIf: (v) => bool(v, "require_rsi") },
+    ...marketFields,
+    ...riskFields,
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "5m",
+    ema_fast: 9,
+    ema_slow: 21,
+    volume_lookback: 20,
+    rsi_period: 14,
+    require_rsi: true,
+    rsi_overbought: 70,
+    rsi_oversold: 30,
+    sl_points: 350,
+    target_points: 900,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const slow = num(values, "ema_slow", 21);
+    const volLookback = num(values, "volume_lookback", 20);
+    const rsiPeriod = num(values, "rsi_period", 14);
+    const useRsi = bool(values, "require_rsi");
+    const ob = num(values, "rsi_overbought", 70);
+    const os = num(values, "rsi_oversold", 30);
+    const overlays: ChartOverlay[] = [
+      { key: "vwap", label: "VWAP", color: RANGE_COLOR },
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+    ];
+    if (candles.length < slow + 5) return emptyAnalysis(candles, overlays);
+
+    const closes = candles.map((c) => c.close);
+    const vwapLine = vwap(candles);
+    const fastLine = ema(closes, fast);
+    const slowLine = ema(closes, slow);
+    const rsiLine = rsi(closes, rsiPeriod);
+    const avgVol = averageVolume(candles, volLookback);
+    const last = candles.length - 1;
+    const decorated = candles.map((c, i) => ({
+      ...c,
+      vwap: vwapLine[i],
+      [emaKey(fast)]: fastLine[i],
+      [emaKey(slow)]: slowLine[i],
+      rsi: rsiLine[i],
+    }));
+
+    const c0 = candles[last].close;
+    const c1 = candles[last - 1].close;
+    const v0 = vwapLine[last];
+    const v1 = vwapLine[last - 1];
+    const f0 = fastLine[last];
+    const s0 = slowLine[last];
+    const r0 = rsiLine[last];
+    const volOk = avgVol != null && (candles[last].volume ?? 0) > avgVol;
+    const bullTrend = f0 != null && s0 != null && f0 > s0;
+    const bearTrend = f0 != null && s0 != null && f0 < s0;
+    const reclaimUp = v0 != null && v1 != null && c1 <= v1 && c0 > v0;
+    const reclaimDown = v0 != null && v1 != null && c1 >= v1 && c0 < v0;
+    const rsiLongOk = !useRsi || (r0 != null && r0 < ob);
+    const rsiShortOk = !useRsi || (r0 != null && r0 > os);
+
+    let signal: LiveSignal;
+    if (reclaimUp && bullTrend && volOk && rsiLongOk) {
+      signal = {
+        headline: "LONG — VWAP reclaim + trend",
+        detail: "Dip ke baad VWAP wapas liya, EMA bullish, volume confirm.",
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (reclaimDown && bearTrend && volOk && rsiShortOk) {
+      signal = {
+        headline: "SHORT — VWAP lose + trend",
+        detail: "VWAP ke neeche close, EMA bearish, volume confirm.",
+        tone: "sell",
+        readouts: [],
+      };
+    } else if (reclaimUp) {
+      signal = { headline: "VWAP reclaim — filters incomplete", detail: "Trend / volume / RSI check karo.", tone: "neutral", readouts: [] };
+    } else {
+      signal = { headline: "No VWAP reclaim — wait", tone: "neutral", readouts: [] };
+    }
+
+    signal.readouts = [
+      { label: "VWAP", value: price(v0) },
+      { label: "Price", value: price(c0) },
+      { label: `RSI ${rsiPeriod}`, value: r0?.toFixed(1) ?? "—" },
+      { label: "Volume", value: volOk ? "Strong" : "Weak", color: volOk ? "var(--green)" : "var(--text-muted)" },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return {
+      ...baseParams(values),
+      ema9: num(values, "ema_fast", 9),
+      ema21: num(values, "ema_slow", 21),
+      ema50: num(values, "ema_slow", 21),
+      use_rsi_filter: bool(values, "require_rsi"),
+      rsi_period: num(values, "rsi_period", 14),
+      rsi_overbought: num(values, "rsi_overbought", 70),
+      rsi_oversold: num(values, "rsi_oversold", 30),
+    };
+  },
+};
+
+/**
+ * EMA Pullback — trend continuation on dip to EMA.
+ */
+const emaPullbackPro: StrategyDef = {
+  id: "ema-pullback-pro",
+  name: "EMA Pullback Pro",
+  category: "Futures · trend · pro",
+  blurb:
+    "Strong trend (EMA stack + ADX) mein pullback EMA pe touch karke bounce — futures continuation entry.",
+  logic:
+    "Bullish stack: EMA fast > mid > slow aur ADX ≥ min. Pullback: price mid EMA ke paas aaye (band % ke andar) aur close phir mid ke upar. RSI oversold zone se bahar bounce optional confirmation. Bearish mirror. Pro desk par ye 'buy the dip in trend' play hai — breakout chase se better R:R.",
+  accent: FAST_COLOR,
+  icon: Activity,
+  featured: true,
+  engineNote:
+    "Live signal EMA stack + pullback band + ADX. Backtest EMA crossover engine par approximate — pullback timing exact nahi milegi.",
+  fields: [
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
+    { key: "ema_mid", label: "EMA mid (pullback)", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
+    { key: "ema_slow", label: "EMA slow (trend)", kind: "number", group: "signal", min: 10, max: 200, onCard: true },
+    { key: "pullback_pct", label: "Touch band · %", kind: "number", group: "signal", min: 0.05, max: 2, step: 0.05, hint: "Price mid EMA ke itne % ke andar aaye." },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "adx_min", label: "ADX minimum", kind: "number", group: "signal", min: 15, max: 50, onCard: true },
+    { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 2, max: 50 },
+    ...marketFields,
+    ...riskFields,
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "15m",
+    ema_fast: 9,
+    ema_mid: 21,
+    ema_slow: 50,
+    pullback_pct: 0.25,
+    adx_period: 14,
+    adx_min: 25,
+    rsi_period: 14,
+    sl_points: 400,
+    target_points: 1000,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const mid = num(values, "ema_mid", 21);
+    const slow = num(values, "ema_slow", 50);
+    const bandPct = num(values, "pullback_pct", 0.25) / 100;
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMin = num(values, "adx_min", 25);
+    const rsiPeriod = num(values, "rsi_period", 14);
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(mid), label: `EMA ${mid}`, color: SLOW_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: THIRD_COLOR },
+    ];
+    if (candles.length < slow + 5) return emptyAnalysis(candles, overlays);
+
+    const decorated = attachEma(candles, [fast, mid, slow]);
+    const closes = candles.map((c) => c.close);
+    const adxLine = adx(candles, adxPeriod);
+    const rsiLine = rsi(closes, rsiPeriod);
+    const last = candles.length - 1;
+    const f = decorated[last][emaKey(fast)] as number;
+    const m = decorated[last][emaKey(mid)] as number;
+    const s = decorated[last][emaKey(slow)] as number;
+    const close = candles[last].close;
+    const low = candles[last].low;
+    const high = candles[last].high;
+    const adxNow = adxLine[last]?.adx;
+    const r0 = rsiLine[last];
+    const trendOk = adxNow != null && adxNow >= adxMin;
+    const bullStack = f > m && m > s;
+    const bearStack = f < m && m < s;
+    const nearMid = Math.abs(close - m) / m <= bandPct || Math.abs(low - m) / m <= bandPct || Math.abs(high - m) / m <= bandPct;
+    const bounceLong = nearMid && close >= m && candles[last - 1].close < m * (1 + bandPct);
+    const bounceShort = nearMid && close <= m && candles[last - 1].close > m * (1 - bandPct);
+
+    let signal: LiveSignal;
+    if (bullStack && trendOk && bounceLong) {
+      signal = {
+        headline: "LONG — pullback to EMA mid",
+        detail: `Trend stack intact · ADX ${adxNow?.toFixed(1)} · RSI ${r0?.toFixed(1) ?? "—"}`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (bearStack && trendOk && bounceShort) {
+      signal = {
+        headline: "SHORT — pullback to EMA mid",
+        detail: `Bear stack intact · ADX ${adxNow?.toFixed(1)} · RSI ${r0?.toFixed(1) ?? "—"}`,
+        tone: "sell",
+        readouts: [],
+      };
+    } else if (bullStack && trendOk) {
+      signal = { headline: "Bull trend — pullback ka wait", tone: "buy", readouts: [] };
+    } else if (bearStack && trendOk) {
+      signal = { headline: "Bear trend — pullback ka wait", tone: "sell", readouts: [] };
+    } else {
+      signal = { headline: "No pro pullback setup", tone: "neutral", readouts: [] };
+    }
+
+    signal.readouts = [
+      { label: "Stack", value: bullStack ? "Bull" : bearStack ? "Bear" : "Mixed", color: bullStack ? "var(--green)" : bearStack ? "var(--red)" : undefined },
+      { label: `ADX ${adxPeriod}`, value: adxNow?.toFixed(1) ?? "—", color: trendOk ? "var(--green)" : "var(--amber)" },
+      { label: `EMA ${mid}`, value: price(m) },
+      { label: `RSI ${rsiPeriod}`, value: r0?.toFixed(1) ?? "—" },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return {
+      ...baseParams(values),
+      ema9: num(values, "ema_fast", 9),
+      ema21: num(values, "ema_mid", 21),
+      ema50: num(values, "ema_slow", 50),
+    };
+  },
+};
+
+/* ── Options · pro ─────────────────────────────────────── */
+
+/**
+ * Momentum OTM — strong trend + breakout pe directional option buy.
+ */
+const momentumOtmPro: StrategyDef = {
+  id: "momentum-otm-pro",
+  name: "Momentum OTM Pro",
+  category: "Options · momentum · pro",
+  blurb:
+    "15M strong trend (ADX↑ + EMA) + 5M swing break + volume — OTM Call/Put buy. Pure momentum options desk play.",
+  logic:
+    "Regime TF (entry×3): EMA fast > slow, price VWAP upar, ADX ≥ min aur rising. Entry TF: swing high/low break + volume > avg + RSI momentum side. Score ≥ min_score par OTM Call (bull) / Put (bear). Delta band tighter (0.30–0.40) — momentum mein thoda zyada delta lete hain taaki move catch ho.",
+  accent: "#7c3aed",
+  icon: Zap,
+  featured: true,
+  backtestable: false,
+  optionChain: { bullish: "call", bearish: "put" },
+  engineNote:
+    "Options strategy — candle backtest nahi. Live multi-timeframe score + Delta-band strike selection Option Chain panel se.",
+  fields: [
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
+    { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "adx_min", label: "ADX minimum", kind: "number", group: "signal", min: 15, max: 50, onCard: true },
+    { key: "volume_lookback", label: "Volume avg · bars", kind: "number", group: "signal", min: 5, max: 100 },
+    { key: "swing_span", label: "Swing span", kind: "number", group: "signal", min: 1, max: 10 },
+    { key: "min_score", label: "Min score (of 6)", kind: "number", group: "signal", min: 3, max: 6, onCard: true },
+    ...marketFields,
+    { key: "delta_min", label: "Strike delta · min", kind: "number", group: "risk", min: 0.1, max: 0.6, step: 0.01 },
+    { key: "delta_max", label: "Strike delta · max", kind: "number", group: "risk", min: 0.15, max: 0.7, step: 0.01 },
+    { key: "sl_premium_pct", label: "SL · % premium", kind: "number", group: "risk", min: 20, max: 80 },
+    { key: "tp1_pct", label: "Partial book · %", kind: "number", group: "risk", min: 50, max: 300 },
+    { key: "tp2_pct", label: "Final target · %", kind: "number", group: "risk", min: 50, max: 500 },
+    { key: "time_exit_hours", label: "Time exit · hours", kind: "number", group: "risk", min: 0.5, max: 12, step: 0.5 },
+    { key: "max_spread_pct", label: "Max bid/ask · %", kind: "number", group: "risk", min: 0.5, max: 20, step: 0.5 },
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "5m",
+    ema_fast: 9,
+    ema_slow: 21,
+    adx_period: 14,
+    adx_min: 25,
+    volume_lookback: 20,
+    swing_span: 3,
+    min_score: 5,
+    delta_min: 0.3,
+    delta_max: 0.4,
+    sl_premium_pct: 40,
+    tp1_pct: 80,
+    tp2_pct: 160,
+    time_exit_hours: 2,
+    max_spread_pct: 5,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const slow = num(values, "ema_slow", 21);
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMin = num(values, "adx_min", 25);
+    const volLookback = num(values, "volume_lookback", 20);
+    const swingSpan = num(values, "swing_span", 3);
+    const minScore = num(values, "min_score", 5);
+    const entryMinutes = intervalMinutes(str(values, "timeframe", "5m"));
+    const regime = resample(candles, entryMinutes * 3);
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+      { key: "vwap", label: "VWAP", color: RANGE_COLOR },
+    ];
+    if (regime.length < 30 || candles.length < 40) return emptyAnalysis(candles, overlays);
+
+    const rCloses = regime.map((c) => c.close);
+    const rEmaF = ema(rCloses, fast);
+    const rEmaS = ema(rCloses, slow);
+    const rVwap = vwap(regime);
+    const rAdx = adx(regime, adxPeriod);
+    const rLast = regime.length - 1;
+    const regimeBull =
+      rEmaF[rLast]! > rEmaS[rLast]! &&
+      regime[rLast].close > (rVwap[rLast] ?? 0) &&
+      (rAdx[rLast]?.adx ?? 0) >= adxMin &&
+      (rAdx[rLast]?.adx ?? 0) >= (rAdx[rLast - 1]?.adx ?? 0);
+    const regimeBear =
+      rEmaF[rLast]! < rEmaS[rLast]! &&
+      regime[rLast].close < (rVwap[rLast] ?? Infinity) &&
+      (rAdx[rLast]?.adx ?? 0) >= adxMin &&
+      (rAdx[rLast]?.adx ?? 0) >= (rAdx[rLast - 1]?.adx ?? 0);
+
+    const vwapLine = vwap(candles);
+    const decorated = attachEma(candles, [fast, slow]).map((c, i) => {
+      const next: Candle = { ...c };
+      (next as Candle & { vwap?: number | null }).vwap = vwapLine[i];
+      return next;
+    });
+    const last = candles.length - 1;
+    const eF = decorated[last][emaKey(fast)] as number;
+    const eS = decorated[last][emaKey(slow)] as number;
+    const swingHi = lastSwingHigh(candles, swingSpan);
+    const swingLo = lastSwingLow(candles, swingSpan);
+    const avgVol = averageVolume(candles, volLookback);
+    const volOk = avgVol != null && (candles[last].volume ?? 0) > avgVol;
+    const breakHi = swingHi != null && candles[last].close > swingHi;
+    const breakLo = swingLo != null && candles[last].close < swingLo;
+    const lastVwap = vwapLine[last];
+
+    const bullChecks = [regimeBull, eF > eS, candles[last].close > (lastVwap ?? 0), volOk, breakHi, (rAdx[rLast]?.adx ?? 0) >= adxMin];
+    const bearChecks = [regimeBear, eF < eS, candles[last].close < (lastVwap ?? Infinity), volOk, breakLo, (rAdx[rLast]?.adx ?? 0) >= adxMin];
+    const bullScore = bullChecks.filter(Boolean).length;
+    const bearScore = bearChecks.filter(Boolean).length;
+
+    let signal: LiveSignal;
+    if (bullScore >= minScore && bullScore >= bearScore) {
+      signal = {
+        headline: `BUY CALL — momentum ${bullScore}/6`,
+        detail: "Regime + breakout + volume aligned. OTM Call delta band se lo.",
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (bearScore >= minScore) {
+      signal = {
+        headline: `BUY PUT — momentum ${bearScore}/6`,
+        detail: "Bear regime + breakdown. OTM Put delta band se lo.",
+        tone: "sell",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: `Momentum building — ${Math.max(bullScore, bearScore)}/6`,
+        detail: "Score abhi kam hai; breakout + ADX rising ka wait.",
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Bull score", value: `${bullScore}/6`, color: bullScore >= minScore ? "var(--green)" : undefined },
+      { label: "Bear score", value: `${bearScore}/6`, color: bearScore >= minScore ? "var(--red)" : undefined },
+      { label: "ADX", value: rAdx[rLast]?.adx?.toFixed(1) ?? "—" },
+      { label: "Volume", value: volOk ? "Hot" : "Cold" },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), ema9: num(values, "ema_fast", 9), ema21: num(values, "ema_slow", 21), ema50: num(values, "ema_slow", 21) };
+  },
+};
+
+/**
+ * Trend Debit Pro — defined-risk debit spread when trend is clean but not parabolic.
+ */
+const trendDebitPro: StrategyDef = {
+  id: "trend-debit-pro",
+  name: "Trend Debit Pro",
+  category: "Options · debit · pro",
+  blurb:
+    "Clean trend (ADX 22–35) mein Bull Call / Bear Put debit spread — capped risk, better than naked when IV mid.",
+  logic:
+    "15M regime: EMA align + VWAP side + ADX between min–max (bahut strong ADX par naked OTM better). 5M: pullback complete (RSI mid-zone se bounce) + EMA reclaim. Score ≥ 4/5. Long delta ~0.45–0.55, width configurable. Max loss = debit; target = 60–75% of max profit.",
+  accent: "#2563eb",
+  icon: Shield,
+  featured: true,
+  backtestable: false,
+  optionSpread: { bullish: "call", bearish: "put" },
+  engineNote:
+    "Options debit spread — backtest nahi. Spread panel long/short legs + max profit/loss dikhata hai.",
+  fields: [
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
+    { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "adx_min", label: "ADX min", kind: "number", group: "signal", min: 15, max: 40, onCard: true },
+    { key: "adx_max", label: "ADX max", kind: "number", group: "signal", min: 25, max: 50, onCard: true, hint: "Isse upar naked OTM prefer karo." },
+    { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 2, max: 50 },
+    { key: "min_score", label: "Min score (of 5)", kind: "number", group: "signal", min: 3, max: 5 },
+    ...marketFields,
+    { key: "spread_width", label: "Strike width", kind: "number", group: "risk", min: 100, max: 20000, step: 100 },
+    { key: "long_delta", label: "Long leg delta", kind: "number", group: "risk", min: 0.25, max: 0.7, step: 0.01 },
+    { key: "sl_debit_pct", label: "SL · % of debit", kind: "number", group: "risk", min: 20, max: 90 },
+    { key: "tp_max_profit_pct", label: "TP · % max profit", kind: "number", group: "risk", min: 30, max: 95 },
+    { key: "time_exit_hours", label: "Time exit · hours", kind: "number", group: "risk", min: 0.5, max: 12, step: 0.5 },
+    { key: "max_spread_pct", label: "Max bid/ask · %", kind: "number", group: "risk", min: 0.5, max: 20, step: 0.5 },
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "5m",
+    ema_fast: 9,
+    ema_slow: 21,
+    adx_period: 14,
+    adx_min: 22,
+    adx_max: 35,
+    rsi_period: 14,
+    min_score: 4,
+    spread_width: 2000,
+    long_delta: 0.5,
+    sl_debit_pct: 45,
+    tp_max_profit_pct: 70,
+    time_exit_hours: 2,
+    max_spread_pct: 8,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const slow = num(values, "ema_slow", 21);
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMin = num(values, "adx_min", 22);
+    const adxMax = num(values, "adx_max", 35);
+    const rsiPeriod = num(values, "rsi_period", 14);
+    const minScore = num(values, "min_score", 4);
+    const entryMinutes = intervalMinutes(str(values, "timeframe", "5m"));
+    const regime = resample(candles, entryMinutes * 3);
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+    ];
+    if (regime.length < 25 || candles.length < 30) return emptyAnalysis(candles, overlays);
+
+    const rCloses = regime.map((c) => c.close);
+    const rAdx = adx(regime, adxPeriod);
+    const rEmaF = ema(rCloses, fast);
+    const rEmaS = ema(rCloses, slow);
+    const rVwap = vwap(regime);
+    const rLast = regime.length - 1;
+    const adxNow = rAdx[rLast]?.adx ?? 0;
+    const adxBand = adxNow >= adxMin && adxNow <= adxMax;
+    const regimeBull = rEmaF[rLast]! > rEmaS[rLast]! && regime[rLast].close > (rVwap[rLast] ?? 0) && adxBand;
+    const regimeBear = rEmaF[rLast]! < rEmaS[rLast]! && regime[rLast].close < (rVwap[rLast] ?? Infinity) && adxBand;
+    const tooStrong = adxNow > adxMax;
+
+    const decorated = attachEma(candles, [fast, slow]);
+    const closes = candles.map((c) => c.close);
+    const rsiLine = rsi(closes, rsiPeriod);
+    const last = candles.length - 1;
+    const eF = decorated[last][emaKey(fast)] as number;
+    const eS = decorated[last][emaKey(slow)] as number;
+    const r0 = rsiLine[last];
+    const r1 = rsiLine[last - 1];
+    const reclaimBull = eF > eS && candles[last].close > eF && (r1 ?? 50) < 45 && (r0 ?? 0) > (r1 ?? 0);
+    const reclaimBear = eF < eS && candles[last].close < eF && (r1 ?? 50) > 55 && (r0 ?? 100) < (r1 ?? 100);
+
+    const bullScore = [regimeBull, eF > eS, reclaimBull, adxBand, (r0 ?? 0) > 40 && (r0 ?? 100) < 65].filter(Boolean).length;
+    const bearScore = [regimeBear, eF < eS, reclaimBear, adxBand, (r0 ?? 0) < 60 && (r0 ?? 0) > 35].filter(Boolean).length;
+
+    let signal: LiveSignal;
+    if (tooStrong) {
+      signal = {
+        headline: "ADX too strong — prefer naked OTM",
+        detail: `ADX ${adxNow.toFixed(1)} > ${adxMax}. Debit spread ka RR yahan weak padta hai.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else if (bullScore >= minScore && bullScore >= bearScore) {
+      signal = {
+        headline: `BULL CALL SPREAD — ${bullScore}/5`,
+        detail: "Defined-risk call debit. Width aur long delta tune karo.",
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (bearScore >= minScore) {
+      signal = {
+        headline: `BEAR PUT SPREAD — ${bearScore}/5`,
+        detail: "Defined-risk put debit.",
+        tone: "sell",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: `Debit setup forming — ${Math.max(bullScore, bearScore)}/5`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Bull", value: `${bullScore}/5` },
+      { label: "Bear", value: `${bearScore}/5` },
+      { label: "ADX", value: adxNow.toFixed(1), color: adxBand ? "var(--green)" : "var(--amber)" },
+      { label: "RSI", value: r0?.toFixed(1) ?? "—" },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), ema9: num(values, "ema_fast", 9), ema21: num(values, "ema_slow", 21), ema50: num(values, "ema_slow", 21) };
+  },
+};
+
+/**
+ * Vol Crush Condor — after volatility spike settles, sell iron condor.
+ */
+const volCrushCondor: StrategyDef = {
+  id: "vol-crush-condor",
+  name: "Vol Crush Condor",
+  category: "Options · range · pro",
+  blurb:
+    "ATR spike ke baad calm + low ADX + tight EMA — iron condor se premium sell. Pro vol-crush play.",
+  logic:
+    "Entry jab: (1) ATR abhi recent high se meaningfully neeche (crush), (2) ADX < max, (3) EMA fast/slow gap chhota, (4) price mid-range, (5) koi fresh breakout nahi. Ye classic 'event ke baad IV crush' setup hai — iron condor short wings se theta kamao, emergency delta pe hedge.",
+  accent: "#b45309",
+  icon: Boxes,
+  featured: true,
+  backtestable: false,
+  optionCondor: true,
+  engineNote:
+    "Options iron condor — candle backtest nahi. Condor panel 4 legs + credit risk dikhata hai.",
+  fields: [
+    { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
+    { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
+    { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "adx_max", label: "ADX max (range)", kind: "number", group: "signal", min: 10, max: 30, onCard: true },
+    { key: "atr_period", label: "ATR period", kind: "number", group: "signal", min: 5, max: 50 },
+    { key: "atr_lookback", label: "ATR spike lookback", kind: "number", group: "signal", min: 10, max: 100, onCard: true },
+    { key: "crush_pct", label: "ATR crush · % below peak", kind: "number", group: "signal", min: 10, max: 60, hint: "Current ATR peak se itna % neeche ho." },
+    { key: "ema_gap_pct", label: "Max EMA gap · %", kind: "number", group: "signal", min: 0.05, max: 2, step: 0.05 },
+    { key: "range_lookback", label: "Range bars", kind: "number", group: "signal", min: 10, max: 100 },
+    ...marketFields,
+    { key: "short_delta", label: "Short wing delta", kind: "number", group: "risk", min: 0.1, max: 0.35, step: 0.01 },
+    { key: "long_delta", label: "Long wing delta", kind: "number", group: "risk", min: 0.02, max: 0.2, step: 0.01 },
+    { key: "max_iv_pct", label: "Max IV · %", kind: "number", group: "risk", min: 20, max: 200 },
+    { key: "tp_credit_pct", label: "TP · % credit", kind: "number", group: "risk", min: 20, max: 90 },
+    { key: "sl_credit_mult", label: "SL · × credit", kind: "number", group: "risk", min: 1, max: 4, step: 0.1 },
+    { key: "emergency_delta", label: "Emergency delta", kind: "number", group: "risk", min: 0.2, max: 0.6, step: 0.01 },
+    { key: "time_exit_hours", label: "Time exit · hours", kind: "number", group: "risk", min: 0.5, max: 24, step: 0.5 },
+    { key: "max_spread_pct", label: "Max bid/ask · %", kind: "number", group: "risk", min: 0.5, max: 25, step: 0.5 },
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "15m",
+    ema_fast: 9,
+    ema_slow: 21,
+    adx_period: 14,
+    adx_max: 18,
+    atr_period: 14,
+    atr_lookback: 40,
+    crush_pct: 25,
+    ema_gap_pct: 0.35,
+    range_lookback: 30,
+    short_delta: 0.2,
+    long_delta: 0.08,
+    max_iv_pct: 90,
+    tp_credit_pct: 50,
+    sl_credit_mult: 2,
+    emergency_delta: 0.35,
+    time_exit_hours: 4,
+    max_spread_pct: 10,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "ema_fast", 9);
+    const slow = num(values, "ema_slow", 21);
+    const adxPeriod = num(values, "adx_period", 14);
+    const adxMax = num(values, "adx_max", 18);
+    const atrPeriod = num(values, "atr_period", 14);
+    const atrLookback = num(values, "atr_lookback", 40);
+    const crushPct = num(values, "crush_pct", 25) / 100;
+    const gapMax = num(values, "ema_gap_pct", 0.35) / 100;
+    const rangeN = num(values, "range_lookback", 30);
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+    ];
+    if (candles.length < Math.max(atrLookback, rangeN, slow) + 5) return emptyAnalysis(candles, overlays);
+
+    const decorated = attachEma(candles, [fast, slow]);
+    const atrLine = atr(candles, atrPeriod);
+    const adxLine = adx(candles, adxPeriod);
+    const last = candles.length - 1;
+    const atrNow = atrLine[last];
+    const slice = atrLine.slice(Math.max(0, last - atrLookback), last + 1).filter((v): v is number => v != null);
+    const atrPeak = slice.length ? Math.max(...slice) : null;
+    const crushed = atrNow != null && atrPeak != null && atrNow <= atrPeak * (1 - crushPct);
+    const adxNow = adxLine[last]?.adx;
+    const adxCalm = adxNow != null && adxNow < adxMax;
+    const f = decorated[last][emaKey(fast)] as number;
+    const s = decorated[last][emaKey(slow)] as number;
+    const emaGapPct = s !== 0 ? Math.abs(f - s) / Math.abs(s) : 1;
+    const emaFlat = emaGapPct <= gapMax;
+    const window = candles.slice(Math.max(0, last - rangeN + 1), last + 1);
+    const rangeHigh = Math.max(...window.map((c) => c.high));
+    const rangeLow = Math.min(...window.map((c) => c.low));
+    const mid = (rangeHigh + rangeLow) / 2;
+    const close = candles[last].close;
+    const inMid = Math.abs(close - mid) / mid < 0.015;
+    const noBreak = close < rangeHigh * 0.998 && close > rangeLow * 1.002;
+
+    const checks = [crushed, adxCalm, emaFlat, inMid, noBreak];
+    const score = checks.filter(Boolean).length;
+    const labels = ["ATR crush", "ADX calm", "EMA flat", "Mid-range", "No breakout"];
+
+    let signal: LiveSignal;
+    if (score === 5) {
+      signal = {
+        headline: "SELL IRON CONDOR — vol crush",
+        detail: "ATR peak se neeche, range-bound. Short wings + long wings Condor panel se.",
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      const failed = labels.filter((_, i) => !checks[i]);
+      signal = {
+        headline: `Vol crush forming — ${score}/5`,
+        detail: `Pending: ${failed.join(", ")}.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Setup", value: `${score}/5`, color: score === 5 ? "var(--green)" : undefined },
+      { label: "ATR vs peak", value: atrNow != null && atrPeak != null ? `${((1 - atrNow / atrPeak) * 100).toFixed(0)}%↓` : "—" },
+      { label: "ADX", value: adxNow?.toFixed(1) ?? "—", color: adxCalm ? "var(--green)" : "var(--red)" },
+      { label: "EMA gap", value: `${(emaGapPct * 100).toFixed(2)}%` },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), ema9: num(values, "ema_fast", 9), ema21: num(values, "ema_slow", 21), ema50: num(values, "ema_slow", 21) };
+  },
+};
+
+export const STRATEGIES: StrategyDef[] = [
+  emaCrossover,
+  rsiDivergence,
+  macdStrategy,
+  customEma,
+  rangeBreakout,
+  atrChannelPro,
+  vwapReclaimPro,
+  emaPullbackPro,
+  otmDirectional,
+  debitSpread,
+  ironCondor,
+  momentumOtmPro,
+  trendDebitPro,
+  volCrushCondor,
+];
 
 export function getStrategy(id: string | undefined): StrategyDef | undefined {
   return STRATEGIES.find((s) => s.id === id);

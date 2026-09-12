@@ -1,20 +1,20 @@
-import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { JetBrains_Mono, Sora } from "next/font/google";
 
-const tradeSans = IBM_Plex_Sans({
+const tradeSans = Sora({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800"],
   variable: "--font-trade",
   display: "swap",
 });
 
-const tradeMono = IBM_Plex_Mono({
+const tradeMono = JetBrains_Mono({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   variable: "--font-trade-mono",
   display: "swap",
 });
 
-/** Crypto terminal — denser trader chrome; fonts sirf /trade ke andar. */
+/** Crypto terminal — Sora + JetBrains; fonts sirf /trade ke andar. */
 export default function TradeLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className={`${tradeSans.variable} ${tradeMono.variable} h-full`}>

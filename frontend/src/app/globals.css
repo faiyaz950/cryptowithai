@@ -257,54 +257,134 @@ textarea:focus-visible {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   TRADING TERMINAL — premium trader chrome (/trade)
-   Dense, data-first. Fonts from trade/layout (IBM Plex).
+   TRADING TERMINAL — "Ink Header / Paper Desk"
+   Sora (UI) + JetBrains Mono (prices). Dark chrome, paper workspace.
    ═══════════════════════════════════════════════════════════ */
 
 .trade-root {
-  --tr-line: #dfe5ee;
-  --tr-line-soft: #ebf0f6;
-  --tr-head: #f4f7fb;
+  --tr-line: #e2e8f0;
+  --tr-line-soft: #eef2f7;
+  --tr-head: #f8fafc;
   --tr-field: #f1f5f9;
   --tr-h: 36px;
-  --tr-mono: var(--font-trade-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --tr-radius: 10px;
-  --tr-radius-sm: 7px;
-  --tr-ink: #0b1220;
-  --accent: #0f766e;
-  --accent-hover: #0d9488;
-  --accent-soft: #ecfdf8;
-  --accent-dim: rgba(15, 118, 110, 0.12);
-  --ring: #0d9488;
-  --green: #059669;
-  --red: #dc2626;
-  font-family: var(--font-trade), "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: -0.011em;
+  --tr-mono: var(--font-trade-mono), "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --tr-radius: 12px;
+  --tr-radius-sm: 8px;
+  --tr-ink: #0a0f1a;
+  --tr-ink-2: #111827;
+  --tr-paper: #f4f6f9;
+  --tr-mint: #12b886;
+  --tr-mint-deep: #0ca678;
+  --accent: #0ca678;
+  --accent-hover: #12b886;
+  --accent-soft: #e6fcf5;
+  --accent-dim: rgba(12, 166, 120, 0.14);
+  --ring: #12b886;
+  --green: #0ca678;
+  --red: #e03131;
+  --amber: #f59f00;
+  font-family: var(--font-trade), Sora, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.018em;
   color: var(--tr-ink);
-  background:
-    radial-gradient(1200px 420px at 12% -10%, rgba(15, 118, 110, 0.07), transparent 55%),
-    radial-gradient(900px 380px at 92% 0%, rgba(15, 23, 42, 0.045), transparent 50%),
-    linear-gradient(180deg, #eef2f7 0%, #f5f7fa 42%, #f3f5f8 100%);
+  background-color: var(--tr-paper);
+  background-image:
+    linear-gradient(rgba(10, 15, 26, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(10, 15, 26, 0.028) 1px, transparent 1px),
+    radial-gradient(900px 380px at 8% -8%, rgba(12, 166, 120, 0.09), transparent 55%),
+    radial-gradient(700px 320px at 100% 0%, rgba(10, 15, 26, 0.05), transparent 50%);
+  background-size: 28px 28px, 28px 28px, auto, auto;
+  background-attachment: fixed;
 }
 
 .tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 .trade-root .tnum,
 .trade-root .trade-ticker-value,
 .trade-root .trade-kpi-value,
-.trade-root .ms-kpi-value {
+.trade-root .ms-kpi-value,
+.trade-root .trade-input,
+.trade-root .trade-select {
   font-family: var(--tr-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
 }
 
-/* ── Top bar ───────────────────────────────────────────── */
+.trade-root h1,
+.trade-root h2,
+.trade-root h3,
+.trade-root .trade-display {
+  font-family: var(--font-trade), Sora, sans-serif;
+  letter-spacing: -0.035em;
+  font-weight: 700;
+}
+
+/* ── Ink top bar ───────────────────────────────────────── */
 .trade-topbar {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: saturate(180%) blur(18px);
-  -webkit-backdrop-filter: saturate(180%) blur(18px);
-  border-bottom: 1px solid var(--tr-line);
-  box-shadow: 0 1px 0 rgba(255,255,255,.7) inset, 0 10px 28px -22px rgba(15, 23, 42, .4);
+  background:
+    linear-gradient(180deg, #121826 0%, #0a0f1a 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 1px 0 rgba(18, 184, 134, 0.18),
+    0 18px 40px -28px rgba(0, 0, 0, 0.65);
+  color: #e8edf5;
+}
+
+.trade-topbar .trade-iconbtn {
+  color: #94a3b8;
+  border-color: transparent;
+}
+.trade-topbar .trade-iconbtn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.trade-brand-kicker {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #12b886;
+  line-height: 1;
+  margin-bottom: 3px;
+}
+.trade-brand-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #f8fafc;
+  line-height: 1.15;
+}
+.trade-brand-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #94a3b8;
+}
+.trade-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: var(--tr-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(18, 184, 134, 0.12);
+  color: #5eead4;
+  border: 1px solid rgba(18, 184, 134, 0.28);
+}
+.trade-status-chip[data-offline="true"] {
+  background: rgba(224, 49, 49, 0.12);
+  color: #fca5a5;
+  border-color: rgba(224, 49, 49, 0.28);
 }
 
 .trade-iconbtn {
@@ -314,7 +394,7 @@ textarea:focus-visible {
   width: 34px;
   height: 34px;
   flex: none;
-  border-radius: var(--tr-radius-sm, 7px);
+  border-radius: var(--tr-radius-sm, 8px);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
@@ -323,32 +403,33 @@ textarea:focus-visible {
 }
 .trade-iconbtn:hover { background: var(--tr-field); color: var(--text-primary); border-color: var(--tr-line); }
 
-/* Live price ticker strip */
+/* Live price ticker — inset on ink bar */
 .trade-ticker {
   display: none;
   align-items: stretch;
-  border: 1px solid var(--tr-line);
-  border-radius: var(--tr-radius-sm, 7px);
-  background: linear-gradient(180deg, #fff, var(--tr-head));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--tr-radius-sm, 8px);
+  background: rgba(255, 255, 255, 0.04);
   overflow: hidden;
+  backdrop-filter: blur(8px);
 }
 @media (min-width: 900px) { .trade-ticker { display: flex; } }
-.trade-ticker > * + * { border-left: 1px solid var(--tr-line); }
-.trade-ticker-item { padding: 6px 14px; display: flex; flex-direction: column; justify-content: center; }
+.trade-ticker > * + * { border-left: 1px solid rgba(255, 255, 255, 0.08); }
+.trade-ticker-item { padding: 7px 14px; display: flex; flex-direction: column; justify-content: center; }
 .trade-ticker-label {
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 700;
-  letter-spacing: .11em;
+  letter-spacing: .14em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: #64748b;
   white-space: nowrap;
 }
 .trade-ticker-value {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
   margin-top: 2px;
-  letter-spacing: -.02em;
-  font-variant-numeric: tabular-nums;
+  letter-spacing: -.03em;
+  color: #f1f5f9;
   white-space: nowrap;
 }
 
@@ -356,11 +437,11 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 0;
-  margin: 0 16px 8px;
+  margin: 0 12px 10px;
   padding: 0;
-  border-radius: var(--tr-radius-sm, 7px);
-  border: 1px solid var(--tr-line);
-  background: #fff;
+  border-radius: var(--tr-radius-sm, 8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -368,7 +449,31 @@ textarea:focus-visible {
 .trade-mob-quote::-webkit-scrollbar { display: none; }
 @media (min-width: 900px) { .trade-mob-quote { display: none; } }
 .trade-mob-quote .trade-ticker-item { padding: 8px 12px; }
-.trade-mob-quote .trade-ticker-item + .trade-ticker-item { border-left: 1px solid var(--tr-line); }
+.trade-mob-quote .trade-ticker-item + .trade-ticker-item { border-left: 1px solid rgba(255, 255, 255, 0.08); }
+
+.trade-topbar .trade-btn-ghost {
+  background: transparent;
+  color: #cbd5e1;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.trade-topbar .trade-btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.trade-topbar .trade-btn-primary {
+  background: linear-gradient(180deg, #15c48f, #0ca678);
+  box-shadow: 0 1px 0 rgba(255,255,255,.2) inset, 0 8px 20px -10px rgba(18, 184, 134, .8);
+}
+.trade-topbar .trade-badge-neutral {
+  background: rgba(255,255,255,.06);
+  color: #94a3b8;
+  border-color: rgba(255,255,255,.1);
+}
+.trade-topbar .trade-badge-green {
+  background: rgba(18, 184, 134, .15);
+  color: #5eead4;
+}
 
 /* Status dot with soft ping */
 .trade-dot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; position: relative; flex: none; }
@@ -387,11 +492,12 @@ textarea:focus-visible {
   100% { transform: scale(1.7); opacity: 0; }
 }
 
-/* ── Tabs (underline, scroll on mobile) ────────────────── */
+/* ── Tabs on ink bar ───────────────────────────────────── */
 .trade-tabs-wrap {
   position: relative;
-  margin: 0 -16px;
-  padding: 0 16px;
+  margin: 0 -12px;
+  padding: 0 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 @media (min-width: 1100px) {
   .trade-tabs-wrap { margin: 0; padding: 0; }
@@ -401,18 +507,18 @@ textarea:focus-visible {
   content: "";
   position: absolute;
   top: 0;
-  bottom: 1px;
-  width: 24px;
+  bottom: 0;
+  width: 28px;
   z-index: 2;
   pointer-events: none;
 }
 .trade-tabs-wrap::before {
   left: 0;
-  background: linear-gradient(90deg, rgba(255,255,255,.95), transparent);
+  background: linear-gradient(90deg, #0a0f1a, transparent);
 }
 .trade-tabs-wrap::after {
   right: 0;
-  background: linear-gradient(270deg, rgba(255,255,255,.95), transparent);
+  background: linear-gradient(270deg, #0a0f1a, transparent);
 }
 @media (min-width: 1100px) {
   .trade-tabs-wrap::before,
@@ -429,11 +535,11 @@ textarea:focus-visible {
 .trade-tab {
   position: relative;
   height: 42px;
-  padding: 0 11px;
+  padding: 0 12px;
   font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: -.01em;
-  color: var(--text-muted);
+  letter-spacing: -.015em;
+  color: #7c8aa0;
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -444,19 +550,20 @@ textarea:focus-visible {
 @media (min-width: 640px) {
   .trade-tab { padding: 0 14px; font-size: 13px; }
 }
-.trade-tab:hover { color: var(--text-secondary); }
-.trade-tab[data-active="true"] { color: var(--tr-ink, var(--text-primary)); }
+.trade-tab:hover { color: #cbd5e1; }
+.trade-tab[data-active="true"] { color: #f8fafc; }
 .trade-tab::after {
   content: "";
   position: absolute;
   left: 10px;
   right: 10px;
-  bottom: -1px;
+  bottom: 0;
   height: 2.5px;
   border-radius: 2px 2px 0 0;
-  background: var(--accent);
+  background: linear-gradient(90deg, #0ca678, #5eead4);
   transform: scaleX(0);
   transition: transform .18s ease;
+  box-shadow: 0 0 12px rgba(18, 184, 134, 0.55);
 }
 .trade-tab[data-active="true"]::after { transform: scaleX(1); }
 .trade-tab-short { display: inline; }
@@ -466,34 +573,48 @@ textarea:focus-visible {
   .trade-tab-full { display: inline; }
 }
 
-/* ── Panels ────────────────────────────────────────────── */
+/* ── Paper panels (workspace) ──────────────────────────── */
 .trade-panel {
-  background: rgba(255, 255, 255, 0.94);
+  position: relative;
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--tr-line);
-  border-radius: var(--tr-radius, 10px);
+  border-radius: var(--tr-radius, 12px);
   box-shadow:
-    0 1px 0 rgba(255,255,255,.85) inset,
-    0 1px 2px rgba(15, 23, 42, .04),
-    0 14px 36px -24px rgba(15, 23, 42, .4);
+    0 1px 0 rgba(255,255,255,.9) inset,
+    0 1px 2px rgba(10, 15, 26, .04),
+    0 18px 40px -28px rgba(10, 15, 26, .45);
+  overflow: hidden;
+}
+.trade-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #0ca678, transparent 85%);
+  opacity: 0.55;
+  pointer-events: none;
 }
 .trade-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 11px 16px 11px 18px;
   border-bottom: 1px solid var(--tr-line-soft);
-  background: linear-gradient(180deg, #fafbfc, transparent);
-  border-radius: var(--tr-radius, 10px) var(--tr-radius, 10px) 0 0;
+  background: linear-gradient(180deg, #fbfcfd, transparent);
+  border-radius: var(--tr-radius, 12px) var(--tr-radius, 12px) 0 0;
 }
 .trade-panel-title {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: .1em;
+  letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
-.trade-panel-body { padding: 14px; }
+.trade-panel-body { padding: 14px 16px 16px 18px; }
 
 .trade-section-label {
   display: flex;
@@ -543,7 +664,7 @@ textarea:focus-visible {
   outline: none;
   background-color: #fff;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, .16);
+  box-shadow: 0 0 0 3px rgba(18, 184, 134, .18);
 }
 .trade-select {
   appearance: none;
@@ -686,11 +807,11 @@ textarea:focus-visible {
 .trade-btn-lg { height: 42px; padding: 0 18px; font-size: 13.5px; }
 
 .trade-btn-primary {
-  background: var(--accent);
+  background: linear-gradient(180deg, #15c48f, #0ca678);
   color: #fff;
-  box-shadow: 0 1px 2px rgba(15, 118, 110, .28), 0 10px 22px -12px rgba(15, 118, 110, .65);
+  box-shadow: 0 1px 0 rgba(255,255,255,.22) inset, 0 10px 22px -12px rgba(12, 166, 120, .7);
 }
-.trade-btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.trade-btn-primary:hover:not(:disabled) { background: linear-gradient(180deg, #1ad09a, #0b9a6e); }
 
 .trade-btn-ghost {
   background: #fff;
@@ -862,15 +983,15 @@ textarea:focus-visible {
 .trade-featured {
   position: relative;
   overflow: hidden;
-  border-color: rgba(15, 118, 110, .32);
-  box-shadow: 0 1px 2px rgba(15, 118, 110, .06), 0 20px 44px -30px rgba(15, 118, 110, .75);
+  border-color: rgba(12, 166, 120, .35);
+  box-shadow: 0 1px 2px rgba(12, 166, 120, .08), 0 22px 48px -30px rgba(12, 166, 120, .7);
 }
 .trade-featured::before {
   content: "";
   position: absolute;
   inset: 0 0 auto 0;
   height: 3px;
-  background: linear-gradient(90deg, #0f766e, #14b8a6, #0d9488);
+  background: linear-gradient(90deg, #0ca678, #5eead4, #0ca678);
 }
 
 /* ── Console / log ─────────────────────────────────────── */
@@ -1945,9 +2066,9 @@ textarea:focus-visible {
   background: var(--bg-card);
 }
 .ms-kpi-value {
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -.02em;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -.04em;
   margin-top: 6px;
 }
 

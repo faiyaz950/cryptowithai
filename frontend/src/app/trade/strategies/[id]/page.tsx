@@ -162,14 +162,13 @@ function Shell({
               <ArrowLeft className="w-[17px] h-[17px]" />
             </Link>
             <Logo size={24} />
-            <span className="trade-strategy-icon" style={{ background: `${def.accent}1a`, color: def.accent }}>
+            <span className="trade-strategy-icon" style={{ background: `${def.accent}22`, color: def.accent }}>
               <Icon className="w-4 h-4" />
             </span>
             <div className="min-w-0">
-              <h1 className="text-[13px] sm:text-[14px] font-bold leading-tight tracking-tight truncate">{def.name}</h1>
-              <p className="text-[10px] sm:text-[11px] font-medium uppercase tracking-wider mt-0.5 truncate" style={{ color: "var(--text-muted)" }}>
-                {def.category}
-              </p>
+              <div className="trade-brand-kicker">{isCustom ? "Custom strategy" : "Catalogue"}</div>
+              <h1 className="trade-brand-title truncate">{def.name}</h1>
+              <p className="trade-brand-meta truncate">{def.category}</p>
             </div>
 
             <div className="flex-1" />
