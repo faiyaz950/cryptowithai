@@ -114,7 +114,7 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
 
   const askAi = () => {
     sessionStorage.setItem("arjunai_portfolio_prompt", buildAiPrompt(rows, scannedInterval));
-    router.push("/");
+    router.push("/trade?tab=ai");
   };
 
   return (

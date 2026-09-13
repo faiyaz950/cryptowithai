@@ -6,8 +6,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "Finowings AI — Stocks, Crypto & Mutual Funds Expert",
-  description: "India ka #1 Financial AI. Stocks (NSE/BSE), Cryptocurrency, aur Mutual Funds expert. Powered by Finowings.",
+  title: "Finowings Desk — Crypto Trade, AI & Portfolio",
+  description: "Finowings crypto trading desk with AI assistant, portfolio, screeners, and strategy tools.",
   icons: {
     icon: "/finoailogo.png",
     apple: "/finoailogo.png",

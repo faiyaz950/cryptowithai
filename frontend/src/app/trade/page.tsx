@@ -11,7 +11,6 @@ import {
   Crown,
   FlaskConical,
   FolderKanban,
-  Home,
   Layers,
   LineChart,
   Moon,
@@ -64,13 +63,25 @@ const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
   loading: () => <div className="w-full h-full shimmer" />,
 });
 
-type Tab = "markets" | "screener" | "backtest" | "strategies" | "mine" | "builder" | "options";
+const AiAssistant = dynamic(() => import("@/components/ai/AiAssistant"), {
+  ssr: false,
+  loading: () => <div className="w-full h-full shimmer rounded-xl" />,
+});
+
+const PortfolioDesk = dynamic(() => import("@/components/portfolio/PortfolioDesk"), {
+  ssr: false,
+  loading: () => <div className="w-full h-full shimmer rounded-xl" />,
+});
+
+type Tab = "ai" | "markets" | "screener" | "backtest" | "strategies" | "mine" | "builder" | "options" | "portfolio";
 
 const SHOW_OPTIONS_TAB = true;
 
 const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
+  { id: "ai", label: "AI", icon: Sparkles },
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screeners", icon: Radar },
+  { id: "portfolio", label: "Portfolio", icon: Briefcase },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
   { id: "strategies", label: "Catalogue", icon: Layers },
   { id: "mine", label: "My Strategies", icon: FolderKanban },
@@ -79,16 +90,15 @@ const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
 ];
 
 const NAV: {
-  id: Tab | "home" | "portfolio" | "watchlist";
+  id: Tab | "watchlist";
   label: string;
   icon: typeof LineChart;
-  href?: string;
 }[] = [
-  { id: "home", label: "Home", icon: Home, href: "/" },
+  { id: "ai", label: "AI Assistant", icon: Sparkles },
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screeners", icon: Radar },
   { id: "watchlist", label: "Watchlist", icon: Star },
-  { id: "portfolio", label: "Portfolio", icon: Briefcase, href: "/portfolio" },
+  { id: "portfolio", label: "Portfolio", icon: Briefcase },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
   { id: "strategies", label: "Catalogue", icon: Layers },
   { id: "mine", label: "My Strategies", icon: FolderKanban },
@@ -343,7 +353,7 @@ function TradeTerminal() {
       "Buy/sell signal, support/resistance aur risk batao.",
     ].filter(Boolean).join(" ");
     sessionStorage.setItem("arjunai_portfolio_prompt", prompt);
-    router.push("/");
+    goTab("ai");
   };
 
   const onSearchSubmit = (e: FormEvent) => {
@@ -397,20 +407,13 @@ function TradeTerminal() {
     ];
   }, [candles, interval, market]);
 
-  const activeNav = tab === "markets" ? "markets" : tab;
+  const activeNav = tab;
 
   const renderNavItem = (item: (typeof NAV)[number], mobile = false) => {
     const Icon = item.icon;
-    const isActive =
-      item.id === "watchlist" ? false :
-      item.href ? false :
-      item.id === activeNav;
+    const isActive = item.id === "watchlist" ? false : item.id === activeNav;
 
     const onClick = () => {
-      if (item.href) {
-        router.push(item.href);
-        return;
-      }
       if (item.id === "watchlist") {
         goTab("markets");
         setNotice("Watchlist soon — Markets pe switch kiya");
@@ -500,7 +503,7 @@ function TradeTerminal() {
             {NAV.map((item) => renderNavItem(item, true))}
           </div>
 
-          <div className="desk-body">
+          <div className={`desk-body${tab === "ai" || tab === "portfolio" ? " desk-body-fill" : ""}`}>
             {online === false && (
               <div className="trade-panel flex items-start gap-3 px-4 py-3 text-[13px] mb-3" style={{ borderColor: "rgba(255, 179, 0, 0.35)", background: "rgba(255, 179, 0, 0.06)" }}>
                 <Activity className="w-4 h-4 mt-0.5 flex-none" style={{ color: "var(--amber)" }} />
@@ -525,6 +528,18 @@ function TradeTerminal() {
                 <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="trade-iconbtn trade-iconbtn-sm">
                   <X className="w-3.5 h-3.5" />
                 </button>
+              </div>
+            )}
+
+            {tab === "ai" && (
+              <div className="desk-embed trade-panel overflow-hidden">
+                <AiAssistant embedded />
+              </div>
+            )}
+
+            {tab === "portfolio" && (
+              <div className="desk-embed">
+                <PortfolioDesk embedded />
               </div>
             )}
 

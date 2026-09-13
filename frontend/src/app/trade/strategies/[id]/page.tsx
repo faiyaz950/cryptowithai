@@ -102,7 +102,7 @@ function StrategyView({
     const timeframe = str(initialValues, "timeframe", "1h");
     const prompt = `${def.name} strategy ${symbolLabel(symbol)} ke ${timeframe} chart par samjhao. ${def.logic} Entry, exit, risk aur is setup ki khaamiyan batao.`;
     sessionStorage.setItem("arjunai_portfolio_prompt", prompt);
-    router.push("/");
+    router.push("/trade?tab=ai");
   };
 
   return (

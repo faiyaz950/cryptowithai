@@ -44,7 +44,7 @@ export default function LoginPage() {
       } else {
         await signup(name, email, password);
       }
-      router.push("/");
+      router.push("/trade");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -57,7 +57,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login("demo@finowings.com", "demo123");
-      router.push("/");
+      router.push("/trade");
     } catch {
       setError("Demo login failed");
     } finally {
