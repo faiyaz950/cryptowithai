@@ -8,11 +8,14 @@ import {
   LineStyle,
   TickMarkType,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
+  type MouseEventParams,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { Candle } from "@/lib/cryptoApi";
+import type { DrawTool } from "@/components/trade/ChartDeskTools";
 
 /** Delta timestamps UTC hote hain; axis/tooltip IST mein dikhao. */
 const CHART_TZ = "Asia/Kolkata";
@@ -71,8 +74,13 @@ interface Props {
   showEma9?: boolean;
   showEma21?: boolean;
   showEma50?: boolean;
+  showVolume?: boolean;
   /** Diya ho to fixed EMA 9/21/50 ki jagah yahi lines draw hongi. */
   overlays?: ChartLine[];
+  compareCandles?: Candle[];
+  compareLabel?: string;
+  drawTool?: DrawTool;
+  clearDrawingsKey?: number;
 }
 
 interface Readout {
@@ -94,6 +102,16 @@ function fmt(n: number): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function pctSeries(candles: Candle[]): { time: UTCTimestamp; value: number }[] {
+  const valid = candles.filter((c) => c.close && c.time).sort((a, b) => a.time - b.time);
+  const base = valid[0]?.close;
+  if (!base) return [];
+  return valid.map((c) => ({
+    time: toUnix(c.time),
+    value: ((c.close - base) / base) * 100,
+  }));
+}
+
 export default function CandleChart({
   candles,
   symbol,
@@ -101,16 +119,27 @@ export default function CandleChart({
   showEma9 = true,
   showEma21 = true,
   showEma50 = true,
+  showVolume = true,
   overlays,
+  compareCandles,
+  compareLabel,
+  drawTool = "cursor",
+  clearDrawingsKey = 0,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeries = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const compareSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const lineSeries = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
+  const priceLines = useRef<IPriceLine[]>([]);
+  const trendSeries = useRef<ISeriesApi<"Line">[]>([]);
+  const trendDraft = useRef<{ time: UTCTimestamp; price: number } | null>(null);
+  const drawToolRef = useRef(drawTool);
   const [readout, setReadout] = useState<Readout | null>(null);
 
-  // Classic terminal view = EMA 9/21/50 toggles; strategy pages apni lines bhejte hain.
+  drawToolRef.current = drawTool;
+
   const lines = useMemo<ChartLine[]>(() => {
     if (overlays) return overlays;
     return [
@@ -149,8 +178,12 @@ export default function CandleChart({
       },
       rightPriceScale: {
         borderColor: "#1a2230",
-        scaleMargins: { top: 0.08, bottom: 0.26 },
+        scaleMargins: { top: 0.06, bottom: 0.18 },
         entireTextOnly: true,
+      },
+      leftPriceScale: {
+        visible: false,
+        borderColor: "#1a2230",
       },
       localization: {
         timeFormatter: formatCrosshairTime,
@@ -186,8 +219,22 @@ export default function CandleChart({
       priceLineVisible: false,
     });
     chart.priceScale("volume").applyOptions({
-      scaleMargins: { top: 0.82, bottom: 0 },
+      scaleMargins: { top: 0.78, bottom: 0 },
       borderVisible: false,
+    });
+
+    compareSeries.current = chart.addLineSeries({
+      color: "#38bdf8",
+      lineWidth: 2,
+      priceScaleId: "compare",
+      lastValueVisible: true,
+      priceLineVisible: false,
+      crosshairMarkerVisible: true,
+      title: "Compare",
+    });
+    chart.priceScale("compare").applyOptions({
+      visible: false,
+      scaleMargins: { top: 0.1, bottom: 0.3 },
     });
 
     chartRef.current = chart;
@@ -210,6 +257,52 @@ export default function CandleChart({
       });
     });
 
+    const onClick = (param: MouseEventParams) => {
+      const tool = drawToolRef.current;
+      if (tool === "cursor" || !param.point || !candleSeries.current || !chartRef.current) return;
+      const price = candleSeries.current.coordinateToPrice(param.point.y);
+      if (price == null || !Number.isFinite(price)) return;
+
+      if (tool === "hline") {
+        const line = candleSeries.current.createPriceLine({
+          price,
+          color: "#00e676",
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "H",
+        });
+        priceLines.current.push(line);
+        return;
+      }
+
+      if (tool === "trend") {
+        if (!param.time) return;
+        const time = (typeof param.time === "number" ? param.time : toUnix(timeToDate(param.time).getTime())) as UTCTimestamp;
+        const draft = trendDraft.current;
+        if (!draft) {
+          trendDraft.current = { time, price };
+          return;
+        }
+        const series = chartRef.current.addLineSeries({
+          color: "#f472b6",
+          lineWidth: 2,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        const a = draft.time <= time ? draft : { time, price };
+        const b = draft.time <= time ? { time, price } : draft;
+        series.setData([
+          { time: a.time, value: a.price },
+          { time: b.time, value: b.price },
+        ]);
+        trendSeries.current.push(series);
+        trendDraft.current = null;
+      }
+    };
+    chart.subscribeClick(onClick);
+
     const observer = new ResizeObserver(() => {
       if (!wrapRef.current || !chartRef.current) return;
       chartRef.current.applyOptions({
@@ -223,12 +316,57 @@ export default function CandleChart({
       observer.disconnect();
       chart.remove();
       chartRef.current = null;
-      // chart.remove() saari series bhi hata deta hai — stale handles rakhna khatarnak hai.
+      candleSeries.current = null;
+      volumeSeries.current = null;
+      compareSeries.current = null;
       series.clear();
+      priceLines.current = [];
+      trendSeries.current = [];
+      trendDraft.current = null;
     };
   }, []);
 
-  // Line set badalte hi series add/remove karo (periods change ho sakte hain).
+  useEffect(() => {
+    if (!candleSeries.current) return;
+    for (const line of priceLines.current) {
+      try {
+        candleSeries.current.removePriceLine(line);
+      } catch {
+        /* already gone */
+      }
+    }
+    priceLines.current = [];
+    const chart = chartRef.current;
+    if (chart) {
+      for (const s of trendSeries.current) {
+        try {
+          chart.removeSeries(s);
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    trendSeries.current = [];
+    trendDraft.current = null;
+  }, [clearDrawingsKey]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.applyOptions({
+      handleScroll: {
+        mouseWheel: drawTool === "cursor",
+        pressedMouseMove: drawTool === "cursor",
+      },
+      crosshair: {
+        mode: drawTool === "cursor" ? CrosshairMode.Normal : CrosshairMode.Magnet,
+      },
+    });
+    if (wrapRef.current) {
+      wrapRef.current.style.cursor = drawTool === "cursor" ? "default" : "crosshair";
+    }
+  }, [drawTool]);
+
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -275,18 +413,23 @@ export default function CandleChart({
 
     candleSeries.current.setData(bars);
 
-    volumeSeries.current?.setData(
-      valid
-        .map((c) => ({
-          time: toUnix(c.time),
-          value: c.volume ?? 0,
-          color: c.close >= c.open ? "rgba(0, 230, 118, 0.32)" : "rgba(255, 82, 82, 0.28)",
-        }))
-        .sort((a, b) => (a.time as number) - (b.time as number)),
-    );
+    if (showVolume) {
+      volumeSeries.current?.setData(
+        valid
+          .map((c) => ({
+            time: toUnix(c.time),
+            value: c.volume ?? 0,
+            color: c.close >= c.open ? "rgba(0, 230, 118, 0.32)" : "rgba(255, 82, 82, 0.28)",
+          }))
+          .sort((a, b) => (a.time as number) - (b.time as number)),
+      );
+      volumeSeries.current?.applyOptions({ visible: true });
+    } else {
+      volumeSeries.current?.setData([]);
+      volumeSeries.current?.applyOptions({ visible: false });
+    }
 
     for (const [key, series] of lineSeries.current) {
-      // `key` runtime par aata hai (jaise `ema_21`), isliye lookup untyped hai.
       series.setData(
         candles
           .map((c) => ({ time: toUnix(c.time), value: Number((c as unknown as Record<string, unknown>)[key]) }))
@@ -295,7 +438,24 @@ export default function CandleChart({
       );
     }
     chartRef.current?.timeScale().fitContent();
-  }, [candles, lineSig]);
+  }, [candles, lineSig, showVolume]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = compareSeries.current;
+    if (!chart || !series) return;
+
+    if (!compareCandles?.length) {
+      series.setData([]);
+      chart.priceScale("compare").applyOptions({ visible: false });
+      series.applyOptions({ title: "Compare" });
+      return;
+    }
+
+    series.setData(pctSeries(compareCandles));
+    series.applyOptions({ title: compareLabel ? `${compareLabel} %` : "Compare %" });
+    chart.priceScale("compare").applyOptions({ visible: true });
+  }, [compareCandles, compareLabel]);
 
   const last = candles.at(-1);
   const view: Readout | null =
@@ -319,6 +479,8 @@ export default function CandleChart({
             {symbol ?? "—"}
             <span style={{ color: "var(--text-muted)" }}>
               {interval ? ` · ${interval}` : ""} · IST
+              {compareLabel ? ` · vs ${compareLabel}` : ""}
+              {drawTool !== "cursor" ? ` · draw:${drawTool}` : ""}
             </span>
           </span>
           <span className="trade-legend-ohl"><span className="trade-legend-key">O</span><span className="trade-legend-val">{fmt(view.open)}</span></span>

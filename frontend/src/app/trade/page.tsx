@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -29,6 +29,7 @@ import {
   Zap,
 } from "lucide-react";
 import TradePanel from "@/components/trade/TradePanel";
+import ChartDeskTools, { type DrawTool } from "@/components/trade/ChartDeskTools";
 import BacktestPanel from "@/components/trade/BacktestPanel";
 import StrategyCards from "@/components/trade/StrategyCards";
 import Screener from "@/components/trade/Screener";
@@ -166,6 +167,12 @@ function TradeTerminal() {
   const [showEma9, setShowEma9] = useState(true);
   const [showEma21, setShowEma21] = useState(true);
   const [showEma50, setShowEma50] = useState(true);
+  const [showVolume, setShowVolume] = useState(true);
+  const [compareSymbol, setCompareSymbol] = useState<string | null>(null);
+  const [compareCandles, setCompareCandles] = useState<Candle[]>([]);
+  const [drawTool, setDrawTool] = useState<DrawTool>("cursor");
+  const [clearDrawingsKey, setClearDrawingsKey] = useState(0);
+  const chartPanelRef = useRef<HTMLElement | null>(null);
 
   const [online, setOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
@@ -237,6 +244,29 @@ function TradeTerminal() {
   useEffect(() => {
     loadMarket();
   }, [loadMarket]);
+
+  useEffect(() => {
+    if (!compareSymbol) {
+      setCompareCandles([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchCandles({
+      symbol: compareSymbol,
+      interval,
+      limit: barsForDays(historyDays, interval),
+    })
+      .then((res) => {
+        if (cancelled) return;
+        setCompareCandles(res.success ? res.candles ?? [] : []);
+      })
+      .catch(() => {
+        if (!cancelled) setCompareCandles([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [compareSymbol, interval, historyDays]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -594,14 +624,28 @@ function TradeTerminal() {
                     </div>
                   </div>
 
-                  <section className="trade-panel desk-chart-panel overflow-hidden min-w-0">
-                    <div className="desk-chart-tabs">
-                      <button type="button" className="desk-chart-tab" data-active="true">Chart</button>
-                      <button type="button" className="desk-chart-tab">Indicators</button>
-                      <button type="button" className="desk-chart-tab">Drawing</button>
+                  <div className="desk-chart-col">
+                  <section
+                    ref={(el) => {
+                      chartPanelRef.current = el;
+                    }}
+                    className="trade-panel desk-chart-panel overflow-hidden min-w-0"
+                  >
+                    <ChartDeskTools
+                      symbol={symbol}
+                      onSymbol={setSymbol}
+                      emaToggles={emaToggles}
+                      showVolume={showVolume}
+                      onShowVolume={setShowVolume}
+                      compareSymbol={compareSymbol}
+                      onCompareSymbol={setCompareSymbol}
+                      drawTool={drawTool}
+                      onDrawTool={setDrawTool}
+                      onClearDrawings={() => setClearDrawingsKey((k) => k + 1)}
+                      fullscreenTargetRef={chartPanelRef}
+                    />
 
-                      <div className="flex-1" />
-
+                    <div className="trade-toolbar">
                       <select
                         value={symbol}
                         onChange={(e) => setSymbol(e.target.value)}
@@ -661,6 +705,8 @@ function TradeTerminal() {
                         <option value="000">EMAs off</option>
                       </select>
 
+                      <div className="flex-1 min-w-[8px]" />
+
                       <select
                         value={historyDays}
                         onChange={(e) => setHistoryDays(Number(e.target.value))}
@@ -695,28 +741,22 @@ function TradeTerminal() {
                           showEma9={showEma9}
                           showEma21={showEma21}
                           showEma50={showEma50}
+                          showVolume={showVolume}
+                          compareCandles={compareCandles}
+                          compareLabel={compareSymbol ? symbolLabel(compareSymbol) : undefined}
+                          drawTool={drawTool}
+                          clearDrawingsKey={clearDrawingsKey}
                         />
                       )}
                     </div>
                     {updatedAt && (
                       <div className="px-4 py-2 text-[11px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--tr-line-soft)" }}>
                         Synced {updatedAt} · poll {MARKET_POLL_MS / 1000}s
+                        {compareSymbol ? ` · compare ${symbolLabel(compareSymbol)}` : ""}
+                        {drawTool !== "cursor" ? ` · drawing ${drawTool}` : ""}
                       </div>
                     )}
                   </section>
-
-                  <aside className="trade-sticky-rail">
-                    <TradePanel
-                      symbol={symbol}
-                      lastPrice={market?.current_price}
-                      orders={orders}
-                      positions={positions.positions}
-                      positionsUnavailable={positions.configured ? null : positions.message}
-                      placing={placing}
-                      onPlace={handlePlace}
-                    />
-                  </aside>
-                </div>
 
                 <div className="desk-bottom">
                   <div className="trade-panel desk-gauge-wrap">
@@ -744,7 +784,7 @@ function TradeTerminal() {
                   </div>
 
                   <div className="trade-panel trade-panel-body">
-                    <div className="desk-stat-label mb-3">Performance</div>
+                    <div className="desk-stat-label mb-2">Performance</div>
                     <div className="desk-perf-grid">
                       {perf.map((p) => {
                         const v = p.value;
@@ -763,6 +803,20 @@ function TradeTerminal() {
                       })}
                     </div>
                   </div>
+                </div>
+                  </div>
+
+                  <aside className="trade-sticky-rail">
+                    <TradePanel
+                      symbol={symbol}
+                      lastPrice={market?.current_price}
+                      orders={orders}
+                      positions={positions.positions}
+                      positionsUnavailable={positions.configured ? null : positions.message}
+                      placing={placing}
+                      onPlace={handlePlace}
+                    />
+                  </aside>
                 </div>
               </>
             )}
