@@ -1,25 +1,33 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Activity,
-  ArrowLeft,
+  Bell,
+  Briefcase,
+  Crosshair,
+  Crown,
   FlaskConical,
   FolderKanban,
-  LineChart,
+  Home,
   Layers,
-  RefreshCw,
+  LineChart,
+  Moon,
   Radar,
+  RefreshCw,
+  Search,
   Sigma,
   Sparkles,
+  Star,
   TrendingDown,
   TrendingUp,
+  User,
   Wand2,
   X,
+  Zap,
 } from "lucide-react";
-import Logo from "@/components/Logo";
 import TradePanel from "@/components/trade/TradePanel";
 import BacktestPanel from "@/components/trade/BacktestPanel";
 import StrategyCards from "@/components/trade/StrategyCards";
@@ -57,23 +65,35 @@ const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
 
 type Tab = "markets" | "screener" | "backtest" | "strategies" | "mine" | "builder" | "options";
 
-/**
- * Options tab ka switch. Chhupana ho to `false` kar dein — code poora maujood
- * rehta hai, aur kuch badalne ki zarurat nahi.
- */
 const SHOW_OPTIONS_TAB = true;
 
-const ALL_TABS: { id: Tab; label: string; short: string; icon: typeof LineChart }[] = [
-  { id: "markets", label: "Markets", short: "Mkt", icon: LineChart },
-  { id: "screener", label: "Screener", short: "Scan", icon: Radar },
-  { id: "backtest", label: "Backtest", short: "BT", icon: FlaskConical },
-  { id: "strategies", label: "Catalogue", short: "Cat", icon: Layers },
-  { id: "mine", label: "My strategies", short: "Mine", icon: FolderKanban },
-  { id: "builder", label: "Builder", short: "Build", icon: Wand2 },
-  { id: "options", label: "Options", short: "Opt", icon: Sigma },
+const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
+  { id: "markets", label: "Markets", icon: LineChart },
+  { id: "screener", label: "Screeners", icon: Radar },
+  { id: "backtest", label: "Backtest", icon: FlaskConical },
+  { id: "strategies", label: "Catalogue", icon: Layers },
+  { id: "mine", label: "My Strategies", icon: FolderKanban },
+  { id: "builder", label: "Builder", icon: Wand2 },
+  ...(SHOW_OPTIONS_TAB ? [{ id: "options" as const, label: "Options", icon: Sigma }] : []),
 ];
 
-const TABS = ALL_TABS.filter((t) => t.id !== "options" || SHOW_OPTIONS_TAB);
+const NAV: {
+  id: Tab | "home" | "portfolio" | "watchlist";
+  label: string;
+  icon: typeof LineChart;
+  href?: string;
+}[] = [
+  { id: "home", label: "Home", icon: Home, href: "/" },
+  { id: "markets", label: "Markets", icon: LineChart },
+  { id: "screener", label: "Screeners", icon: Radar },
+  { id: "watchlist", label: "Watchlist", icon: Star },
+  { id: "portfolio", label: "Portfolio", icon: Briefcase, href: "/portfolio" },
+  { id: "backtest", label: "Backtest", icon: FlaskConical },
+  { id: "strategies", label: "Catalogue", icon: Layers },
+  { id: "mine", label: "My Strategies", icon: FolderKanban },
+  { id: "builder", label: "Builder", icon: Wand2 },
+  ...(SHOW_OPTIONS_TAB ? [{ id: "options" as const, label: "Options", icon: Sigma }] : []),
+];
 
 function fmtUsd(n: number): string {
   return n >= 1000
@@ -85,22 +105,35 @@ function fmtCompact(n: number): string {
   return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n);
 }
 
-/**
- * Market data kitni der mein refresh ho. Chart par aakhri candle abhi ban rahi
- * hoti hai, isliye bina refresh ke page jitni der khula rahe utna hi purana
- * data dikhata rehta hai.
- */
 const MARKET_POLL_MS = 30_000;
 
-/** "1m" stays "1m", "1h" becomes "1H" — short labels for the segmented control. */
 function shortInterval(value: string): string {
   return value.endsWith("m") ? value : value.toUpperCase();
 }
 
-/** `useSearchParams` ko Suspense boundary chahiye — isliye asli page andar hai. */
+function baseAsset(symbol: string): string {
+  return symbol.replace(/USDT$|USD$/i, "") || symbol;
+}
+
+function pairIconColor(symbol: string): string {
+  const s = symbol.toUpperCase();
+  if (s.startsWith("BTC")) return "linear-gradient(145deg, #f7931a, #e67e00)";
+  if (s.startsWith("ETH")) return "linear-gradient(145deg, #627eea, #4b64c7)";
+  if (s.startsWith("SOL")) return "linear-gradient(145deg, #9945ff, #14f195)";
+  return "linear-gradient(145deg, #00e676, #00c853)";
+}
+
+function changeFromCandles(candles: Candle[], lookback: number): number | null {
+  if (candles.length < 2) return null;
+  const end = candles.at(-1)?.close;
+  const start = candles[Math.max(0, candles.length - 1 - lookback)]?.close;
+  if (!end || !start) return null;
+  return ((end - start) / start) * 100;
+}
+
 export default function TradePage() {
   return (
-    <Suspense fallback={<div className="h-full" style={{ background: "var(--bg-primary)" }} />}>
+    <Suspense fallback={<div className="h-full" style={{ background: "#05080d" }} />}>
       <TradeTerminal />
     </Suspense>
   );
@@ -109,14 +142,14 @@ export default function TradePage() {
 function TradeTerminal() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // Strategy page se wapas aane par wahi tab khule jahan se gaye the.
   const [tab, setTab] = useState<Tab>(() => {
     const requested = searchParams.get("tab");
     return TABS.some((t) => t.id === requested) ? (requested as Tab) : "markets";
   });
-  /** Builder mein edit karte waqt — null = nayi strategy. */
   const [builderId, setBuilderId] = useState<string | null>(() => searchParams.get("edit"));
   const [symbol, setSymbol] = useState("BTCUSDT");
+  const [search, setSearch] = useState("");
+  const [utcClock, setUtcClock] = useState("--:--:--");
 
   const goTab = useCallback((next: Tab, editId: string | null = null) => {
     setTab(next);
@@ -127,8 +160,8 @@ function TradeTerminal() {
     else params.delete("edit");
     router.replace(`/trade?${params.toString()}`, { scroll: false });
   }, [router, searchParams]);
+
   const [interval, setInterval] = useState("1h");
-  // Chart kitne din pehle tak dikhaye — bars isi se derive hote hain.
   const [historyDays, setHistoryDays] = useState(7);
   const [showEma9, setShowEma9] = useState(true);
   const [showEma21, setShowEma21] = useState(true);
@@ -155,6 +188,18 @@ function TradeTerminal() {
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [backtestDefaults, setBacktestDefaults] = useState<Partial<BacktestParams>>({});
 
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      setUtcClock(
+        now.toLocaleTimeString("en-GB", { hour12: false, timeZone: "UTC" }),
+      );
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const loadMarket = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -167,8 +212,6 @@ function TradeTerminal() {
       setCandles(candleRes.candles ?? []);
       setMarket(info?.success ? info : null);
       setUpdatedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
-      // Data aa gaya matlab backend zinda hai — health check ke jawab ka intezaar
-      // karne ki zarurat nahi (sote hue instance par wo 90s tak le sakta hai).
       setOnline(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Crypto backend connect nahi ho raha (port 2000)");
@@ -195,9 +238,6 @@ function TradeTerminal() {
     loadMarket();
   }, [loadMarket]);
 
-  // Live refresh. Tab background mein ho to poll band — chhupe hue tab ke liye
-  // request bhejna free-tier backend par bekaar kharcha hai. Wapas dikhne par
-  // turant ek refresh, taaki purana data na dikhe.
   useEffect(() => {
     let timer: number | undefined;
 
@@ -276,335 +316,510 @@ function TradeTerminal() {
     router.push("/");
   };
 
+  const onSearchSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const q = search.trim().toUpperCase().replace("/", "");
+    if (!q) return;
+    const hit = CRYPTO_SYMBOLS.find(
+      (s) => s.value.includes(q) || s.label.replace("/", "").includes(q),
+    );
+    if (hit) {
+      setSymbol(hit.value);
+      goTab("markets");
+      setSearch("");
+    }
+  };
+
   const changePositive = (market?.change_24h ?? 0) >= 0;
   const changeColor = changePositive ? "var(--green)" : "var(--red)";
   const ChangeIcon = changePositive ? TrendingUp : TrendingDown;
 
   const emaToggles = useMemo(
     () => [
-      { id: "9", label: "EMA 9", on: showEma9, set: setShowEma9, color: "#2563eb" },
-      { id: "21", label: "EMA 21", on: showEma21, set: setShowEma21, color: "#d97706" },
-      { id: "50", label: "EMA 50", on: showEma50, set: setShowEma50, color: "#7c3aed" },
+      { id: "9", label: "EMA 9", on: showEma9, set: setShowEma9, color: "#60a5fa" },
+      { id: "21", label: "EMA 21", on: showEma21, set: setShowEma21, color: "#fbbf24" },
+      { id: "50", label: "EMA 50", on: showEma50, set: setShowEma50, color: "#c084fc" },
     ],
     [showEma9, showEma21, showEma50],
   );
 
+  const rangePct = useMemo(() => {
+    if (!market) return 50;
+    const span = market.high_24h - market.low_24h;
+    if (span <= 0) return 50;
+    return Math.min(100, Math.max(0, ((market.current_price - market.low_24h) / span) * 100));
+  }, [market]);
+
+  const sentiment = useMemo(() => {
+    const ch = market?.change_24h ?? 0;
+    return Math.min(92, Math.max(8, Math.round(50 + ch * 4)));
+  }, [market]);
+
+  const perf = useMemo(() => {
+    const barsPerDay =
+      interval.endsWith("m") ? Math.max(1, Math.round((24 * 60) / Number(interval))) :
+      interval.endsWith("h") ? Math.max(1, Math.round(24 / Number(interval))) : 1;
+    return [
+      { label: "1D", value: market?.change_24h ?? changeFromCandles(candles, barsPerDay) },
+      { label: "1W", value: changeFromCandles(candles, barsPerDay * 7) },
+      { label: "1M", value: changeFromCandles(candles, barsPerDay * 30) },
+      { label: "1Y", value: changeFromCandles(candles, candles.length - 1) },
+    ];
+  }, [candles, interval, market]);
+
+  const activeNav = tab === "markets" ? "markets" : tab;
+
+  const renderNavItem = (item: (typeof NAV)[number], mobile = false) => {
+    const Icon = item.icon;
+    const isActive =
+      item.id === "watchlist" ? false :
+      item.href ? false :
+      item.id === activeNav;
+
+    const onClick = () => {
+      if (item.href) {
+        router.push(item.href);
+        return;
+      }
+      if (item.id === "watchlist") {
+        goTab("markets");
+        setNotice("Watchlist soon — Markets pe switch kiya");
+        return;
+      }
+      goTab(item.id as Tab);
+    };
+
+    return (
+      <button
+        key={`${mobile ? "m-" : ""}${item.id}`}
+        type="button"
+        data-active={isActive}
+        onClick={onClick}
+        className="desk-nav-item"
+      >
+        <Icon className="w-[15px] h-[15px]" />
+        {item.label}
+      </button>
+    );
+  };
+
   return (
-    <div className="trade-root h-full overflow-y-auto">
-      {/* ── Terminal top bar ─────────────────────────────── */}
-      <header className="trade-topbar">
-        <div className="trade-topbar-inner">
-          {/* Row 1 — brand + actions */}
-          <div className="trade-topbar-row">
-            <div className="trade-brand">
-              <button type="button" onClick={() => router.push("/")} className="trade-iconbtn" aria-label="Back to chat">
-                <ArrowLeft className="w-[17px] h-[17px]" />
-              </button>
-              <Logo size={26} />
-              <div className="trade-brand-text min-w-0">
-                <div className="trade-brand-kicker">Finowings · Desk</div>
-                <div className="trade-brand-line">
-                  <h1 className="trade-brand-title">Crypto Terminal</h1>
-                  <span className="trade-status-chip" data-offline={online === false}>
-                    <span className="trade-dot" aria-hidden />
-                    {online === false ? "Offline" : "Delta live"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="trade-topbar-actions">
-              {updatedAt && (
-                <span className="trade-meta-chip hidden md:inline-flex">
-                  Sync {updatedAt}
-                  <span className="trade-meta-sep">·</span>
-                  {MARKET_POLL_MS / 1000}s
-                </span>
-              )}
-              <button type="button" onClick={askAi} className="trade-btn trade-btn-primary trade-btn-ask">
-                <Sparkles className="w-4 h-4" />
-                Ask AI
-              </button>
+    <div className="trade-root">
+      <div className="desk-shell">
+        {/* ── Left sidebar ─────────────────────────────── */}
+        <aside className="desk-sidebar" aria-label="Desk navigation">
+          <div className="desk-brand">
+            <div className="desk-brand-mark" aria-hidden>F</div>
+            <div>
+              <div className="desk-brand-name">Finowings</div>
+              <div className="desk-brand-sub">Desk</div>
             </div>
           </div>
 
-          {/* Row 2 — open quote rail (not a cramped ticker box) */}
-          <div className="trade-quote-rail" aria-label="Live quote">
-            <div className="trade-quote-cell trade-quote-primary">
-              <span className="trade-ticker-label">{symbolLabel(symbol)}</span>
-              <span className="trade-ticker-value trade-quote-price">
-                {market ? fmtUsd(market.current_price) : "—"}
-              </span>
-            </div>
-            <div className="trade-quote-cell">
-              <span className="trade-ticker-label">24h change</span>
-              <span
-                className="trade-ticker-value trade-quote-change inline-flex items-center gap-1.5"
-                style={{ color: market ? changeColor : undefined }}
-              >
-                {market && <ChangeIcon className="w-3.5 h-3.5" />}
-                {market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
-              </span>
-            </div>
-            <div className="trade-quote-cell hidden sm:flex">
-              <span className="trade-ticker-label">24h high</span>
-              <span className="trade-ticker-value">{market ? fmtUsd(market.high_24h) : "—"}</span>
-            </div>
-            <div className="trade-quote-cell hidden sm:flex">
-              <span className="trade-ticker-label">24h low</span>
-              <span className="trade-ticker-value">{market ? fmtUsd(market.low_24h) : "—"}</span>
-            </div>
-            <div className="trade-quote-cell hidden lg:flex">
-              <span className="trade-ticker-label">24h volume</span>
-              <span className="trade-ticker-value">
-                {market ? fmtCompact(market.volume_24h) : "—"}
-              </span>
-            </div>
-          </div>
+          <nav className="desk-nav">
+            {NAV.map((item) => renderNavItem(item))}
+          </nav>
 
-          {/* Row 3 — section tabs */}
-          <div className="trade-tabs-wrap">
-            <nav className="trade-tabs" role="tablist" aria-label="Trade sections">
-              {TABS.map((t) => {
-                const Icon = t.icon;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === t.id}
-                    data-active={tab === t.id}
-                    onClick={() => goTab(t.id)}
-                    className="trade-tab inline-flex items-center gap-2"
-                  >
-                    <Icon className="w-[15px] h-[15px]" />
-                    <span className="trade-tab-full">{t.label}</span>
-                    <span className="trade-tab-short">{t.short}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-[1720px] mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-5 space-y-3 sm:space-y-4">
-        {online === false && (
-          <div className="trade-panel flex items-start gap-3 px-4 py-3 text-[13px]" style={{ borderColor: "rgba(217, 119, 6, 0.3)", background: "rgba(217, 119, 6, 0.05)" }}>
-            <Activity className="w-4 h-4 mt-0.5 flex-none" style={{ color: "var(--amber)" }} />
-            <span style={{ color: "var(--text-secondary)" }}>
-              {isLocalBackend() ? (
-                <>
-                  Backend band hai. Repo ke <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>backend</code>{" "}folder mein{" "}
-                  <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>uvicorn main:app --port 8000</code>{" "}chalao.
-                </>
-              ) : (
-                <>
-                  Backend se jawab nahi mila. Free hosting par instance so jaata hai aur
-                  jagne mein ek minute tak lag sakta hai — <b>Refresh</b> dabakar dobara koshish karein.
-                </>
-              )}
-            </span>
-          </div>
-        )}
-
-        {notice && (
-          <div className="trade-panel flex items-center gap-3 px-4 py-3 text-[13px]" style={{ borderColor: "rgba(15, 118, 110, 0.28)", background: "rgba(15, 118, 110, 0.06)" }}>
-            <span className="flex-1" style={{ color: "var(--text-secondary)" }}>{notice}</span>
-            <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="trade-iconbtn trade-iconbtn-sm">
-              <X className="w-3.5 h-3.5" />
+          <div className="desk-premium">
+            <div className="desk-premium-icon" aria-hidden>
+              <Crown className="w-5 h-5" style={{ color: "var(--gold)" }} />
+            </div>
+            <div className="desk-premium-title">Upgrade to Premium</div>
+            <p className="desk-premium-copy">Advanced signals, deeper history & priority sync.</p>
+            <button type="button" className="desk-premium-btn" onClick={askAi}>
+              Go Premium
             </button>
           </div>
-        )}
+        </aside>
 
-        {tab === "markets" && (
-          <div className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] items-start">
-            <section className="trade-panel overflow-hidden min-w-0">
-              {/* Chart toolbar */}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5 px-4 py-3">
-                <select
-                  value={symbol}
-                  onChange={(e) => setSymbol(e.target.value)}
-                  aria-label="Symbol"
-                  className="trade-select trade-w-symbol trade-strong"
-                >
-                  {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-
-                <div className="trade-seg overflow-x-auto scrollbar-hide max-w-full">
-                  {CRYPTO_INTERVALS.map((iv) => (
-                    <button
-                      key={iv.value}
-                      type="button"
-                      data-active={interval === iv.value}
-                      onClick={() => setInterval(iv.value)}
-                      className="trade-seg-btn"
-                      title={iv.label}
-                    >
-                      {shortInterval(iv.value)}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="trade-divider-v hidden lg:block my-1" />
-
-                <div className="flex items-center gap-2">
-                  {emaToggles.map((ema) => (
-                    <button
-                      key={ema.id}
-                      type="button"
-                      data-on={ema.on}
-                      onClick={() => ema.set(!ema.on)}
-                      className="trade-chip"
-                      aria-pressed={ema.on}
-                    >
-                      <span className="trade-chip-dot" style={{ background: ema.color }} />
-                      {ema.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex-1" />
-
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                    History
-                    <select
-                      value={historyDays}
-                      onChange={(e) => setHistoryDays(Number(e.target.value))}
-                      className="trade-select trade-w-history trade-size-sm"
-                      title="Chart kitne din pehle tak dikhaye"
-                    >
-                      {CHART_RANGES.map((range) => (
-                        <option key={range.days} value={range.days}>{range.days} din</option>
-                      ))}
-                    </select>
-                  </label>
-                  <button type="button" onClick={loadMarket} disabled={loading} className="trade-btn trade-btn-ghost trade-size-sm">
-                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
-                    <span className="hidden sm:inline">{loading ? "Loading" : "Refresh"}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Market stat strip — hairline separated cells */}
-              <div
-                className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
-                style={{ gap: 1, background: "var(--tr-line-soft)", borderTop: "1px solid var(--tr-line-soft)" }}
-              >
-                <StripCell label="Last price" value={market ? fmtUsd(market.current_price) : "—"} />
-                <StripCell
-                  label="24h change"
-                  value={market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
-                  color={market ? changeColor : undefined}
-                />
-                <StripCell label="24h high" value={market ? fmtUsd(market.high_24h) : "—"} />
-                <StripCell label="24h low" value={market ? fmtUsd(market.low_24h) : "—"} />
-                <StripCell label="24h volume" value={market ? fmtCompact(market.volume_24h) : "—"} />
-                <StripCell
-                  label="Chart history"
-                  value={candles.length ? `${candlesSpanDays(candles).toFixed(1)} din · ${candles.length} bars` : "—"}
-                />
-              </div>
-
-              {error && (
-                <p className="px-4 py-2.5 text-[13px]" style={{ color: "var(--red)", borderTop: "1px solid var(--tr-line-soft)" }}>
-                  {error}
-                </p>
-              )}
-
-              <div className="trade-chart-wrap">
-                {loading && candles.length === 0 ? (
-                  <div className="w-full h-full shimmer" />
-                ) : (
-                  <CandleChart
-                    candles={candles}
-                    symbol={symbolLabel(symbol)}
-                    interval={shortInterval(interval)}
-                    showEma9={showEma9}
-                    showEma21={showEma21}
-                    showEma50={showEma50}
-                  />
-                )}
-              </div>
-            </section>
-
-            <aside className="xl:sticky xl:top-[128px]">
-              <TradePanel
-                symbol={symbol}
-                lastPrice={market?.current_price}
-                orders={orders}
-                positions={positions.positions}
-                positionsUnavailable={positions.configured ? null : positions.message}
-                placing={placing}
-                onPlace={handlePlace}
+        <div className="desk-main">
+          {/* ── Top header ─────────────────────────────── */}
+          <header className="desk-header">
+            <form className="desk-search" onSubmit={onSearchSubmit}>
+              <Search className="w-4 h-4" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search Crypto, Pairs, Markets..."
+                aria-label="Search crypto pairs"
               />
-            </aside>
+            </form>
+
+            <div className="desk-header-right">
+              <span className="desk-live" data-offline={online === false}>
+                <span className="trade-dot" aria-hidden />
+                {online === false ? "Offline" : "Live"}
+              </span>
+              <span className="desk-clock">{utcClock} UTC</span>
+              <button type="button" className="trade-iconbtn" aria-label="Notifications" onClick={askAi}>
+                <Bell className="w-4 h-4" />
+              </button>
+              <button type="button" className="trade-iconbtn" aria-label="Theme" disabled title="Dark desk">
+                <Moon className="w-4 h-4" />
+              </button>
+              <button type="button" className="trade-iconbtn" aria-label="Ask AI" onClick={askAi}>
+                <Sparkles className="w-4 h-4" />
+              </button>
+              <div className="desk-avatar" aria-hidden>
+                <User className="w-4 h-4" />
+              </div>
+            </div>
+          </header>
+
+          <div className="desk-mobile-nav" aria-label="Mobile navigation">
+            {NAV.map((item) => renderNavItem(item, true))}
           </div>
-        )}
 
-        {tab === "screener" && (
-          <Screener
-            defaultInterval={interval}
-            onPickSymbol={(picked) => {
-              setSymbol(picked);
-              setTab("markets");
-            }}
-          />
-        )}
+          <div className="desk-body">
+            {online === false && (
+              <div className="trade-panel flex items-start gap-3 px-4 py-3 text-[13px] mb-3" style={{ borderColor: "rgba(255, 179, 0, 0.35)", background: "rgba(255, 179, 0, 0.06)" }}>
+                <Activity className="w-4 h-4 mt-0.5 flex-none" style={{ color: "var(--amber)" }} />
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {isLocalBackend() ? (
+                    <>
+                      Backend band hai. Repo ke <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>backend</code>{" "}folder mein{" "}
+                      <code className="px-1.5 py-0.5 rounded" style={{ background: "var(--tr-field)", fontSize: 12 }}>uvicorn main:app --port 8000</code>{" "}chalao.
+                    </>
+                  ) : (
+                    <>
+                      Backend se jawab nahi mila. Free hosting par instance so jaata hai — <b>Refresh</b> dabakar dobara koshish karein.
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
 
-        {SHOW_OPTIONS_TAB && tab === "options" && <OptionsAnalytics />}
+            {notice && (
+              <div className="trade-panel flex items-center gap-3 px-4 py-3 text-[13px] mb-3" style={{ borderColor: "rgba(0, 230, 118, 0.28)", background: "rgba(0, 230, 118, 0.06)" }}>
+                <span className="flex-1" style={{ color: "var(--text-secondary)" }}>{notice}</span>
+                <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="trade-iconbtn trade-iconbtn-sm">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
-        {tab === "backtest" && (
-          <BacktestPanel
-            defaults={{ symbol, timeframe: interval, ...backtestDefaults }}
-            running={backtestRunning}
-            result={backtestResult}
-            error={backtestError}
-            onRun={handleBacktest}
-          />
-        )}
+            {tab === "markets" && (
+              <>
+                <div className="desk-pair" aria-label="Live quote">
+                  <div className="desk-pair-left">
+                    <div className="desk-pair-icon" style={{ background: pairIconColor(symbol) }}>
+                      {baseAsset(symbol).slice(0, 1)}
+                    </div>
+                    <div>
+                      <div className="desk-pair-name">{symbolLabel(symbol)}</div>
+                      <div className="desk-pair-tag">Spot · Delta exchange</div>
+                    </div>
+                  </div>
 
-        {tab === "strategies" && (
-          <StrategyCards
-            defaultSymbol={symbol}
-            running={backtestRunning}
-            onTest={(params) => {
-              setBacktestDefaults(params);
-              void handleBacktest(params);
-            }}
-          />
-        )}
+                  <div>
+                    <div className="desk-pair-price">
+                      {market ? fmtUsd(market.current_price) : "—"}
+                    </div>
+                    <div className="desk-pair-change mt-1.5" style={{ color: market ? changeColor : undefined }}>
+                      {market && <ChangeIcon className="w-3.5 h-3.5" />}
+                      {market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
+                      <span style={{ color: "var(--text-muted)", fontWeight: 500 }}>24h</span>
+                    </div>
+                  </div>
 
-        {tab === "mine" && (
-          <MyStrategiesPanel
-            onCreate={() => goTab("builder", null)}
-            onEdit={(id) => goTab("builder", id)}
-          />
-        )}
+                  <div className="desk-pair-stats">
+                    <div className="desk-pair-stat">
+                      <div className="desk-pair-stat-label">24h High</div>
+                      <div className="desk-pair-stat-value">{market ? fmtUsd(market.high_24h) : "—"}</div>
+                    </div>
+                    <div className="desk-pair-stat">
+                      <div className="desk-pair-stat-label">24h Low</div>
+                      <div className="desk-pair-stat-value">{market ? fmtUsd(market.low_24h) : "—"}</div>
+                    </div>
+                    <div className="desk-pair-stat hidden sm:block">
+                      <div className="desk-pair-stat-label">24h Volume</div>
+                      <div className="desk-pair-stat-value">{market ? fmtCompact(market.volume_24h) : "—"}</div>
+                    </div>
+                  </div>
 
-        {tab === "builder" && (
-          <StrategyBuilder
-            key={builderId ?? "new"}
-            strategyId={builderId}
-            defaultSymbol={symbol}
-            onBack={() => goTab("mine")}
-            onSaved={() => {
-              /* stay in builder so user can keep editing / deploy */
-            }}
-          />
-        )}
-      </main>
-    </div>
-  );
-}
+                  <div className="desk-pair-actions">
+                    <button type="button" className="trade-iconbtn" aria-label="Watchlist">
+                      <Star className="w-4 h-4" />
+                    </button>
+                    <button type="button" className="trade-iconbtn" aria-label="Alerts" onClick={askAi}>
+                      <Bell className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
 
-function StripCell({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="px-4 py-2.5" style={{ background: "var(--bg-card)" }}>
-      <div className="trade-stat-label">{label}</div>
-      <div className="text-[14px] font-bold mt-1 tnum tracking-tight" style={{ color: color ?? "var(--text-primary)" }}>
-        {value}
+                <div className="desk-markets">
+                  <div className="desk-stats-col">
+                    <div className="desk-stat-card">
+                      <div className="desk-stat-card-top">
+                        <span className="desk-stat-label">Last Price</span>
+                        <span className="desk-stat-icon"><Zap className="w-3.5 h-3.5" /></span>
+                      </div>
+                      <div className="desk-stat-value">{market ? fmtUsd(market.current_price) : "—"}</div>
+                    </div>
+                    <div className="desk-stat-card">
+                      <div className="desk-stat-card-top">
+                        <span className="desk-stat-label">24h Change</span>
+                        <span className="desk-stat-icon"><ChangeIcon className="w-3.5 h-3.5" /></span>
+                      </div>
+                      <div className="desk-stat-value" style={{ color: market ? changeColor : undefined }}>
+                        {market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
+                      </div>
+                    </div>
+                    <div className="desk-stat-card">
+                      <div className="desk-stat-card-top">
+                        <span className="desk-stat-label">24h High / Low</span>
+                        <span className="desk-stat-icon"><Crosshair className="w-3.5 h-3.5" /></span>
+                      </div>
+                      <div className="desk-stat-value" style={{ fontSize: 13 }}>
+                        {market ? `${fmtUsd(market.high_24h)}` : "—"}
+                      </div>
+                      <div className="desk-stat-sub">{market ? `Low ${fmtUsd(market.low_24h)}` : ""}</div>
+                    </div>
+                    <div className="desk-stat-card">
+                      <div className="desk-stat-card-top">
+                        <span className="desk-stat-label">Volume</span>
+                        <span className="desk-stat-icon"><Activity className="w-3.5 h-3.5" /></span>
+                      </div>
+                      <div className="desk-stat-value">{market ? fmtCompact(market.volume_24h) : "—"}</div>
+                    </div>
+                    <div className="desk-stat-card">
+                      <div className="desk-stat-card-top">
+                        <span className="desk-stat-label">Chart History</span>
+                        <span className="desk-stat-icon"><LineChart className="w-3.5 h-3.5" /></span>
+                      </div>
+                      <div className="desk-stat-value" style={{ fontSize: 13 }}>
+                        {candles.length ? `${candlesSpanDays(candles).toFixed(1)}d` : "—"}
+                      </div>
+                      <div className="desk-stat-sub">{candles.length ? `${candles.length} bars` : ""}</div>
+                    </div>
+                  </div>
+
+                  <section className="trade-panel desk-chart-panel overflow-hidden min-w-0">
+                    <div className="desk-chart-tabs">
+                      <button type="button" className="desk-chart-tab" data-active="true">Chart</button>
+                      <button type="button" className="desk-chart-tab">Indicators</button>
+                      <button type="button" className="desk-chart-tab">Drawing</button>
+
+                      <div className="flex-1" />
+
+                      <select
+                        value={symbol}
+                        onChange={(e) => setSymbol(e.target.value)}
+                        aria-label="Symbol"
+                        className="trade-select trade-w-symbol trade-strong"
+                      >
+                        {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                      </select>
+
+                      <div className="trade-seg overflow-x-auto scrollbar-hide max-w-full">
+                        {CRYPTO_INTERVALS.map((iv) => (
+                          <button
+                            key={iv.value}
+                            type="button"
+                            data-active={interval === iv.value}
+                            onClick={() => setInterval(iv.value)}
+                            className="trade-seg-btn"
+                            title={iv.label}
+                          >
+                            {shortInterval(iv.value)}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="trade-ema-row">
+                        {emaToggles.map((ema) => (
+                          <button
+                            key={ema.id}
+                            type="button"
+                            data-on={ema.on}
+                            onClick={() => ema.set(!ema.on)}
+                            className="trade-chip"
+                            aria-pressed={ema.on}
+                          >
+                            <span className="trade-chip-dot" style={{ background: ema.color }} />
+                            {ema.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <select
+                        className="trade-select trade-size-sm trade-ema-select"
+                        aria-label="EMA overlays"
+                        value={`${showEma9 ? 1 : 0}${showEma21 ? 1 : 0}${showEma50 ? 1 : 0}`}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setShowEma9(v[0] === "1");
+                          setShowEma21(v[1] === "1");
+                          setShowEma50(v[2] === "1");
+                        }}
+                      >
+                        <option value="111">EMA 9 · 21 · 50</option>
+                        <option value="110">EMA 9 · 21</option>
+                        <option value="100">EMA 9 only</option>
+                        <option value="010">EMA 21 only</option>
+                        <option value="001">EMA 50 only</option>
+                        <option value="000">EMAs off</option>
+                      </select>
+
+                      <select
+                        value={historyDays}
+                        onChange={(e) => setHistoryDays(Number(e.target.value))}
+                        className="trade-select trade-w-history trade-size-sm"
+                        title="Chart history"
+                        aria-label="Chart history"
+                      >
+                        {CHART_RANGES.map((range) => (
+                          <option key={range.days} value={range.days}>{range.days}d</option>
+                        ))}
+                      </select>
+
+                      <button type="button" onClick={loadMarket} disabled={loading} className="trade-btn trade-btn-ghost trade-size-sm">
+                        <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
+                      </button>
+                    </div>
+
+                    {error && (
+                      <p className="px-4 py-2.5 text-[13px]" style={{ color: "var(--red)", borderTop: "1px solid var(--tr-line-soft)" }}>
+                        {error}
+                      </p>
+                    )}
+
+                    <div className="trade-chart-wrap">
+                      {loading && candles.length === 0 ? (
+                        <div className="w-full h-full shimmer" />
+                      ) : (
+                        <CandleChart
+                          candles={candles}
+                          symbol={symbolLabel(symbol)}
+                          interval={shortInterval(interval)}
+                          showEma9={showEma9}
+                          showEma21={showEma21}
+                          showEma50={showEma50}
+                        />
+                      )}
+                    </div>
+                    {updatedAt && (
+                      <div className="px-4 py-2 text-[11px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--tr-line-soft)" }}>
+                        Synced {updatedAt} · poll {MARKET_POLL_MS / 1000}s
+                      </div>
+                    )}
+                  </section>
+
+                  <aside className="trade-sticky-rail">
+                    <TradePanel
+                      symbol={symbol}
+                      lastPrice={market?.current_price}
+                      orders={orders}
+                      positions={positions.positions}
+                      positionsUnavailable={positions.configured ? null : positions.message}
+                      placing={placing}
+                      onPlace={handlePlace}
+                    />
+                  </aside>
+                </div>
+
+                <div className="desk-bottom">
+                  <div className="trade-panel desk-gauge-wrap">
+                    <div className="desk-stat-label w-full text-left mb-1">Market Sentiment</div>
+                    <div className="desk-gauge" style={{ ["--p" as string]: sentiment }}>
+                      <div className="desk-gauge-inner">
+                        <div className="desk-gauge-pct">{sentiment}%</div>
+                        <div className="desk-gauge-label">{sentiment >= 50 ? "Bullish" : "Bearish"}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="trade-panel trade-panel-body">
+                    <div className="desk-stat-label mb-1">24h Range</div>
+                    <div className="desk-range-bar">
+                      <span className="desk-range-thumb" style={{ left: `${rangePct}%` }} />
+                    </div>
+                    <div className="desk-range-ends">
+                      <span>{market ? fmtUsd(market.low_24h) : "—"}</span>
+                      <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                        {market ? fmtUsd(market.current_price) : "—"}
+                      </span>
+                      <span>{market ? fmtUsd(market.high_24h) : "—"}</span>
+                    </div>
+                  </div>
+
+                  <div className="trade-panel trade-panel-body">
+                    <div className="desk-stat-label mb-3">Performance</div>
+                    <div className="desk-perf-grid">
+                      {perf.map((p) => {
+                        const v = p.value;
+                        const up = (v ?? 0) >= 0;
+                        return (
+                          <div key={p.label} className="desk-perf-cell">
+                            <div className="desk-perf-label">{p.label}</div>
+                            <div
+                              className="desk-perf-value"
+                              style={{ color: v == null ? "var(--text-muted)" : up ? "var(--green)" : "var(--red)" }}
+                            >
+                              {v == null ? "—" : `${up ? "+" : ""}${v.toFixed(2)}%`}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {tab === "screener" && (
+              <Screener
+                defaultInterval={interval}
+                onPickSymbol={(picked) => {
+                  setSymbol(picked);
+                  goTab("markets");
+                }}
+              />
+            )}
+
+            {SHOW_OPTIONS_TAB && tab === "options" && <OptionsAnalytics />}
+
+            {tab === "backtest" && (
+              <BacktestPanel
+                defaults={{ symbol, timeframe: interval, ...backtestDefaults }}
+                running={backtestRunning}
+                result={backtestResult}
+                error={backtestError}
+                onRun={handleBacktest}
+              />
+            )}
+
+            {tab === "strategies" && (
+              <StrategyCards
+                defaultSymbol={symbol}
+                running={backtestRunning}
+                onTest={(params) => {
+                  setBacktestDefaults(params);
+                  void handleBacktest(params);
+                }}
+              />
+            )}
+
+            {tab === "mine" && (
+              <MyStrategiesPanel
+                onCreate={() => goTab("builder", null)}
+                onEdit={(id) => goTab("builder", id)}
+              />
+            )}
+
+            {tab === "builder" && (
+              <StrategyBuilder
+                key={builderId ?? "new"}
+                strategyId={builderId}
+                defaultSymbol={symbol}
+                onBack={() => goTab("mine")}
+                onSaved={() => {
+                  /* stay in builder */
+                }}
+              />
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

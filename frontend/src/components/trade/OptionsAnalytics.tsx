@@ -271,12 +271,13 @@ export default function OptionsAnalytics() {
     <div className="space-y-4">
       {/* ── Masthead ───────────────────────────────────── */}
       <div className="trade-panel trade-hero">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 pt-4 pb-3.5">
+        <div className="trade-toolbar" style={{ paddingTop: 16, paddingBottom: 14 }}>
           <span className="trade-hero-icon"><Sigma className="w-5 h-5" /></span>
 
           <div className="min-w-0">
-            <h2 className="text-[19px] font-bold tracking-tight leading-tight">Options &amp; Volatility</h2>
-            <p className="text-[12.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            <div className="trade-page-kicker" style={{ marginBottom: 4 }}>Derivatives</div>
+            <h2 className="trade-page-title" style={{ fontSize: 20 }}>Options &amp; Volatility</h2>
+            <p className="trade-page-sub" style={{ marginTop: 4, maxWidth: "44ch" }}>
               Market khud kya soch raha hai — dar kahan hai, paisa kahan pada hai
             </p>
           </div>
@@ -300,7 +301,7 @@ export default function OptionsAnalytics() {
             </div>
           )}
 
-          <div className="flex-1" />
+          <div className="flex-1 min-w-[8px]" />
 
           <div className="flex items-center gap-2">
             <div className="trade-seg">
@@ -317,7 +318,7 @@ export default function OptionsAnalytics() {
           </div>
 
           {updatedAt && (
-            <span className="w-full lg:w-auto text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
+            <span className="w-full lg:w-auto trade-toolbar-meta">
               {data ? `${data.chains.length} expiries · ` : ""}updated {updatedAt}
             </span>
           )}

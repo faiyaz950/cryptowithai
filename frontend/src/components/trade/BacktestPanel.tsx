@@ -72,9 +72,20 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[370px_minmax(0,1fr)] items-start">
+    <div className="space-y-4">
+      <div className="trade-page-head">
+        <div>
+          <div className="trade-page-kicker">Simulation</div>
+          <h2 className="trade-page-title">Backtest</h2>
+          <p className="trade-page-sub">
+            Strategy, risk aur window set karo — historical candles par run dekho.
+          </p>
+        </div>
+      </div>
+
+    <div className="grid gap-4 xl:grid-cols-[minmax(280px,370px)_minmax(0,1fr)] items-start">
       {/* ── Config rail ───────────────────────────────────── */}
-      <div className="trade-panel xl:sticky xl:top-[116px]">
+      <div className="trade-panel trade-sticky-rail">
         <div className="trade-panel-head">
           <span className="trade-panel-title">Backtest settings</span>
           <span className="trade-badge trade-badge-blue">{isRange ? "Range engine" : "EMA engine"}</span>
@@ -245,6 +256,7 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
           emptyHint={<>Left panel se settings choose karke <b>Run backtest</b>{" "}dabao — trades, win rate aur P&amp;L yahan aayenge.</>}
         />
       </div>
+    </div>
     </div>
   );
 }

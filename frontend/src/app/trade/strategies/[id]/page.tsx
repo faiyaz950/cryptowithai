@@ -156,38 +156,42 @@ function Shell({
   return (
     <div className="trade-root h-full overflow-y-auto">
       <header className="trade-topbar">
-        <div className="max-w-[1720px] mx-auto px-3 sm:px-4 lg:px-6">
-          <div className="flex items-center gap-2 sm:gap-3 h-[52px] sm:h-[58px]">
-            <Link href={backHref} className="trade-iconbtn" aria-label="Back">
-              <ArrowLeft className="w-[17px] h-[17px]" />
-            </Link>
-            <Logo size={24} />
-            <span className="trade-strategy-icon" style={{ background: `${def.accent}22`, color: def.accent }}>
-              <Icon className="w-4 h-4" />
-            </span>
-            <div className="min-w-0">
-              <div className="trade-brand-kicker">{isCustom ? "Custom strategy" : "Catalogue"}</div>
-              <h1 className="trade-brand-title truncate">{def.name}</h1>
-              <p className="trade-brand-meta truncate">{def.category}</p>
+        <div className="trade-topbar-inner">
+          <div className="trade-topbar-row" style={{ paddingBottom: 10 }}>
+            <div className="trade-brand min-w-0">
+              <Link href={backHref} className="trade-iconbtn" aria-label="Back">
+                <ArrowLeft className="w-[17px] h-[17px]" />
+              </Link>
+              <Logo size={24} />
+              <span className="trade-strategy-icon" style={{ background: `${def.accent}22`, color: def.accent }}>
+                <Icon className="w-4 h-4" />
+              </span>
+              <div className="trade-brand-text min-w-0">
+                <div className="trade-brand-kicker">{isCustom ? "Custom strategy" : "Catalogue"}</div>
+                <div className="trade-brand-line">
+                  <h1 className="trade-brand-title truncate">{def.name}</h1>
+                </div>
+                <p className="trade-brand-meta truncate">{def.category}</p>
+              </div>
             </div>
 
-            <div className="flex-1" />
-
-            <span className={`trade-badge ${active ? "trade-badge-green" : "trade-badge-neutral"}`}>
-              {active ? <><span className="trade-dot" />Live</> : "Inactive"}
-            </span>
-            {editHref && (
-              <Link href={editHref} className="trade-btn trade-btn-ghost">
-                <Pencil className="w-4 h-4" />
-                <span className="hidden sm:inline">Edit</span>
-              </Link>
-            )}
-            {onAskAi && (
-              <button type="button" onClick={onAskAi} className="trade-btn trade-btn-primary">
-                <Sparkles className="w-4 h-4" />
-                <span className="hidden sm:inline">Ask AI</span>
-              </button>
-            )}
+            <div className="trade-topbar-actions">
+              <span className={`trade-badge ${active ? "trade-badge-green" : "trade-badge-neutral"}`}>
+                {active ? <><span className="trade-dot" />Live</> : "Inactive"}
+              </span>
+              {editHref && (
+                <Link href={editHref} className="trade-btn trade-btn-ghost">
+                  <Pencil className="w-4 h-4" />
+                  <span className="hidden sm:inline">Edit</span>
+                </Link>
+              )}
+              {onAskAi && (
+                <button type="button" onClick={onAskAi} className="trade-btn trade-btn-primary trade-btn-ask">
+                  <Sparkles className="w-4 h-4" />
+                  <span className="hidden sm:inline">Ask AI</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="trade-tabs-wrap">

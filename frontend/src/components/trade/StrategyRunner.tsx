@@ -224,9 +224,9 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
   })).filter((group) => group.items.length > 0);
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[370px_minmax(0,1fr)] items-start">
+    <div className="grid gap-4 xl:grid-cols-[minmax(280px,370px)_minmax(0,1fr)] items-start">
       {/* ── Config rail ───────────────────────────────────── */}
-      <div className="trade-panel xl:sticky xl:top-[116px]">
+      <div className="trade-panel trade-sticky-rail">
         <div className="trade-panel-head">
           <span className="trade-panel-title">Parameters</span>
           <button

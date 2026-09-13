@@ -105,11 +105,9 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
     const drafts = items.filter((s) => s.status === "draft").length;
     return [
       { label: "Closed PnL 30D", value: fmtMoney(closed), color: closed >= 0 ? "var(--green)" : "var(--red)" },
-      { label: "Open PnL", value: "—", color: undefined },
       { label: "Closed trades", value: String(trades), color: undefined },
       { label: "Live", value: String(live), color: "var(--accent)" },
       { label: "Drafts", value: String(drafts), color: undefined },
-      { label: "AI strategies", value: "0", color: "var(--accent)" },
     ];
   }, [items]);
 
@@ -129,18 +127,15 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
 
   return (
     <div className="ms-root space-y-4">
-      {/* Page head */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="trade-page-head">
         <div>
-          <div className="trade-stat-label tracking-[0.12em]">My strategies</div>
-          <h2 className="text-[26px] font-extrabold tracking-tight mt-1 leading-tight">
+          <div className="trade-page-kicker">Portfolio</div>
+          <h2 className="trade-page-title">
             {items.length === 0 ? "No strategies yet" : `${items.length} strateg${items.length === 1 ? "y" : "ies"}`}
           </h2>
-          <p className="text-[13px] mt-1.5" style={{ color: "var(--text-secondary)" }}>
-            {monthLine}
-          </p>
+          <p className="trade-page-sub">{monthLine}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="trade-page-actions">
           <button type="button" className="trade-btn trade-btn-primary" onClick={onCreate}>
             <Plus className="w-4 h-4" />
             New strategy
@@ -161,7 +156,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
       </div>
 
       {/* Filters + search */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="ms-toolbar">
         <div className="ms-filters">
           {filters.map((f) => (
             <button
@@ -176,9 +171,8 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
             </button>
           ))}
         </div>
-        <div className="flex-1" />
         <div className="ms-search">
-          <Search className="w-3.5 h-3.5" style={{ color: "var(--text-muted)" }} />
+          <Search className="w-3.5 h-3.5 flex-none" style={{ color: "var(--text-muted)" }} />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}

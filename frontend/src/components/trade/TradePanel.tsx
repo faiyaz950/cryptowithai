@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertCircle, Inbox, Wallet } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Inbox, Wallet, Zap } from "lucide-react";
 import type { DemoOrder, DeltaPosition } from "@/lib/cryptoApi";
 import { CRYPTO_SYMBOLS, symbolLabel } from "@/lib/cryptoApi";
 
@@ -24,6 +24,8 @@ interface Props {
 
 const OPEN_STATUSES = ["pending", "open", "submitted", "new", "partially_filled"];
 const DONE_STATUSES = ["filled", "closed", "cancelled", "rejected", "canceled"];
+const DEMO_BALANCE_USDT = 10_000;
+const QTY_PCTS = [25, 50, 75, 100] as const;
 
 /** "BTCUSDT" → "BTC" — the base asset, used as the quantity unit. */
 function baseAsset(symbol: string): string {
@@ -39,13 +41,19 @@ export default function TradePanel({
   placing,
   onPlace,
 }: Props) {
+  const [panel, setPanel] = useState<"ticket" | "trades">("ticket");
   const [tradeSymbol, setTradeSymbol] = useState(symbol);
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [orderType, setOrderType] = useState<"market" | "limit">("limit");
+  const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [quantity, setQuantity] = useState("0.001");
   const [price, setPrice] = useState("");
+  const [qtyPct, setQtyPct] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [book, setBook] = useState<"open" | "history">("open");
+
+  useEffect(() => {
+    setTradeSymbol(symbol);
+  }, [symbol]);
 
   const openOrders = useMemo(
     () => orders.filter((o) => OPEN_STATUSES.includes(String(o.status || "").toLowerCase())),
@@ -58,6 +66,14 @@ export default function TradePanel({
 
   const effectivePrice = orderType === "limit" ? Number(price || lastPrice || 0) : Number(lastPrice || 0);
   const orderValue = Number(quantity || 0) * effectivePrice;
+
+  const applyPct = (pct: number) => {
+    setQtyPct(pct);
+    const px = orderType === "limit" ? Number(price || lastPrice || 0) : Number(lastPrice || 0);
+    if (!px || px <= 0) return;
+    const qty = (DEMO_BALANCE_USDT * (pct / 100)) / px;
+    setQuantity(qty >= 1 ? qty.toFixed(3) : qty.toFixed(6));
+  };
 
   const submit = async () => {
     setError("");
@@ -79,69 +95,90 @@ export default function TradePanel({
   };
 
   const shownOrders = book === "open" ? openOrders : history;
+  const recentTrades = history.length ? history : openOrders;
 
   return (
     <div className="space-y-4">
-      {/* ── Order ticket ──────────────────────────────────── */}
       <div className="trade-panel">
-        <div className="trade-panel-head">
-          <span className="trade-panel-title">Order ticket</span>
-          <span className="trade-badge trade-badge-neutral">Demo</span>
+        <div className="desk-ticket-tabs">
+          <button type="button" data-active={panel === "ticket"} onClick={() => setPanel("ticket")} className="desk-ticket-tab">
+            Order Ticket
+          </button>
+          <button type="button" data-active={panel === "trades"} onClick={() => setPanel("trades")} className="desk-ticket-tab">
+            Recent Trades
+          </button>
         </div>
 
-        <div className="trade-panel-body space-y-3.5">
-          <div className="trade-seg trade-seg-full">
-            <button type="button" data-active={side === "buy"} data-tone="buy" onClick={() => setSide("buy")} className="trade-seg-btn">
-              Buy / Long
-            </button>
-            <button type="button" data-active={side === "sell"} data-tone="sell" onClick={() => setSide("sell")} className="trade-seg-btn">
-              Sell / Short
-            </button>
-          </div>
-
-          <div>
-            <label className="trade-label" htmlFor="ticket-symbol">Symbol</label>
-            <select
-              id="ticket-symbol"
-              value={tradeSymbol}
-              onChange={(e) => setTradeSymbol(e.target.value)}
-              className="trade-select font-semibold"
-            >
-              {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <span className="trade-label">Order type</span>
+        {panel === "ticket" ? (
+          <div className="trade-panel-body space-y-3.5">
             <div className="trade-seg trade-seg-full">
-              <button type="button" data-active={orderType === "market"} onClick={() => setOrderType("market")} className="trade-seg-btn">
-                Market
+              <button type="button" data-active={side === "buy"} data-tone="buy" onClick={() => setSide("buy")} className="trade-seg-btn">
+                Buy / Long
               </button>
-              <button type="button" data-active={orderType === "limit"} onClick={() => setOrderType("limit")} className="trade-seg-btn">
-                Limit
+              <button type="button" data-active={side === "sell"} data-tone="sell" onClick={() => setSide("sell")} className="trade-seg-btn">
+                Sell / Short
               </button>
             </div>
-          </div>
 
-          <div>
-            <label className="trade-label" htmlFor="ticket-qty">
-              Quantity · {baseAsset(tradeSymbol)}
-            </label>
-            <input
-              id="ticket-qty"
-              type="number"
-              min="0.001"
-              step="0.001"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              className="trade-input"
-            />
-          </div>
+            <div>
+              <label className="trade-label" htmlFor="ticket-symbol">Symbol</label>
+              <select
+                id="ticket-symbol"
+                value={tradeSymbol}
+                onChange={(e) => setTradeSymbol(e.target.value)}
+                className="trade-select font-semibold"
+              >
+                {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
 
-          {orderType === "limit" && (
+            <div>
+              <span className="trade-label">Order type</span>
+              <div className="trade-seg trade-seg-full">
+                <button type="button" data-active={orderType === "market"} onClick={() => setOrderType("market")} className="trade-seg-btn">
+                  Market
+                </button>
+                <button type="button" data-active={orderType === "limit"} onClick={() => setOrderType("limit")} className="trade-seg-btn">
+                  Limit
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="trade-label" htmlFor="ticket-qty">
+                Quantity · {baseAsset(tradeSymbol)}
+              </label>
+              <input
+                id="ticket-qty"
+                type="number"
+                min="0.001"
+                step="0.001"
+                value={quantity}
+                onChange={(e) => {
+                  setQuantity(e.target.value);
+                  setQtyPct(null);
+                }}
+                className="trade-input"
+              />
+              <div className="desk-qty-pct">
+                {QTY_PCTS.map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    data-active={qtyPct === pct}
+                    onClick={() => applyPct(pct)}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div>
               <div className="flex items-center justify-between">
-                <label className="trade-label" htmlFor="ticket-price">Limit price · USDT</label>
+                <label className="trade-label" htmlFor="ticket-price">
+                  {orderType === "limit" ? "Limit price · USDT" : "Price · USDT"}
+                </label>
                 {lastPrice != null && (
                   <button
                     type="button"
@@ -158,51 +195,80 @@ export default function TradePanel({
                 type="number"
                 min="0.01"
                 step="0.01"
-                value={price}
+                value={orderType === "market" ? (lastPrice != null ? String(lastPrice) : "") : price}
                 placeholder={lastPrice ? String(lastPrice) : "Price"}
                 onChange={(e) => setPrice(e.target.value)}
                 className="trade-input"
+                disabled={orderType === "market"}
               />
             </div>
-          )}
 
-          <div
-            className="flex items-center justify-between px-3 py-2.5 rounded-[10px]"
-            style={{ background: "var(--tr-field)", border: "1px solid var(--tr-line-soft)" }}
-          >
-            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              Order value
-            </span>
-            <span className="text-[14px] font-bold tnum">
-              {orderValue > 0
-                ? orderValue.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })
-                : "—"}
-            </span>
-          </div>
+            <div
+              className="flex items-center justify-between px-3 py-2.5 rounded-[10px]"
+              style={{ background: "var(--tr-field)", border: "1px solid var(--tr-line-soft)" }}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                Order value
+              </span>
+              <span className="text-[14px] font-bold tnum">
+                {orderValue > 0
+                  ? orderValue.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })
+                  : "—"}
+              </span>
+            </div>
 
-          {error && (
-            <p className="flex items-start gap-2 text-[12px]" style={{ color: "var(--red)" }}>
-              <AlertCircle className="w-3.5 h-3.5 mt-px flex-none" />
-              {error}
+            {error && (
+              <p className="flex items-start gap-2 text-[12px]" style={{ color: "var(--red)" }}>
+                <AlertCircle className="w-3.5 h-3.5 mt-px flex-none" />
+                {error}
+              </p>
+            )}
+
+            <button
+              type="button"
+              disabled={placing}
+              onClick={submit}
+              className={`trade-btn trade-btn-lg w-full ${side === "buy" ? "trade-btn-buy" : "trade-btn-sell"}`}
+            >
+              <Zap className="w-4 h-4" />
+              {placing ? "Placing…" : `${side === "buy" ? "Buy" : "Sell"} ${baseAsset(tradeSymbol)}`}
+            </button>
+
+            <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+              Demo orders yahan save hote hain. Live positions Delta API se aati hain.
             </p>
-          )}
-
-          <button
-            type="button"
-            disabled={placing}
-            onClick={submit}
-            className={`trade-btn trade-btn-lg w-full ${side === "buy" ? "trade-btn-buy" : "trade-btn-sell"}`}
-          >
-            {placing ? "Placing…" : `${side === "buy" ? "Buy" : "Sell"} ${baseAsset(tradeSymbol)}`}
-          </button>
-
-          <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            Demo orders yahan save hote hain. Live positions Delta API se aati hain.
-          </p>
-        </div>
+          </div>
+        ) : (
+          <div className="p-3">
+            {recentTrades.length === 0 ? (
+              <div className="trade-empty">
+                <span className="trade-empty-icon"><Inbox className="w-4 h-4" /></span>
+                Abhi koi recent trade nahi
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {recentTrades.slice(0, 10).map((o) => (
+                  <div key={o.order_id} className="trade-row">
+                    <span className={`trade-badge ${o.side === "buy" ? "trade-badge-green" : "trade-badge-red"}`}>
+                      {o.side}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12.5px] font-semibold truncate">{symbolLabel(o.symbol)}</div>
+                      <div className="text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
+                        {o.order_type} · {o.quantity ?? o.size ?? 0} @ {o.price ?? o.limit_price ?? "Market"}
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider flex-none" style={{ color: "var(--text-muted)" }}>
+                      {o.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* ── Positions ─────────────────────────────────────── */}
       <div className="trade-panel">
         <div className="trade-panel-head">
           <span className="trade-panel-title">Open positions</span>
@@ -255,7 +321,6 @@ export default function TradePanel({
         </div>
       </div>
 
-      {/* ── Order book ────────────────────────────────────── */}
       <div className="trade-panel">
         <div className="trade-panel-head">
           <span className="trade-panel-title">Orders</span>

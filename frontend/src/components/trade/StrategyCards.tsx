@@ -121,10 +121,7 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
 
   return (
     <div className="space-y-5">
-      <div
-        className="trade-panel flex flex-wrap items-center gap-3 px-4 py-3.5"
-        style={{ background: "linear-gradient(135deg, var(--accent-soft), #fff 58%)" }}
-      >
+      <div className="trade-promo">
         <div className="flex-1 min-w-0">
           <div className="text-[13.5px] font-bold tracking-tight">Apni custom strategy banana chahte ho?</div>
           <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
@@ -137,50 +134,46 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
         </Link>
       </div>
 
-      {/* ── Header + live controls ────────────────────────── */}
-      <div className="trade-panel">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5">
-          <div className="min-w-0">
-            <h2 className="text-[19px] font-bold tracking-tight leading-tight">Strategy catalogue</h2>
-            <p className="text-[12.5px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-              Ready-made strategies — har ek abhi kya keh rahi hai
-            </p>
-          </div>
-
-          <div className="trade-divider-v hidden lg:block my-0.5" />
-
-          <div className="flex items-center gap-2">
-            <span className="trade-signal-pill" style={{ color: "var(--green)" }}>
-              <TrendingUp className="w-3.5 h-3.5" />{buyCount} buy
-            </span>
-            <span className="trade-signal-pill" style={{ color: "var(--red)" }}>
-              <TrendingDown className="w-3.5 h-3.5" />{sellCount} sell
-            </span>
-            <span className={`trade-badge ${activeCount > 0 ? "trade-badge-green" : "trade-badge-neutral"}`}>
-              {activeCount} active
-            </span>
-          </div>
-
-          <div className="flex-1" />
-
-          <div className="flex items-center gap-2">
-            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} aria-label="Symbol" className="trade-select trade-w-symbol trade-size-sm trade-strong">
-              {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-            <select value={interval} onChange={(e) => setIntervalValue(e.target.value)} aria-label="Timeframe" className="trade-select trade-w-history trade-size-sm">
-              {CRYPTO_INTERVALS.map((iv) => <option key={iv.value} value={iv.value}>{iv.label}</option>)}
-            </select>
-            <button type="button" onClick={() => void loadCandles()} disabled={loading} className="trade-btn trade-btn-ghost trade-size-sm">
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
-              <span className="hidden sm:inline">{loading ? "Loading" : "Refresh"}</span>
-            </button>
-          </div>
-        </div>
-        {scannedAt && (
-          <p className="px-4 pb-3 text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
-            {symbolLabel(symbol)} · {candles.length} candles · updated {scannedAt}
+      <div className="trade-page-head">
+        <div>
+          <div className="trade-page-kicker">Ready-made</div>
+          <h2 className="trade-page-title">Strategy catalogue</h2>
+          <p className="trade-page-sub">
+            Har strategy abhi kya keh rahi hai — live signal, tune, aur backtest.
           </p>
-        )}
+        </div>
+        <div className="trade-page-actions">
+          <span className="trade-signal-pill" style={{ color: "var(--green)" }}>
+            <TrendingUp className="w-3.5 h-3.5" />{buyCount} buy
+          </span>
+          <span className="trade-signal-pill" style={{ color: "var(--red)" }}>
+            <TrendingDown className="w-3.5 h-3.5" />{sellCount} sell
+          </span>
+          <span className={`trade-badge ${activeCount > 0 ? "trade-badge-green" : "trade-badge-neutral"}`}>
+            {activeCount} active
+          </span>
+        </div>
+      </div>
+
+      <div className="trade-panel">
+        <div className="trade-toolbar">
+          <select value={symbol} onChange={(e) => setSymbol(e.target.value)} aria-label="Symbol" className="trade-select trade-w-symbol trade-size-sm trade-strong">
+            {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+          <select value={interval} onChange={(e) => setIntervalValue(e.target.value)} aria-label="Timeframe" className="trade-select trade-w-history trade-size-sm">
+            {CRYPTO_INTERVALS.map((iv) => <option key={iv.value} value={iv.value}>{iv.label}</option>)}
+          </select>
+          <div className="flex-1 min-w-[8px]" />
+          {scannedAt && (
+            <span className="trade-toolbar-meta">
+              {symbolLabel(symbol)} · {candles.length} candles · {scannedAt}
+            </span>
+          )}
+          <button type="button" onClick={() => void loadCandles()} disabled={loading} className="trade-btn trade-btn-ghost trade-size-sm">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
+            <span className="hidden sm:inline">{loading ? "Loading" : "Refresh"}</span>
+          </button>
+        </div>
       </div>
 
       {/* ── Grouped cards ─────────────────────────────────── */}
@@ -192,7 +185,7 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
             <span className="hidden sm:inline text-[11.5px]" style={{ color: "var(--text-muted)" }}>{group.hint}</span>
           </div>
 
-          <div className="grid gap-3.5 lg:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-3">
             {group.defs.map((def) => (
               <StrategyCard
                 key={def.id}

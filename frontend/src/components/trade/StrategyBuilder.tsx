@@ -561,7 +561,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
                     onClick={() => setView(v.id)}
                   >
                     <Icon className="w-3.5 h-3.5" />
-                    {v.label}
+                    <span className="hidden sm:inline">{v.label}</span>
                   </button>
                 );
               })}
@@ -573,7 +573,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
               title="Change template"
             >
               <LayoutTemplate className="w-4 h-4" />
-              Templates
+              <span className="hidden md:inline">Templates</span>
             </button>
             <button
               type="button"
@@ -582,7 +582,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
               onClick={() => handleSave("draft")}
             >
               <Save className="w-4 h-4" />
-              Save
+              <span className="hidden sm:inline">Save</span>
             </button>
             <button
               type="button"

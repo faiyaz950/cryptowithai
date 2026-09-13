@@ -83,8 +83,8 @@ interface Readout {
   change: number;
 }
 
-const UP = "#059669";
-const DOWN = "#dc2626";
+const UP = "#00e676";
+const DOWN = "#ff5252";
 
 function toUnix(timeMs: number): UTCTimestamp {
   return Math.floor(timeMs / 1000) as UTCTimestamp;
@@ -114,9 +114,9 @@ export default function CandleChart({
   const lines = useMemo<ChartLine[]>(() => {
     if (overlays) return overlays;
     return [
-      { key: "ema_9", color: "#2563eb", on: showEma9 },
-      { key: "ema_21", color: "#d97706", on: showEma21 },
-      { key: "ema_50", color: "#7c3aed", on: showEma50 },
+      { key: "ema_9", color: "#60a5fa", on: showEma9 },
+      { key: "ema_21", color: "#fbbf24", on: showEma21 },
+      { key: "ema_50", color: "#c084fc", on: showEma50 },
     ]
       .filter((l) => l.on)
       .map(({ key, color }) => ({ key, color }));
@@ -133,22 +133,22 @@ export default function CandleChart({
       width: el.clientWidth,
       height: el.clientHeight,
       layout: {
-        background: { type: ColorType.Solid, color: "#ffffff" },
-        textColor: "#94a3b8",
+        background: { type: ColorType.Solid, color: "#0a0e14" },
+        textColor: "#64748b",
         fontSize: 11,
         fontFamily: "Inter, system-ui, sans-serif",
       },
       grid: {
-        vertLines: { color: "#f4f6f9" },
-        horzLines: { color: "#f4f6f9" },
+        vertLines: { color: "#121821" },
+        horzLines: { color: "#121821" },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: "#94a3b8", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#0f172a" },
-        horzLine: { color: "#94a3b8", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#0f172a" },
+        vertLine: { color: "#475569", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#00e676" },
+        horzLine: { color: "#475569", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#00e676" },
       },
       rightPriceScale: {
-        borderColor: "#eef1f5",
+        borderColor: "#1a2230",
         scaleMargins: { top: 0.08, bottom: 0.26 },
         entireTextOnly: true,
       },
@@ -156,7 +156,7 @@ export default function CandleChart({
         timeFormatter: formatCrosshairTime,
       },
       timeScale: {
-        borderColor: "#eef1f5",
+        borderColor: "#1a2230",
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 4,
@@ -280,7 +280,7 @@ export default function CandleChart({
         .map((c) => ({
           time: toUnix(c.time),
           value: c.volume ?? 0,
-          color: c.close >= c.open ? "rgba(5, 150, 105, 0.28)" : "rgba(220, 38, 38, 0.24)",
+          color: c.close >= c.open ? "rgba(0, 230, 118, 0.32)" : "rgba(255, 82, 82, 0.28)",
         }))
         .sort((a, b) => (a.time as number) - (b.time as number)),
     );

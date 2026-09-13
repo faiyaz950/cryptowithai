@@ -119,15 +119,15 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* ── Header ────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="trade-page-head">
         <div>
-          <h2 className="text-[19px] font-bold tracking-tight">AI Coin Screener</h2>
-          <p className="text-[13px] mt-1" style={{ color: "var(--text-muted)" }}>
-            Saare coins par paanchon strategies ek saath chalti hain — jo bullish ya bearish align hain wo upar aate hain.
+          <div className="trade-page-kicker">Market scan</div>
+          <h2 className="trade-page-title">AI Coin Screener</h2>
+          <p className="trade-page-sub">
+            Saare coins par strategies ek saath — jo bullish ya bearish align hain wo upar aate hain.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="trade-page-actions">
           <span className="trade-badge trade-badge-green">{bullCount} bullish</span>
           <span className="trade-badge trade-badge-red">{bearCount} bearish</span>
           <button type="button" onClick={askAi} disabled={rows.length === 0} className="trade-btn trade-btn-primary">
@@ -137,9 +137,8 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
         </div>
       </div>
 
-      {/* ── Controls ──────────────────────────────────────── */}
       <div className="trade-panel">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5 px-4 py-3">
+        <div className="trade-toolbar">
           <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
             Timeframe
             <select value={interval} onChange={(e) => setInterval(e.target.value)} className="trade-select trade-w-history trade-size-sm">
@@ -147,7 +146,7 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
             </select>
           </label>
 
-          <div className="trade-seg">
+          <div className="trade-seg overflow-x-auto scrollbar-hide">
             {BIAS_FILTERS.map((f) => (
               <button key={f.id} type="button" data-active={bias === f.id} onClick={() => setBias(f.id)} className="trade-seg-btn">
                 {f.label}
@@ -173,10 +172,10 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
             />
           </div>
 
-          <div className="flex-1" />
+          <div className="flex-1 min-w-[8px]" />
 
           {scannedAt && (
-            <span className="text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
+            <span className="trade-toolbar-meta">
               Scanned {scannedAt} · {rows.length} coins
             </span>
           )}
@@ -199,10 +198,9 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
         )}
       </div>
 
-      {/* ── Results ───────────────────────────────────────── */}
       {loading && rows.length === 0 ? (
         <div className="space-y-2">
-          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer rounded-xl h-[46px]" />)}
+          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer rounded-xl h-[72px]" />)}
         </div>
       ) : visible.length === 0 ? (
         <div className="trade-panel">
@@ -215,93 +213,166 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
           </div>
         </div>
       ) : (
-        <div className="trade-panel overflow-hidden">
-          <div className="overflow-auto max-h-[70vh]">
-            <table className="trade-table">
-              <thead>
-                <tr>
-                  <th>Coin</th>
-                  <th>Bias</th>
-                  <th className="trade-num">Strength</th>
-                  <th className="trade-num">Agree</th>
-                  <th>Strategies</th>
-                  <th className="trade-num">Price</th>
-                  <th className="trade-num">24h</th>
-                  <th className="trade-num">Trend</th>
-                  <th className="trade-num">RSI</th>
-                  <th className="trade-num">MACD</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((row) => {
-                  const color = biasColor(row.bias);
-                  const Icon = row.bias === "bearish" ? TrendingDown : TrendingUp;
-                  return (
-                    <tr key={row.symbol}>
-                      <td>
-                        <button type="button" onClick={() => onPickSymbol(row.symbol)} className="trade-linkish" title="Markets tab mein kholo">
-                          {symbolLabel(row.symbol)}
-                        </button>
-                      </td>
-                      <td>
+        <>
+          <div className="trade-screen-cards">
+            {visible.map((row) => {
+              const color = biasColor(row.bias);
+              const Icon = row.bias === "bearish" ? TrendingDown : TrendingUp;
+              return (
+                <article key={row.symbol} className="trade-screen-card">
+                  <div className="trade-screen-card-top">
+                    <div className="min-w-0">
+                      <button type="button" onClick={() => onPickSymbol(row.symbol)} className="trade-linkish text-[15px] font-bold tracking-tight">
+                        {symbolLabel(row.symbol)}
+                      </button>
+                      <div className="mt-1.5">
                         <span
                           className={`trade-badge ${row.bias === "bullish" ? "trade-badge-green" : row.bias === "bearish" ? "trade-badge-red" : "trade-badge-neutral"}`}
                         >
                           {row.bias !== "neutral" && <Icon className="w-3 h-3" />}
                           {row.bias}
                         </span>
-                      </td>
-                      <td className="trade-num">
-                        <div className="flex items-center justify-end gap-2">
-                          <span className="trade-meter" aria-hidden>
-                            <span style={{ width: `${row.strength}%`, background: color }} />
-                          </span>
-                          <span className="font-bold tnum" style={{ minWidth: 22 }}>{row.strength}</span>
-                        </div>
-                      </td>
-                      <td className="trade-num tnum" style={{ color }}>
-                        {row.votes > 0 ? "+" : ""}{row.votes}
-                        <span style={{ color: "var(--text-muted)" }}>/{row.signals.length}</span>
-                      </td>
-                      <td>
-                        <span className="flex items-center gap-1">
-                          {row.signals.map((sig) => (
-                            <span
-                              key={sig.id}
-                              className="trade-vote"
-                              title={`${sig.name}: ${sig.headline}`}
-                              style={{ background: sig.tone === "buy" ? "var(--green)" : sig.tone === "sell" ? "var(--red)" : "var(--tr-line)" }}
-                            />
-                          ))}
-                        </span>
-                      </td>
-                      <td className="trade-num tnum">{fmtPrice(row.price)}</td>
-                      <td className="trade-num tnum" style={{ color: (row.change24h ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                      </div>
+                    </div>
+                    <Link
+                      href={`/trade/strategies/${bestStrategyFor(row)}?symbol=${row.symbol}&timeframe=${scannedInterval}`}
+                      className="trade-btn trade-btn-ghost trade-size-sm"
+                    >
+                      Run
+                    </Link>
+                  </div>
+                  <div className="trade-screen-card-grid">
+                    <div>
+                      <div className="trade-ticker-label">Strength</div>
+                      <div className="trade-ticker-value" style={{ color }}>{row.strength}</div>
+                    </div>
+                    <div>
+                      <div className="trade-ticker-label">Price</div>
+                      <div className="trade-ticker-value">{fmtPrice(row.price)}</div>
+                    </div>
+                    <div>
+                      <div className="trade-ticker-label">24h</div>
+                      <div className="trade-ticker-value" style={{ color: (row.change24h ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
                         {fmtPct(row.change24h)}
-                      </td>
-                      <td className="trade-num tnum" style={{ color: (row.trendPct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
-                        {fmtPct(row.trendPct)}
-                      </td>
-                      <td className="trade-num tnum">{row.rsi == null ? "—" : row.rsi.toFixed(0)}</td>
-                      <td className="trade-num tnum" style={{ color: (row.macdPct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
-                        {fmtPct(row.macdPct)}
-                      </td>
-                      <td>
-                        <Link
-                          href={`/trade/strategies/${bestStrategyFor(row)}?symbol=${row.symbol}&timeframe=${scannedInterval}`}
-                          className="trade-btn trade-btn-ghost trade-size-sm"
-                        >
-                          Run
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="trade-ticker-label">Agree</div>
+                      <div className="trade-ticker-value" style={{ color }}>
+                        {row.votes > 0 ? "+" : ""}{row.votes}/{row.signals.length}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="trade-ticker-label">RSI</div>
+                      <div className="trade-ticker-value">{row.rsi == null ? "—" : row.rsi.toFixed(0)}</div>
+                    </div>
+                    <div>
+                      <div className="trade-ticker-label">Votes</div>
+                      <div className="flex items-center gap-1 mt-1">
+                        {row.signals.map((sig) => (
+                          <span
+                            key={sig.id}
+                            className="trade-vote"
+                            title={`${sig.name}: ${sig.headline}`}
+                            style={{ background: sig.tone === "buy" ? "var(--green)" : sig.tone === "sell" ? "var(--red)" : "var(--tr-line)" }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
-        </div>
+
+          <div className="trade-panel overflow-hidden trade-table-desktop">
+            <div className="overflow-auto max-h-[70vh]">
+              <table className="trade-table">
+                <thead>
+                  <tr>
+                    <th>Coin</th>
+                    <th>Bias</th>
+                    <th className="trade-num">Strength</th>
+                    <th className="trade-num">Agree</th>
+                    <th>Strategies</th>
+                    <th className="trade-num">Price</th>
+                    <th className="trade-num">24h</th>
+                    <th className="trade-num">Trend</th>
+                    <th className="trade-num">RSI</th>
+                    <th className="trade-num">MACD</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((row) => {
+                    const color = biasColor(row.bias);
+                    const Icon = row.bias === "bearish" ? TrendingDown : TrendingUp;
+                    return (
+                      <tr key={row.symbol}>
+                        <td>
+                          <button type="button" onClick={() => onPickSymbol(row.symbol)} className="trade-linkish" title="Markets tab mein kholo">
+                            {symbolLabel(row.symbol)}
+                          </button>
+                        </td>
+                        <td>
+                          <span
+                            className={`trade-badge ${row.bias === "bullish" ? "trade-badge-green" : row.bias === "bearish" ? "trade-badge-red" : "trade-badge-neutral"}`}
+                          >
+                            {row.bias !== "neutral" && <Icon className="w-3 h-3" />}
+                            {row.bias}
+                          </span>
+                        </td>
+                        <td className="trade-num">
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="trade-meter" aria-hidden>
+                              <span style={{ width: `${row.strength}%`, background: color }} />
+                            </span>
+                            <span className="font-bold tnum" style={{ minWidth: 22 }}>{row.strength}</span>
+                          </div>
+                        </td>
+                        <td className="trade-num tnum" style={{ color }}>
+                          {row.votes > 0 ? "+" : ""}{row.votes}
+                          <span style={{ color: "var(--text-muted)" }}>/{row.signals.length}</span>
+                        </td>
+                        <td>
+                          <span className="flex items-center gap-1">
+                            {row.signals.map((sig) => (
+                              <span
+                                key={sig.id}
+                                className="trade-vote"
+                                title={`${sig.name}: ${sig.headline}`}
+                                style={{ background: sig.tone === "buy" ? "var(--green)" : sig.tone === "sell" ? "var(--red)" : "var(--tr-line)" }}
+                              />
+                            ))}
+                          </span>
+                        </td>
+                        <td className="trade-num tnum">{fmtPrice(row.price)}</td>
+                        <td className="trade-num tnum" style={{ color: (row.change24h ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                          {fmtPct(row.change24h)}
+                        </td>
+                        <td className="trade-num tnum" style={{ color: (row.trendPct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                          {fmtPct(row.trendPct)}
+                        </td>
+                        <td className="trade-num tnum">{row.rsi == null ? "—" : row.rsi.toFixed(0)}</td>
+                        <td className="trade-num tnum" style={{ color: (row.macdPct ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+                          {fmtPct(row.macdPct)}
+                        </td>
+                        <td>
+                          <Link
+                            href={`/trade/strategies/${bestStrategyFor(row)}?symbol=${row.symbol}&timeframe=${scannedInterval}`}
+                            className="trade-btn trade-btn-ghost trade-size-sm"
+                          >
+                            Run
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
 
       <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
