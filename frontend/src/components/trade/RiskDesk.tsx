@@ -14,6 +14,7 @@ import {
   symbolLabel,
   type Candle,
   type MarketInfo,
+  syncStamp,
 } from "@/lib/cryptoApi";
 import {
   DEFAULT_PLAN,
@@ -151,7 +152,7 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
         return next;
       });
       if (refill) autoFilled.current = symbol;
-      setSyncedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      setSyncedAt(syncStamp());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Market data load nahi hua");
       setCandles([]);

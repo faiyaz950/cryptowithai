@@ -10,6 +10,7 @@ import {
   fetchScreener,
   symbolLabel,
   type Candle,
+  syncStamp,
 } from "@/lib/cryptoApi";
 import { buildAiPrompt, scoreSymbol, sortRows, type Bias, type ScreenerRow, type SortKey } from "@/lib/screener";
 import { STRATEGIES } from "@/lib/strategies";
@@ -78,7 +79,7 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
       setData(res.results ?? []);
       setFailed(res.failed ?? []);
       setScannedInterval(res.interval || interval);
-      setScannedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      setScannedAt(syncStamp());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Crypto backend connect nahi ho raha (port 2000)");
       setData([]);

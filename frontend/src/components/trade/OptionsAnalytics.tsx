@@ -24,6 +24,7 @@ import {
   type FundingRow,
   type MarketInfo,
   type OptionsAnalytics as Analytics,
+  syncStamp,
 } from "@/lib/cryptoApi";
 
 /**
@@ -141,7 +142,7 @@ export default function OptionsAnalytics() {
       );
       setFunding(fundingRes?.success ? fundingRes.rates : []);
       setSpotInfo(info?.success ? info : null);
-      setUpdatedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      setUpdatedAt(syncStamp());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Options data nahi mila");
       setData(null);

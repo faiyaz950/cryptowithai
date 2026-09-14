@@ -58,6 +58,7 @@ import {
   type DemoOrder,
   type DeltaPositionsResult,
   type MarketInfo,
+  syncStamp,
 } from "@/lib/cryptoApi";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
@@ -233,7 +234,7 @@ function TradeTerminal() {
       if (!candleRes.success) throw new Error(candleRes.error || "Candle data nahi mili");
       setCandles(candleRes.candles ?? []);
       setMarket(info?.success ? info : null);
-      setUpdatedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      setUpdatedAt(syncStamp());
       setOnline(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Crypto backend connect nahi ho raha (port 2000)");
@@ -654,6 +655,9 @@ function TradeTerminal() {
                         <span className="desk-stat-icon"><Activity className="w-3.5 h-3.5" /></span>
                       </div>
                       <div className="desk-stat-value">{market ? fmtCompact(market.volume_24h) : "—"}</div>
+                      <div className="desk-stat-sub">
+                        {market?.turnover_24h ? `$${fmtCompact(market.turnover_24h)} traded` : ""}
+                      </div>
                     </div>
                     <div className="desk-stat-card">
                       <div className="desk-stat-card-top">
@@ -794,7 +798,7 @@ function TradeTerminal() {
                     </div>
                     {updatedAt && (
                       <div className="px-4 py-2 text-[11px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--tr-line-soft)" }}>
-                        Synced {updatedAt} · poll {MARKET_POLL_MS / 1000}s
+                        Synced {updatedAt} UTC · poll {MARKET_POLL_MS / 1000}s
                         {compareSymbol ? ` · compare ${symbolLabel(compareSymbol)}` : ""}
                         {drawTool !== "cursor" ? ` · drawing ${drawTool}` : ""}
                       </div>

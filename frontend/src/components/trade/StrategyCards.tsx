@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, RefreshCw, Sliders, TrendingDown, TrendingUp, Wand2 } from "lucide-react";
 import type { BacktestParams, Candle } from "@/lib/cryptoApi";
-import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, fetchCandles, symbolLabel } from "@/lib/cryptoApi";
+import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, fetchCandles, symbolLabel, syncStamp } from "@/lib/cryptoApi";
 import {
   STRATEGIES,
   STRATEGIES_CHANGED_EVENT,
@@ -103,7 +103,7 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
     try {
       const res = await fetchCandles({ symbol, interval, limit: CARD_BARS });
       setCandles(res.success ? res.candles ?? [] : []);
-      setScannedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      setScannedAt(syncStamp());
     } catch {
       setCandles([]);
     } finally {

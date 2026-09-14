@@ -20,6 +20,7 @@ import {
   symbolLabel,
   type BacktestResult,
   type Candle,
+  syncStamp,
 } from "@/lib/cryptoApi";
 import {
   bool,
@@ -102,7 +103,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
   }, [onActiveChange]);
 
   const log = useCallback((line: string) => {
-    const stamp = new Date().toLocaleTimeString("en-US", { hour12: false });
+    const stamp = syncStamp();
     setLogs((prev) => [`${stamp}  ${line}`, ...prev].slice(0, 40));
   }, []);
 
@@ -119,7 +120,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
       if (!res.success) throw new Error(res.error || "Candle data nahi mili");
       setCandles(res.candles ?? []);
       setLiveError(null);
-      setUpdatedAt(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      setUpdatedAt(syncStamp());
     } catch (err) {
       const message = err instanceof Error ? err.message : "Crypto backend connect nahi ho raha";
       setLiveError(message);

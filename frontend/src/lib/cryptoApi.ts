@@ -125,8 +125,14 @@ export interface MarketInfo {
   current_price: number;
   high_24h: number;
   low_24h: number;
+  /** Base asset mein (BTC, ETH…) — exchange ka rolling 24h volume. */
   volume_24h: number;
+  /** Wahi volume USD mein. Coins ke beech compare karne layak number yahi hai. */
+  turnover_24h?: number | null;
+  mark_price?: number | null;
   change_24h: number;
+  /** "ticker" = exchange ke apne 24h stats, "candles" = fallback. */
+  source?: "ticker" | "candles";
   error?: string;
 }
 
@@ -674,6 +680,18 @@ export async function fetchFundingFor(symbol: string): Promise<FundingRow | null
 
   const all = await fetchFunding().catch(() => null);
   return all?.success ? pick(all.rates) : null;
+}
+
+/**
+ * Sync / scan timestamps ke liye UTC clock.
+ *
+ * Pehle ye local time deta tha jabki desk ka header clock UTC dikhata hai. IST
+ * (UTC+5:30) mein iska matlab tha ki abhi-abhi aaya data "Synced 00:06:44"
+ * dikhta tha aur bagal mein clock "18:36:44 UTC" — dekhne wale ko lagta tha
+ * data 18 ghante purana hai, jabki wo 2 second purana tha.
+ */
+export function syncStamp(at: Date = new Date()): string {
+  return at.toLocaleTimeString("en-GB", { hour12: false, timeZone: "UTC" });
 }
 
 export function symbolLabel(symbol: string): string {
