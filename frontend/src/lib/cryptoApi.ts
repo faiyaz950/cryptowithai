@@ -683,15 +683,28 @@ export async function fetchFundingFor(symbol: string): Promise<FundingRow | null
 }
 
 /**
- * Sync / scan timestamps ke liye UTC clock.
+ * Poore desk ka timezone — ek hi jagah.
  *
- * Pehle ye local time deta tha jabki desk ka header clock UTC dikhata hai. IST
- * (UTC+5:30) mein iska matlab tha ki abhi-abhi aaya data "Synced 00:06:44"
- * dikhta tha aur bagal mein clock "18:36:44 UTC" — dekhne wale ko lagta tha
- * data 18 ghante purana hai, jabki wo 2 second purana tha.
+ * Ye India ka desk hai (Delta India ke perpetuals), aur chart ka axis, backtest
+ * ki range windows aur strategies ke defaults pehle se IST par the. Sirf header
+ * clock aur sync stamps UTC dikha rahe the, to abhi-abhi aaya data bagal ke
+ * clock se 5:30 peeche lagta tha — aur aadhi raat cross karte hi 18 ghante
+ * purana. Ab sab yahi constant use karte hain.
+ *
+ * Sirf VWAP ka daily reset UTC par rehta hai (dekho `indicators.ts`) — wo
+ * display nahi, signal ka hissa hai.
  */
+export const DESK_TZ = "Asia/Kolkata";
+export const DESK_TZ_LABEL = "IST";
+
+/** Desk clock ke liye HH:MM:SS. */
+export function deskClock(at: Date = new Date()): string {
+  return at.toLocaleTimeString("en-GB", { hour12: false, timeZone: DESK_TZ });
+}
+
+/** Sync / scan timestamps — clock ke saath same timezone mein. */
 export function syncStamp(at: Date = new Date()): string {
-  return at.toLocaleTimeString("en-GB", { hour12: false, timeZone: "UTC" });
+  return deskClock(at);
 }
 
 export function symbolLabel(symbol: string): string {

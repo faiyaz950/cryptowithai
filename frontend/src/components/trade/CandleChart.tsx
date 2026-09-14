@@ -14,11 +14,11 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import type { Candle } from "@/lib/cryptoApi";
+import { DESK_TZ, DESK_TZ_LABEL, type Candle } from "@/lib/cryptoApi";
 import type { DrawTool } from "@/components/trade/ChartDeskTools";
 
-/** Delta timestamps UTC hote hain; axis/tooltip IST mein dikhao. */
-const CHART_TZ = "Asia/Kolkata";
+/** Delta timestamps UTC hote hain; axis/tooltip desk ke timezone mein dikhao. */
+const CHART_TZ = DESK_TZ;
 
 function timeToDate(time: Time): Date {
   if (typeof time === "number") return new Date(time * 1000);
@@ -478,7 +478,7 @@ export default function CandleChart({
           <span className="font-bold" style={{ color: "var(--text-primary)" }}>
             {symbol ?? "—"}
             <span style={{ color: "var(--text-muted)" }}>
-              {interval ? ` · ${interval}` : ""} · IST
+              {interval ? ` · ${interval}` : ""} · {DESK_TZ_LABEL}
               {compareLabel ? ` · vs ${compareLabel}` : ""}
               {drawTool !== "cursor" ? ` · draw:${drawTool}` : ""}
             </span>

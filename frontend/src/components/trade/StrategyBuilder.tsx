@@ -847,7 +847,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
               {signalTab === "entry" ? (
                 <>
                   <div>
-                    <FieldLabel tip="Indicator cross ya fixed UTC time">Trigger</FieldLabel>
+                    <FieldLabel tip="Indicator cross ya fixed IST time">Trigger</FieldLabel>
                     <Seg
                       value={strategy.signal.triggerType}
                       onChange={(triggerType) => patch((s) => ({ ...s, signal: { ...s.signal, triggerType } }))}
@@ -860,7 +860,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
 
                   {strategy.signal.triggerType === "time" ? (
                     <div>
-                      <FieldLabel tip="UTC time jab position open hogi">Entry time (UTC)</FieldLabel>
+                      <FieldLabel tip="IST time jab position open hogi">Entry time (IST)</FieldLabel>
                       <input
                         type="time"
                         className="trade-input w-full"

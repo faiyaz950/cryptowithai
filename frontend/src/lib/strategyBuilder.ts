@@ -84,7 +84,7 @@ export interface SignalConfig {
   entryGroups: ConditionGroup[];
   exitOnSignal: boolean;
   exitOnReversal: boolean;
-  /** Time trigger: HH:MM UTC */
+  /** Time trigger: HH:MM IST — desk ka timezone (dekho DESK_TZ). */
   entryTime?: string;
 }
 
@@ -645,7 +645,7 @@ export function summarizeStrategy(s: CustomStrategy): string {
 
   let entry = "";
   if (s.signal.triggerType === "time") {
-    entry = `Enter at ${s.signal.entryTime ?? "—"} UTC.`;
+    entry = `Enter at ${s.signal.entryTime ?? "—"} IST.`;
   } else {
     const parts = s.signal.entryGroups.map((g) =>
       g.conditions.map(conditionPhrase).join(` ${g.join.toUpperCase()} `),
@@ -1025,7 +1025,7 @@ function analyzeCustomStrategy(
   let detail = "Entry conditions abhi match nahi kar rahi.";
 
   if (custom.signal.triggerType === "time") {
-    headline = `Time entry · ${custom.signal.entryTime ?? "—"} UTC`;
+    headline = `Time entry · ${custom.signal.entryTime ?? "—"} IST`;
     detail = "Time-based entries session clock par fire hoti hain; indicator wait nahi.";
   } else if (fired && wantsLong && !wantsShort) {
     tone = "buy";

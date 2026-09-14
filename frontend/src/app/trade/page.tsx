@@ -59,6 +59,8 @@ import {
   type DeltaPositionsResult,
   type MarketInfo,
   syncStamp,
+  deskClock,
+  DESK_TZ_LABEL,
 } from "@/lib/cryptoApi";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
@@ -166,7 +168,7 @@ function TradeTerminal() {
   const [builderId, setBuilderId] = useState<string | null>(() => searchParams.get("edit"));
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [search, setSearch] = useState("");
-  const [utcClock, setUtcClock] = useState("--:--:--");
+  const [deskTime, setDeskTime] = useState("--:--:--");
 
   const goTab = useCallback((next: Tab, editId: string | null = null) => {
     setTab(next);
@@ -214,9 +216,7 @@ function TradeTerminal() {
   useEffect(() => {
     const tick = () => {
       const now = new Date();
-      setUtcClock(
-        now.toLocaleTimeString("en-GB", { hour12: false, timeZone: "UTC" }),
-      );
+      setDeskTime(deskClock(now));
     };
     tick();
     const id = window.setInterval(tick, 1000);
@@ -504,7 +504,7 @@ function TradeTerminal() {
                 <span className="trade-dot" aria-hidden />
                 {online === false ? "Offline" : "Live"}
               </span>
-              <span className="desk-clock">{utcClock} UTC</span>
+              <span className="desk-clock">{deskTime} {DESK_TZ_LABEL}</span>
               <button type="button" className="trade-iconbtn" aria-label="Notifications" onClick={askAi}>
                 <Bell className="w-4 h-4" />
               </button>
@@ -798,7 +798,7 @@ function TradeTerminal() {
                     </div>
                     {updatedAt && (
                       <div className="px-4 py-2 text-[11px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--tr-line-soft)" }}>
-                        Synced {updatedAt} UTC · poll {MARKET_POLL_MS / 1000}s
+                        Synced {updatedAt} {DESK_TZ_LABEL} · poll {MARKET_POLL_MS / 1000}s
                         {compareSymbol ? ` · compare ${symbolLabel(compareSymbol)}` : ""}
                         {drawTool !== "cursor" ? ` · drawing ${drawTool}` : ""}
                       </div>
