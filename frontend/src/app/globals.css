@@ -753,16 +753,22 @@ textarea:focus-visible {
     0 12px 32px -20px rgba(0, 0, 0, 0.7);
   overflow: hidden;
 }
+/*
+ * Panel ka left edge pehle mint green tha. Har panel par hone ki wajah se wo
+ * decoration ban gaya tha aur green ka asli matlab (bullish / live) dab gaya
+ * tha — ek catalogue screen par 17 green stripes. Ab ye neutral highlight hai;
+ * rang sirf wahan jahan wo data ke baare mein kuch keh raha ho.
+ */
 .trade-panel::before {
   content: "";
   position: absolute;
   left: 0;
   top: 12px;
   bottom: 12px;
-  width: 3px;
+  width: 2px;
   border-radius: 0 3px 3px 0;
-  background: linear-gradient(180deg, #00e676, transparent 85%);
-  opacity: 0.45;
+  background: linear-gradient(180deg, rgba(148, 163, 184, 0.5), transparent 80%);
+  opacity: 0.5;
   pointer-events: none;
 }
 .trade-panel-head {
@@ -1130,16 +1136,10 @@ textarea:focus-visible {
 }
 
 /* ── Strategy cards ────────────────────────────────────── */
-.trade-strategy {
-  display: flex;
-  flex-direction: column;
-  transition: border-color .18s, box-shadow .18s, transform .18s;
-}
 .trade-strategy:hover {
   border-color: var(--border-strong);
   box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 18px 40px -24px rgba(15, 23, 42, .4);
 }
-.trade-strategy[data-active="true"] { border-color: rgba(5, 150, 105, .4); }
 .trade-strategy-icon {
   display: flex;
   align-items: center;
@@ -1335,17 +1335,42 @@ textarea:focus-visible {
   .trade-table-desktop { display: block; }
 }
 
+/* Builder ka apna rang violet hai (strategies ka THIRD_COLOR) — green promo
+   catalogue ke live buy signals se compete kar raha tha. */
 .trade-promo {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 16px;
-  padding: 14px 16px;
+  padding: 15px 18px;
   border-radius: var(--tr-radius);
   background:
-    linear-gradient(135deg, rgba(12, 166, 120, 0.1), transparent 55%),
-    var(--bg-card);
-  border: 1px solid rgba(12, 166, 120, 0.18);
+    radial-gradient(120% 180% at 0% 0%, rgba(124, 58, 237, 0.16), transparent 58%),
+    linear-gradient(180deg, rgba(18, 24, 33, 0.95), rgba(12, 16, 23, 0.98));
+  border: 1px solid rgba(124, 58, 237, 0.24);
+  overflow: hidden;
+}
+.trade-promo-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 11px;
+  background: rgba(124, 58, 237, 0.16);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  color: #a78bfa;
+}
+.trade-promo-btn {
+  background: rgba(124, 58, 237, 0.16);
+  color: #c4b5fd;
+  border-color: rgba(124, 58, 237, 0.42);
+}
+.trade-promo-btn:hover {
+  background: rgba(124, 58, 237, 0.26);
+  color: #ddd6fe;
+  border-color: rgba(124, 58, 237, 0.6);
 }
 
 .trade-chart-legend {
@@ -1408,10 +1433,6 @@ textarea:focus-visible {
 .trade-tab, .trade-btn { text-decoration: none; }
 .trade-tab { display: inline-flex; align-items: center; }
 
-.trade-strategy-clickable { cursor: pointer; }
-.trade-strategy-clickable:focus-within { border-color: var(--accent); }
-.trade-strategy-title { color: inherit; text-decoration: none; }
-.trade-strategy-title:hover { color: var(--accent); }
 .trade-w-history { width: 96px; }
 .trade-w-sort { width: 150px; }
 
@@ -1491,27 +1512,8 @@ textarea:focus-visible {
 }
 
 /* Signal block — card ka sabse bhaari element. Left accent tone batata hai. */
-.trade-signal-box {
-  border-radius: 10px;
-  padding: 11px 12px;
-  background: var(--tr-field);
-  border: 1px solid var(--tr-line-soft);
-  border-left: 3px solid var(--tr-line);
-}
-.trade-signal-box[data-tone="buy"] {
-  background: rgba(5, 150, 105, .05);
-  border-color: rgba(5, 150, 105, .16);
-  border-left-color: var(--green);
-}
-.trade-signal-box[data-tone="sell"] {
-  background: rgba(220, 38, 38, .045);
-  border-color: rgba(220, 38, 38, .15);
-  border-left-color: var(--red);
-}
 
 /* Tone card ke hover shadow tak jaata hai — grid scan karna aasan ho jata hai. */
-.trade-strategy[data-tone="buy"]:hover  { box-shadow: 0 1px 2px rgba(5, 150, 105, .06), 0 16px 36px -24px rgba(5, 150, 105, .55); }
-.trade-strategy[data-tone="sell"]:hover { box-shadow: 0 1px 2px rgba(220, 38, 38, .06), 0 16px 36px -24px rgba(220, 38, 38, .5); }
 
 .trade-icon-only { width: var(--tr-h); padding: 0; flex: none; }
 .trade-icon-only[data-on="true"] {
@@ -1629,7 +1631,7 @@ textarea:focus-visible {
 
 /* ── Market read cards ─────────────────────────────────────
    Har card ek sawaal ka jawab deta hai. Left accent tone carry karta hai —
-   wahi pattern jo .trade-signal-box use karta hai. */
+   wahi pattern jo .strat-card use karta hai. */
 .trade-read {
   position: relative;
   padding: 13px 15px 14px 16px;
@@ -3804,3 +3806,269 @@ textarea:focus-visible {
   line-height: 1.1;
 }
 .risk-stat-sub { font-size: 10.5px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
+
+/* ══ Strategy catalogue ══════════════════════════════════
+   Ek screen par 15 cards hain. Pehle har card ka stripe aur har "Open" button
+   green tha, to green ek decoration ban gaya tha aur ye nahi dikhta tha ki
+   abhi kaun si strategy actually buy keh rahi hai.
+
+   Ab rang ke do hi kaam hain:
+     1. Signal tone (buy / sell / wait) — card ka left rail aur verdict chip.
+     2. Strategy ki apni identity — har strategy ka `accent` (blue, amber,
+        violet, cyan, teal), inline `--sa` se aata hai.
+   Baaki sab chrome graphite hai. */
+
+.strat-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 640px) { .strat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .strat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.strat-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.strat-section-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--tr-ink-2);
+  white-space: nowrap;
+}
+.strat-section-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strat-section-rule {
+  flex: 1;
+  min-width: 12px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--tr-line), transparent);
+}
+
+.strat-card {
+  --sa: #64748b;
+  --tone: rgba(148, 163, 184, 0.35);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 15px 16px 14px 19px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(18, 24, 33, 0.95), rgba(12, 16, 23, 0.98));
+  border: 1px solid var(--tr-line);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 12px 32px -22px rgba(0, 0, 0, 0.8);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color .18s, box-shadow .18s, transform .18s;
+}
+.strat-card[data-tone="buy"] { --tone: var(--green); }
+.strat-card[data-tone="sell"] { --tone: var(--red); }
+/* Deployed strategy — green yahan kuch keh raha hai, isliye rehta hai. */
+.strat-card[data-active="true"] { border-color: rgba(0, 230, 118, 0.3); }
+
+/* Left rail = signal tone. Green ab sirf un cards par hai jo sach mein buy keh rahe hain. */
+.strat-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--tone);
+  opacity: 0.85;
+}
+/* Strategy ki apni pehchaan — halka corner glow, uske accent mein. */
+.strat-card::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 120px;
+  background: radial-gradient(80% 100% at 6% 0%, var(--sa-soft, transparent), transparent 72%);
+  pointer-events: none;
+}
+.strat-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--sa) 45%, var(--tr-line));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 22px 44px -26px rgba(0, 0, 0, 0.9);
+}
+.strat-card:focus-within { border-color: var(--sa); }
+.strat-card > * { position: relative; z-index: 1; }
+
+.strat-head { display: flex; align-items: flex-start; gap: 11px; }
+.strat-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 11px;
+  background: var(--sa-soft, var(--tr-field));
+  border: 1px solid var(--sa-line, var(--tr-line));
+  color: var(--sa);
+}
+.strat-card h4 { margin: 0; font-weight: inherit; }
+.strat-name {
+  display: inline-block;
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  color: var(--tr-ink);
+  text-decoration: none;
+}
+.strat-name:hover { color: var(--sa); }
+.strat-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+.strat-cat {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.strat-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sa);
+  background: var(--sa-soft, var(--tr-field));
+}
+
+/* ── Verdict: tone sirf rang se nahi, shabd se bhi ──────── */
+.strat-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 21px;
+  padding: 0 8px;
+  flex: none;
+  border-radius: 6px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  background: var(--tr-field);
+  color: var(--text-muted);
+  border: 1px solid var(--tr-line);
+}
+.strat-card[data-tone="buy"] .strat-verdict {
+  background: rgba(0, 230, 118, 0.13);
+  color: #69f0ae;
+  border-color: rgba(0, 230, 118, 0.3);
+}
+.strat-card[data-tone="sell"] .strat-verdict {
+  background: rgba(255, 82, 82, 0.13);
+  color: #ff8a80;
+  border-color: rgba(255, 82, 82, 0.3);
+}
+
+.strat-signal {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 13px;
+  min-height: 38px;
+}
+.strat-headline {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--tr-ink-2);
+}
+.strat-card[data-tone="neutral"] .strat-headline { color: var(--text-secondary); }
+
+/* ── Readouts: micro data grid, label upar, mono value neeche ─ */
+/* Flex, grid nahi: har strategy 1 se 3 readouts deti hai, aur fixed 3-column
+   grid mein kam readouts par khaali cells dikhte the. */
+.strat-reads {
+  display: flex;
+  margin-top: 12px;
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+}
+.strat-read { flex: 1 1 0; padding: 7px 9px; min-width: 0; }
+.strat-read + .strat-read { border-left: 1px solid var(--tr-line-soft); }
+.strat-read-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strat-read-value {
+  font-family: var(--tr-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+  color: var(--tr-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strat-params {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px dashed var(--tr-line);
+}
+
+.strat-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid var(--tr-line-soft);
+}
+
+/*
+ * Card ka apna "Open" button quiet hai. 15 solid green buttons ek grid mein
+ * har cheez ko barabar zor se cheekhte the; asli CTA (Builder) dab jaata tha.
+ * Rang card hover par aata hai — strategy ke apne accent mein.
+ */
+.trade-btn-quiet {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--tr-line);
+}
+.trade-btn-quiet:hover:not(:disabled) {
+  background: var(--tr-field);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.strat-card:hover .strat-open {
+  border-color: color-mix(in srgb, var(--sa) 55%, var(--tr-line));
+  color: var(--sa);
+  background: var(--sa-soft, var(--tr-field));
+}

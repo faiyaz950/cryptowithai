@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, RefreshCw, Sliders, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowRight, RefreshCw, Sliders, TrendingDown, TrendingUp, Wand2 } from "lucide-react";
 import type { BacktestParams, Candle } from "@/lib/cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, fetchCandles, symbolLabel } from "@/lib/cryptoApi";
 import {
@@ -42,8 +42,28 @@ function isOptions(def: StrategyDef): boolean {
   return def.category.toLowerCase().startsWith("options");
 }
 
-function toneColor(tone: SignalTone): string {
-  return tone === "buy" ? "var(--green)" : tone === "sell" ? "var(--red)" : "var(--text-muted)";
+/** Tone sirf rang se nahi — shabd se bhi, taaki colour-blind par bhi padha jaye. */
+function toneLabel(tone: SignalTone): string {
+  return tone === "buy" ? "Buy" : tone === "sell" ? "Sell" : "Wait";
+}
+
+/** "Options · debit · pro" -> "Options · debit" + alag "Pro" tag. */
+function splitCategory(category: string): { label: string; pro: boolean } {
+  const parts = category.split("·").map((p) => p.trim());
+  const pro = parts.at(-1)?.toLowerCase() === "pro";
+  return { label: (pro ? parts.slice(0, -1) : parts).join(" · "), pro };
+}
+
+/**
+ * Har strategy apna accent leke aati hai (blue, amber, violet, cyan, teal).
+ * Wahi card ki identity banta hai — pehle sab cards ek jaise green the.
+ */
+function accentVars(accent: string): React.CSSProperties {
+  return {
+    ["--sa" as string]: accent,
+    ["--sa-soft" as string]: `${accent}1f`,
+    ["--sa-line" as string]: `${accent}44`,
+  };
 }
 
 export default function StrategyCards({ defaultSymbol, running, onTest }: Props) {
@@ -122,13 +142,16 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
   return (
     <div className="space-y-5">
       <div className="trade-promo">
+        <span className="trade-promo-mark" aria-hidden>
+          <Wand2 className="w-[18px] h-[18px]" />
+        </span>
         <div className="flex-1 min-w-0">
           <div className="text-[13.5px] font-bold tracking-tight">Apni custom strategy banana chahte ho?</div>
           <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
             No-code Strategy Builder — indicators, risk, aur deploy ek jagah
           </p>
         </div>
-        <Link href="/trade?tab=builder" className="trade-btn trade-btn-primary">
+        <Link href="/trade?tab=builder" className="trade-btn trade-promo-btn">
           Open builder
           <ArrowRight className="w-4 h-4" />
         </Link>
@@ -179,13 +202,14 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
       {/* ── Grouped cards ─────────────────────────────────── */}
       {groups.map((group) => (
         <section key={group.title}>
-          <div className="flex items-baseline gap-2.5 mb-3">
-            <h3 className="text-[13px] font-bold tracking-tight">{group.title}</h3>
+          <div className="strat-section">
+            <h3 className="strat-section-title">{group.title}</h3>
             <span className="trade-count-chip">{group.defs.length}</span>
-            <span className="hidden sm:inline text-[11.5px]" style={{ color: "var(--text-muted)" }}>{group.hint}</span>
+            <span className="strat-section-rule" aria-hidden />
+            <span className="strat-section-hint hidden lg:inline">{group.hint}</span>
           </div>
 
-          <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="strat-grid">
             {group.defs.map((def) => (
               <StrategyCard
                 key={def.id}
@@ -237,6 +261,7 @@ function StrategyCard({
   const Icon = def.icon;
   const href = strategyHref(def, values);
   const tone = signal?.tone ?? "neutral";
+  const { label: category, pro } = splitCategory(def.category);
 
   // Card ke khaali hisse par click = strategy page. Controls apna kaam karte rahein.
   const openFromCard = (event: React.MouseEvent<HTMLElement>) => {
@@ -246,88 +271,92 @@ function StrategyCard({
 
   return (
     <article
-      className="trade-strategy trade-panel trade-strategy-clickable"
+      className="strat-card"
       data-active={active}
       data-tone={tone}
+      style={accentVars(def.accent)}
       onClick={openFromCard}
     >
-      <div className="trade-panel-body flex flex-col flex-1">
-        {/* Head */}
-        <div className="flex items-start gap-3">
-          <span className="trade-strategy-icon" style={{ background: `${def.accent}14`, color: def.accent }}>
-            <Icon className="w-4 h-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h4 className="text-[14.5px] font-bold leading-tight tracking-tight">
-              <Link href={href} className="trade-strategy-title">{def.name}</Link>
-            </h4>
-            <p className="text-[10.5px] mt-1 font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--text-muted)" }}>
-              {def.category}
-            </p>
+      <div className="strat-head">
+        <span className="strat-icon" aria-hidden>
+          <Icon className="w-[17px] h-[17px]" />
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <h4>
+            <Link href={href} className="strat-name">{def.name}</Link>
+          </h4>
+          <div className="strat-meta">
+            <span className="strat-cat">{category}</span>
+            {pro && <span className="strat-tag">Pro</span>}
+            {active && (
+              <span className="trade-badge trade-badge-green"><span className="trade-dot" />Live</span>
+            )}
           </div>
-          {active && (
-            <span className="trade-badge trade-badge-green"><span className="trade-dot" />Live</span>
-          )}
         </div>
 
-        {/* Live signal — card ka asli content */}
-        <div className="trade-signal-box mt-3.5" data-tone={tone}>
-          {loading ? (
-            <div className="shimmer rounded h-[13px] w-3/4" />
-          ) : signal ? (
-            <>
-              <p className="text-[12.5px] font-bold leading-snug" style={{ color: toneColor(tone) }}>
-                {signal.headline}
-              </p>
-              {signal.readouts.length > 0 && (
-                <div className="flex flex-wrap gap-x-3.5 gap-y-1 mt-2">
-                  {signal.readouts.slice(0, 3).map((r) => (
-                    <span key={r.label} className="text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
-                      {r.label}{" "}
-                      <b style={{ color: r.color ?? "var(--text-secondary)" }}>{r.value}</b>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>Signal ke liye data nahi mila</p>
-          )}
-        </div>
-
-        {/* Params — progressive disclosure ke peeche */}
-        {tuneOpen && (
-          <div className="grid grid-cols-2 gap-3 mt-3.5 pt-3.5" style={{ borderTop: "1px solid var(--tr-line-soft)" }}>
-            {cardFields(def).map((field) => (
-              <CardField key={field.key} def={def} field={field} values={values} onChange={(v) => onField(field.key, v)} />
-            ))}
-          </div>
+        {!loading && signal && (
+          <span className="strat-verdict">{toneLabel(tone)}</span>
         )}
+      </div>
 
-        <div className="flex-1" />
+      {/* Live signal — card ka asli content */}
+      <div className="strat-signal">
+        {loading ? (
+          <div className="shimmer rounded h-[13px] w-3/4 mt-1" />
+        ) : signal ? (
+          <p className="strat-headline">{signal.headline}</p>
+        ) : (
+          <p className="strat-headline" style={{ color: "var(--text-muted)" }}>
+            Signal ke liye data nahi mila
+          </p>
+        )}
+      </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2 mt-3.5 pt-3.5" style={{ borderTop: "1px solid var(--tr-line-soft)" }}>
-          <Link href={href} className="trade-btn trade-btn-primary flex-1">
-            Open
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-          <button
-            type="button"
-            onClick={onToggleTune}
-            aria-expanded={tuneOpen}
-            aria-label={`${def.name} ke parameters ${tuneOpen ? "chhupao" : "kholo"}`}
-            className="trade-btn trade-btn-ghost trade-icon-only"
-            data-on={tuneOpen}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-          </button>
-          {def.backtestable !== false && (
-            <button type="button" disabled={running} className="trade-btn trade-btn-ghost" onClick={onTest}>
-              {running ? "…" : "Backtest"}
-            </button>
-          )}
+      {!loading && signal && signal.readouts.length > 0 && (
+        <div className="strat-reads">
+          {signal.readouts.slice(0, 3).map((r) => (
+            <div key={r.label} className="strat-read">
+              <div className="strat-read-label" title={r.label}>{r.label}</div>
+              <div className="strat-read-value" style={{ color: r.color }} title={r.value}>
+                {r.value}
+              </div>
+            </div>
+          ))}
         </div>
+      )}
+
+      {/* Params — progressive disclosure ke peeche */}
+      {tuneOpen && (
+        <div className="strat-params">
+          {cardFields(def).map((field) => (
+            <CardField key={field.key} def={def} field={field} values={values} onChange={(v) => onField(field.key, v)} />
+          ))}
+        </div>
+      )}
+
+      <div className="flex-1" />
+
+      <div className="strat-actions">
+        <Link href={href} className="trade-btn trade-btn-quiet strat-open flex-1">
+          Open
+          <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
+        <button
+          type="button"
+          onClick={onToggleTune}
+          aria-expanded={tuneOpen}
+          aria-label={`${def.name} ke parameters ${tuneOpen ? "chhupao" : "kholo"}`}
+          className="trade-btn trade-btn-ghost trade-icon-only"
+          data-on={tuneOpen}
+        >
+          <Sliders className="w-3.5 h-3.5" />
+        </button>
+        {def.backtestable !== false && (
+          <button type="button" disabled={running} className="trade-btn trade-btn-ghost" onClick={onTest}>
+            {running ? "…" : "Backtest"}
+          </button>
+        )}
       </div>
     </article>
   );
