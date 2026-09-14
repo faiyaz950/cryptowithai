@@ -653,6 +653,29 @@ export async function fetchFunding(symbols?: string[]): Promise<FundingResponse>
   return cryptoFetch<FundingResponse>(`/funding${qs ? `?${qs}` : ""}`);
 }
 
+function fundingBase(symbol: string): string {
+  return symbol.toUpperCase().replace(/USDT$|USD$/, "");
+}
+
+/**
+ * Ek symbol ka funding rate. Filtered call purane backends par fail ho jaati hai,
+ * isliye fallback poori list par base-asset se match karta hai. Wo list sabse
+ * tez funding wale coins tak cut hoti hai, to null ka matlab "pata nahi" hai —
+ * "zero funding" nahi.
+ */
+export async function fetchFundingFor(symbol: string): Promise<FundingRow | null> {
+  const base = fundingBase(symbol);
+  const pick = (rows: FundingRow[] | undefined) =>
+    rows?.find((r) => fundingBase(r.symbol) === base) ?? null;
+
+  const filtered = await fetchFunding([symbol]).catch(() => null);
+  const hit = filtered?.success ? pick(filtered.rates) : null;
+  if (hit) return hit;
+
+  const all = await fetchFunding().catch(() => null);
+  return all?.success ? pick(all.rates) : null;
+}
+
 export function symbolLabel(symbol: string): string {
 
   return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace("USDT", "/USDT");

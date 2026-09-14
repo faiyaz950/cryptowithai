@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Activity,
@@ -17,6 +18,7 @@ import {
   Radar,
   RefreshCw,
   Search,
+  ShieldCheck,
   Sigma,
   Sparkles,
   Star,
@@ -90,14 +92,17 @@ const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
 ];
 
 const NAV: {
-  id: Tab | "watchlist";
+  id: Tab | "watchlist" | "risk";
   label: string;
   icon: typeof LineChart;
+  /** Apna route rakhne wale sections — tab state ke bajaye navigate hote hain. */
+  href?: string;
 }[] = [
   { id: "ai", label: "AI Assistant", icon: Sparkles },
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screeners", icon: Radar },
   { id: "watchlist", label: "Watchlist", icon: Star },
+  { id: "risk", label: "Risk Desk", icon: ShieldCheck, href: "/trade/risk" },
   { id: "portfolio", label: "Portfolio", icon: Briefcase },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
   { id: "strategies", label: "Catalogue", icon: Layers },
@@ -411,6 +416,21 @@ function TradeTerminal() {
 
   const renderNavItem = (item: (typeof NAV)[number], mobile = false) => {
     const Icon = item.icon;
+
+    if (item.href) {
+      return (
+        <Link
+          key={`${mobile ? "m-" : ""}${item.id}`}
+          href={item.href.includes("?") ? item.href : `${item.href}?symbol=${symbol}`}
+          className="desk-nav-item"
+          data-active={false}
+        >
+          <Icon className="w-[15px] h-[15px]" />
+          {item.label}
+        </Link>
+      );
+    }
+
     const isActive = item.id === "watchlist" ? false : item.id === activeNav;
 
     const onClick = () => {
@@ -583,6 +603,14 @@ function TradeTerminal() {
                   </div>
 
                   <div className="desk-pair-actions">
+                    <Link
+                      href={`/trade/risk?symbol=${symbol}`}
+                      className="trade-iconbtn"
+                      aria-label={`${symbolLabel(symbol)} ka position size nikalo`}
+                      title="Risk Desk — position size aur liquidation"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                    </Link>
                     <button type="button" className="trade-iconbtn" aria-label="Watchlist">
                       <Star className="w-4 h-4" />
                     </button>

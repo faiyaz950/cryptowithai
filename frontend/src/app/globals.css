@@ -3356,3 +3356,436 @@ textarea:focus-visible {
 .desk-body-fill .desk-embed.trade-panel::before {
   display: none;
 }
+
+/* ══ Risk Desk ═══════════════════════════════════════════
+   Position sizing, liquidation guard, portfolio heat aur Monte Carlo.
+   Sab kuch trade-root ke dark tokens par chalta hai. */
+
+.risk-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+@media (min-width: 1100px) {
+  .risk-grid { grid-template-columns: minmax(360px, 420px) minmax(0, 1fr); }
+}
+
+.risk-fields {
+  display: grid;
+  gap: 12px 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.risk-fields-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.risk-field-full { grid-column: 1 / -1; }
+
+.risk-affix {
+  position: relative;
+  display: block;
+}
+.risk-affix > .trade-input { padding-right: 44px; }
+.risk-affix-unit {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  pointer-events: none;
+  font-family: var(--tr-mono);
+}
+
+/* Side switch — buy/sell ki tarah rangeen, taaki galti se ulta na chun lein. */
+.risk-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.risk-side-btn {
+  height: var(--tr-h);
+  border-radius: var(--tr-radius-sm);
+  border: 1px solid var(--tr-line);
+  background: var(--tr-field);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.risk-side-btn:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.risk-side-btn[data-on="true"][data-side="long"] {
+  background: rgba(0, 230, 118, .14);
+  border-color: rgba(0, 230, 118, .45);
+  color: #69f0ae;
+}
+.risk-side-btn[data-on="true"][data-side="short"] {
+  background: rgba(255, 82, 82, .14);
+  border-color: rgba(255, 82, 82, .45);
+  color: #ff8a80;
+}
+
+.risk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.risk-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+  text-align: left;
+}
+.risk-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+.risk-chip-label { font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.risk-chip-hint {
+  font-size: 9.5px;
+  color: var(--text-muted);
+  font-family: var(--tr-mono);
+  letter-spacing: -.01em;
+}
+
+.risk-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--tr-line);
+  outline: none;
+  margin: 10px 0 2px;
+}
+.risk-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #05080d;
+  box-shadow: 0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);
+  cursor: pointer;
+}
+.risk-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #05080d;
+  cursor: pointer;
+}
+.risk-slider-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  font-family: var(--tr-mono);
+}
+
+/* ── Price rail — entry, stop, liq aur targets ek hi scale par ─── */
+.risk-rail {
+  position: relative;
+  min-height: 300px;
+  padding: 14px 0 14px 0;
+}
+.risk-rail-track {
+  position: absolute;
+  left: 96px;
+  right: 96px;
+  top: 14px;
+  bottom: 14px;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(0, 230, 118, .07), rgba(0, 0, 0, 0) 45%, rgba(255, 82, 82, .07)),
+    var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+}
+.risk-rail-zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+.risk-rail-zone[data-kind="profit"] { background: rgba(0, 230, 118, .09); }
+.risk-rail-zone[data-kind="loss"] { background: rgba(255, 82, 82, .09); }
+.risk-rail-zone[data-kind="danger"] {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(255, 82, 82, .18) 0 6px,
+    rgba(255, 82, 82, .06) 6px 12px
+  );
+}
+/* Liquidation scale ke bahar hai — zone track ke kinaare par fade ho jata hai
+   taaki "aur neeche jaata hai" dikhe, "yahin khatam" nahi. */
+.risk-rail-zone[data-kind="danger"][data-open="true"] {
+  -webkit-mask-image: linear-gradient(180deg, #000 30%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 30%, transparent 100%);
+}
+
+.risk-rail-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+  border-left: 3px solid var(--tr-line);
+}
+.risk-rail-foot[data-safe="false"] {
+  background: rgba(255, 82, 82, .07);
+  border-color: rgba(255, 82, 82, .22);
+  border-left-color: var(--red);
+}
+.risk-rail-foot-tag {
+  width: 80px;
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.risk-rail-foot-text { font-variant-numeric: tabular-nums; }
+/* Label row aur uski line alag-alag position hoti hain: line hamesha asli
+   price par rehti hai, label sirf overlap bachane ke liye thoda khisakta hai. */
+.risk-rail-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.risk-rail-line {
+  position: absolute;
+  left: 96px;
+  right: 96px;
+  height: 0;
+  border-top: 1px dashed var(--tr-line);
+  transform: translateY(-50%);
+}
+.risk-rail-line[data-strong="true"] { border-top-style: solid; }
+.risk-rail-dot {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  left: 92.5px;
+  transform: translate(-50%, -50%);
+}
+.risk-rail-tag {
+  width: 92px;
+  flex: none;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.risk-rail-price {
+  margin-left: auto;
+  width: 92px;
+  flex: none;
+  text-align: left;
+  font-family: var(--tr-mono);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.risk-rail-sub {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
+/* ── Warnings ────────────────────────────────────────────── */
+.risk-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border: 1px solid var(--tr-line-soft);
+  background: var(--tr-field);
+  color: var(--text-secondary);
+  border-left: 3px solid var(--tr-line);
+}
+.risk-warn[data-level="critical"] {
+  background: rgba(255, 82, 82, .07);
+  border-color: rgba(255, 82, 82, .22);
+  border-left-color: var(--red);
+}
+.risk-warn[data-level="warn"] {
+  background: rgba(255, 179, 0, .07);
+  border-color: rgba(255, 179, 0, .22);
+  border-left-color: var(--amber);
+}
+.risk-warn[data-level="ok"] {
+  background: rgba(0, 230, 118, .06);
+  border-color: rgba(0, 230, 118, .2);
+  border-left-color: var(--green);
+}
+.risk-warn-icon { flex: none; margin-top: 1px; }
+
+/* ── Verdict banner ──────────────────────────────────────── */
+.risk-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--tr-line-soft);
+}
+.risk-verdict-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.risk-verdict[data-level="ok"] .risk-verdict-badge { background: rgba(0, 230, 118, .14); color: #69f0ae; }
+.risk-verdict[data-level="warn"] .risk-verdict-badge { background: rgba(255, 179, 0, .14); color: #ffb300; }
+.risk-verdict[data-level="critical"] .risk-verdict-badge { background: rgba(255, 82, 82, .14); color: #ff8a80; }
+.risk-verdict-title { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.risk-verdict-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+
+/* ── Heat meter ──────────────────────────────────────────── */
+.risk-heat {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+  overflow: hidden;
+  display: flex;
+}
+.risk-heat-seg { height: 100%; }
+.risk-heat-seg + .risk-heat-seg { border-left: 1px solid rgba(5, 8, 13, .7); }
+.risk-heat-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  font-family: var(--tr-mono);
+  margin-top: 5px;
+}
+.risk-heat-limit {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--amber);
+  opacity: .85;
+}
+
+/* ── Monte Carlo fan chart ───────────────────────────────── */
+.risk-fan {
+  width: 100%;
+  height: 260px;
+  display: block;
+  border-radius: 10px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+}
+@media (min-width: 900px) { .risk-fan { height: 320px; } }
+
+.risk-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.risk-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.risk-legend-swatch { width: 12px; height: 3px; border-radius: 999px; }
+
+/* ── Book rows ───────────────────────────────────────────── */
+.risk-book-row {
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+  transition: border-color .15s;
+}
+.risk-book-row:hover { border-color: var(--tr-line); }
+.risk-book-row[data-status="closed"] { opacity: .55; }
+.risk-book-metrics {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 560px) {
+  .risk-book-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1200px) {
+  .risk-book-row { grid-template-columns: 180px minmax(0, 1fr) auto; align-items: center; }
+  .risk-book-metrics { grid-column: auto; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+
+.risk-stat-grid {
+  display: grid;
+  gap: 1px;
+  background: var(--tr-line-soft);
+  border: 1px solid var(--tr-line-soft);
+  border-radius: 12px;
+  overflow: hidden;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 720px) { .risk-stat-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .risk-stat-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.risk-stat {
+  background: var(--bg-card);
+  padding: 12px 14px;
+}
+.risk-stat-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.risk-stat-value {
+  font-family: var(--tr-mono);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  margin-top: 5px;
+  line-height: 1.1;
+}
+.risk-stat-sub { font-size: 10.5px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
