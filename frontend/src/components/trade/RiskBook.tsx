@@ -89,14 +89,14 @@ export default function RiskBook({ plans, equity, onLoad }: Props) {
         </div>
 
         <div className="risk-stat-grid risk-stat-grid-4" style={{ border: 0, borderRadius: 0 }}>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={heat.heatPct > 6 ? "risk" : heat.heatPct > 3 ? "warn" : "good"}>
             <div className="risk-stat-label">Open risk</div>
             <div className="risk-stat-value" style={{ color: heatColor(heat.heatPct) }}>
               {fmtUsd(heat.openRisk)}
             </div>
             <div className="risk-stat-sub">{heat.count} active plan{heat.count === 1 ? "" : "s"}</div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={heat.clusterPct > 4 && heat.count > 1 ? "warn" : "info"}>
             <div className="risk-stat-label">Long vs short</div>
             <div className="risk-stat-value" style={{ fontSize: 15 }}>
               <span style={{ color: "var(--green)" }}>{fmtUsd(heat.longRisk)}</span>
@@ -107,12 +107,12 @@ export default function RiskBook({ plans, equity, onLoad }: Props) {
               {heat.clusterSide ? `${heat.clusterPct.toFixed(1)}% ek hi taraf` : "Balanced"}
             </div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={heat.grossLeverage > 20 ? "warn" : "info"}>
             <div className="risk-stat-label">Gross notional</div>
             <div className="risk-stat-value">{fmtUsd(heat.notional)}</div>
             <div className="risk-stat-sub">{heat.grossLeverage.toFixed(1)}x equity</div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone="risk">
             <div className="risk-stat-label">Worst case</div>
             <div className="risk-stat-value" style={{ color: "var(--red)" }}>
               {fmtUsd(equity - heat.openRisk)}

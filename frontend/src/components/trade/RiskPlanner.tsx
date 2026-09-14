@@ -37,7 +37,32 @@ interface Props {
 }
 
 const RISK_PRESETS = [0.25, 0.5, 1, 2];
+const LEV_MIN = 1;
+const LEV_MAX = 100;
 const LEVERAGE_MARKS = [1, 5, 10, 25, 50, 100];
+
+/**
+ * Slider track ke safety zones. Green = liquidation stop ke paar; amber =
+ * threshold ke bilkul paas (slippage aur funding margin kha jaate hain);
+ * red = liquidation stop ke andar, yaani stop chalega hi nahi.
+ */
+function leverageZones(maxLev: number, current: number, valid: boolean, liqBeforeStop: boolean) {
+  const neutral = "var(--tr-line)";
+  if (!valid || !Number.isFinite(maxLev)) {
+    return { track: neutral, safeAt: null as number | null, safeLev: LEV_MAX, tone: "var(--text-primary)" };
+  }
+  const safeLev = Math.max(LEV_MIN, Math.min(LEV_MAX, Math.floor(maxLev)));
+  const pos = (v: number) => ((Math.min(LEV_MAX, Math.max(LEV_MIN, v)) - LEV_MIN) / (LEV_MAX - LEV_MIN)) * 100;
+  const safeAt = pos(safeLev);
+  const cautionAt = pos(safeLev * 0.7);
+  const track = `linear-gradient(90deg, rgba(0, 230, 118, .5) 0 ${cautionAt.toFixed(2)}%, rgba(255, 179, 0, .55) ${cautionAt.toFixed(2)}% ${safeAt.toFixed(2)}%, rgba(255, 82, 82, .5) ${safeAt.toFixed(2)}% 100%)`;
+  const tone = liqBeforeStop
+    ? "var(--red)"
+    : current > safeLev * 0.7
+      ? "var(--amber)"
+      : "var(--green)";
+  return { track, safeAt, safeLev, tone };
+}
 
 function NumField({
   label,
@@ -94,9 +119,15 @@ export default function RiskPlanner({
     [candles, plan.side, plan.entry],
   );
 
-  const maxLev = useMemo(
-    () => safeMaxLeverage(plan.entry, plan.stop, plan.maintMarginPct),
-    [plan.entry, plan.stop, plan.maintMarginPct],
+  const lev = useMemo(
+    () =>
+      leverageZones(
+        safeMaxLeverage(plan.entry, plan.stop, plan.maintMarginPct),
+        plan.leverage,
+        math.valid,
+        math.liqBeforeStop,
+      ),
+    [plan.entry, plan.stop, plan.maintMarginPct, plan.leverage, math.valid, math.liqBeforeStop],
   );
 
   const verdict = math.valid ? math.grade : "critical";
@@ -124,6 +155,7 @@ export default function RiskPlanner({
         </div>
 
         <div className="trade-panel-body space-y-4">
+          <div className="trade-section-label">Market</div>
           <div className="risk-fields">
             <div>
               <label className="trade-label">Pair</label>
@@ -160,6 +192,8 @@ export default function RiskPlanner({
               </div>
             </div>
 
+            <div className="risk-field-full trade-section-label" style={{ marginTop: 4 }}>Account &amp; risk</div>
+
             <NumField
               label="Account equity"
               value={plan.equity}
@@ -190,6 +224,8 @@ export default function RiskPlanner({
                 </button>
               ))}
             </div>
+
+            <div className="risk-field-full trade-section-label" style={{ marginTop: 4 }}>Entry &amp; stop</div>
 
             <NumField
               label="Entry"
@@ -230,30 +266,47 @@ export default function RiskPlanner({
           <div>
             <div className="flex items-center justify-between">
               <label className="trade-label" style={{ marginBottom: 0 }}>Leverage</label>
-              <span className="tnum text-[12px] font-bold" style={{ color: "var(--accent)" }}>
+              <span className="tnum text-[12.5px] font-bold" style={{ color: lev.tone }}>
                 {plan.leverage}x
               </span>
             </div>
-            <input
-              type="range"
-              className="risk-slider"
-              min={1}
-              max={100}
-              step={1}
-              value={plan.leverage}
-              onChange={(e) => onChange({ leverage: Number(e.target.value) })}
-              aria-label="Leverage"
-            />
+            <div className="risk-lev">
+              <input
+                type="range"
+                className="risk-slider"
+                min={LEV_MIN}
+                max={LEV_MAX}
+                step={1}
+                value={plan.leverage}
+                onChange={(e) => onChange({ leverage: Number(e.target.value) })}
+                aria-label="Leverage"
+                aria-describedby="risk-lev-note"
+                style={{ ["--slider-track" as string]: lev.track }}
+              />
+              {lev.safeAt != null && (
+                <span
+                  className="risk-lev-mark"
+                  style={{ left: `calc(7.5px + ${(lev.safeAt / 100).toFixed(4)} * (100% - 15px))` }}
+                  aria-hidden
+                />
+              )}
+            </div>
             <div className="risk-slider-scale">
               {LEVERAGE_MARKS.map((m) => <span key={m}>{m}x</span>)}
             </div>
-            {math.valid && maxLev >= 1 && (
-              <p className="risk-stat-sub">
-                Is stop ke saath liquidation stop ke paar rehne ke liye zyada se zyada{" "}
-                <b style={{ color: math.liqBeforeStop ? "var(--red)" : "var(--green)" }}>
-                  {Math.floor(maxLev)}x
-                </b>{" "}
-                chalega.
+            {math.valid && (
+              <p className="risk-stat-sub" id="risk-lev-note">
+                {math.liqBeforeStop ? (
+                  <>
+                    <b style={{ color: "var(--red)" }}>{plan.leverage}x par liquidation stop se pehle lagti hai.</b>{" "}
+                    Is stop ke saath zyada se zyada <b>{lev.safeLev}x</b> chalega.
+                  </>
+                ) : (
+                  <>
+                    Is stop ke saath liquidation stop ke paar rehti hai{" "}
+                    <b style={{ color: "var(--green)" }}>{lev.safeLev}x</b> tak. Tick wahi threshold hai.
+                  </>
+                )}
               </p>
             )}
           </div>
@@ -368,26 +421,26 @@ export default function RiskPlanner({
           </div>
 
           <div className="risk-stat-grid risk-stat-grid-4" style={{ border: 0, borderRadius: 0 }}>
-            <div className="risk-stat">
+            <div className="risk-stat" data-tone="info">
               <div className="risk-stat-label">Position size</div>
               <div className="risk-stat-value">{math.valid ? fmtQty(math.qty) : "—"}</div>
               <div className="risk-stat-sub">units of {plan.symbol.replace(/USDT$/, "")}</div>
             </div>
-            <div className="risk-stat">
+            <div className="risk-stat" data-tone="info">
               <div className="risk-stat-label">Notional</div>
               <div className="risk-stat-value">{math.valid ? fmtUsd(math.notional) : "—"}</div>
               <div className="risk-stat-sub">
                 {math.valid ? `${math.effectiveLeverage.toFixed(1)}x equity` : ""}
               </div>
             </div>
-            <div className="risk-stat">
+            <div className="risk-stat" data-tone={math.margin > plan.equity ? "risk" : math.margin > plan.equity * 0.5 ? "warn" : "info"}>
               <div className="risk-stat-label">Margin needed</div>
               <div className="risk-stat-value" style={{ color: math.margin > plan.equity ? "var(--red)" : undefined }}>
                 {math.valid ? fmtUsd(math.margin) : "—"}
               </div>
               <div className="risk-stat-sub">at {plan.leverage}x isolated</div>
             </div>
-            <div className="risk-stat">
+            <div className="risk-stat" data-tone="risk">
               <div className="risk-stat-label">Risk if stopped</div>
               <div className="risk-stat-value" style={{ color: "var(--red)" }}>
                 {math.valid ? `-${fmtUsd(math.netRisk)}` : "—"}
@@ -445,12 +498,12 @@ export default function RiskPlanner({
             <h3 className="trade-panel-title">Cost &amp; exits</h3>
           </div>
           <div className="risk-stat-grid risk-stat-grid-3" style={{ border: 0, borderRadius: 0 }}>
-            <div className="risk-stat">
+            <div className="risk-stat" data-tone="info">
               <div className="risk-stat-label">Round-trip fees</div>
               <div className="risk-stat-value">{math.valid ? fmtUsd(math.feeCost) : "—"}</div>
               <div className="risk-stat-sub">{plan.feePct}% × 2 on notional</div>
             </div>
-            <div className="risk-stat">
+            <div className="risk-stat" data-tone={math.fundingCost > 0 ? "warn" : math.fundingCost < 0 ? "good" : "info"}>
               <div className="risk-stat-label">Funding ({plan.holdHours}h)</div>
               <div
                 className="risk-stat-value"
@@ -464,7 +517,7 @@ export default function RiskPlanner({
                   : `${plan.fundingPct > 0 ? "Longs pay" : "Shorts pay"} ${Math.abs(plan.fundingPct)}% / ${plan.fundingIntervalHours}h`}
               </div>
             </div>
-            <div className="risk-stat">
+            <div className="risk-stat" data-tone="info">
               <div className="risk-stat-label">Breakeven price</div>
               <div className="risk-stat-value">{math.valid ? fmtNum(math.breakeven) : "—"}</div>
               <div className="risk-stat-sub">yahan se profit shuru</div>
@@ -674,6 +727,27 @@ function PriceRail({
             <span className="risk-rail-price" style={{ color: m.color }}>{fmtNum(m.price)}</span>
           </div>
         ))}
+      </div>
+
+      <div className="risk-rail-key" aria-hidden>
+        <span className="risk-rail-key-item">
+          <span className="risk-rail-key-swatch" style={{ background: "rgba(0, 230, 118, .22)" }} />
+          Entry → targets
+        </span>
+        <span className="risk-rail-key-item">
+          <span className="risk-rail-key-swatch" style={{ background: "rgba(255, 82, 82, .22)" }} />
+          Entry → stop · {fmtUsd(math.netRisk)} risk
+        </span>
+        <span className="risk-rail-key-item">
+          <span
+            className="risk-rail-key-swatch"
+            style={{
+              background:
+                "repeating-linear-gradient(135deg, rgba(255,82,82,.4) 0 3px, rgba(255,82,82,.12) 3px 6px)",
+            }}
+          />
+          Stop ke paar — liquidation zone
+        </span>
       </div>
 
       {liq != null && !liqInside && (

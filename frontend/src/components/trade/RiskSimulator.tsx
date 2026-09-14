@@ -146,26 +146,26 @@ export default function RiskSimulator({ equity, planRr, planRiskPct }: Props) {
         </div>
 
         <div className="risk-stat-grid risk-stat-grid-4" style={{ border: 0, borderRadius: 0 }}>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={hasEdge ? "good" : "risk"}>
             <div className="risk-stat-label">Expectancy</div>
             <div className="risk-stat-value" style={{ color: hasEdge ? "var(--green)" : "var(--red)" }}>
               {expectancy >= 0 ? "+" : ""}{expectancy.toFixed(3)}R
             </div>
             <div className="risk-stat-sub">per trade, average</div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone="info">
             <div className="risk-stat-label">Breakeven win rate</div>
             <div className="risk-stat-value">{fmtPct(breakeven)}</div>
             <div className="risk-stat-sub">{rr}R par isse kam = loss</div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone="info">
             <div className="risk-stat-label">Kelly</div>
             <div className="risk-stat-value" style={{ color: kelly > 0 ? undefined : "var(--red)" }}>
               {fmtPct(kelly)}
             </div>
             <div className="risk-stat-sub">half-Kelly {fmtPct(Math.max(0, kelly / 2))} practical</div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={kelly > 0 && riskPct > kelly ? "risk" : kelly > 0 && riskPct > kelly / 2 ? "warn" : "good"}>
             <div className="risk-stat-label">Your sizing</div>
             <div
               className="risk-stat-value"
@@ -227,7 +227,7 @@ export default function RiskSimulator({ equity, planRr, planRiskPct }: Props) {
         </div>
 
         <div className="risk-stat-grid risk-stat-grid-4" style={{ border: 0, borderRadius: 0 }}>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={sim.median >= equity ? "good" : "risk"}>
             <div className="risk-stat-label">Median outcome</div>
             <div className="risk-stat-value" style={{ color: sim.median >= equity ? "var(--green)" : "var(--red)" }}>
               {fmtUsd(sim.median)}
@@ -236,17 +236,17 @@ export default function RiskSimulator({ equity, planRr, planRiskPct }: Props) {
               {(((sim.median - equity) / equity) * 100).toFixed(1)}% from {fmtUsd(equity)}
             </div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={sim.p5 >= equity ? "info" : "risk"}>
             <div className="risk-stat-label">Unlucky (5th pct)</div>
             <div className="risk-stat-value" style={{ color: "var(--red)" }}>{fmtUsd(sim.p5)}</div>
             <div className="risk-stat-sub">20 mein se 1 run isse bhi bura</div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={sim.medianMaxDD > 25 ? "risk" : "warn"}>
             <div className="risk-stat-label">Max drawdown</div>
             <div className="risk-stat-value" style={{ color: "var(--amber)" }}>{fmtPct(sim.medianMaxDD)}</div>
             <div className="risk-stat-sub">typical · worst 5% {fmtPct(sim.p95MaxDD)}</div>
           </div>
-          <div className="risk-stat">
+          <div className="risk-stat" data-tone={sim.ruinProb > 5 ? "risk" : "good"}>
             <div className="risk-stat-label">Risk of ruin</div>
             <div className="risk-stat-value" style={{ color: sim.ruinProb > 5 ? "var(--red)" : "var(--green)" }}>
               {fmtPct(sim.ruinProb)}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Calculator, Dices, RefreshCw, ShieldCheck } from "lucide-react";
+import { BookOpen, Calculator, Dices, Flame, RefreshCw, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
 import RiskBook from "@/components/trade/RiskBook";
 import RiskPlanner from "@/components/trade/RiskPlanner";
 import RiskSimulator from "@/components/trade/RiskSimulator";
@@ -22,6 +22,9 @@ import {
   buildRiskPrompt,
   bookHeat,
   computePlan,
+  fmtNum,
+  fmtQty,
+  fmtUsd,
   listPlans,
   lastAtr,
   newPlanId,
@@ -33,11 +36,28 @@ import {
 
 type View = "planner" | "book" | "sim";
 
-const VIEWS: { id: View; label: string; icon: typeof Calculator }[] = [
-  { id: "planner", label: "Position Planner", icon: Calculator },
-  { id: "book", label: "Risk Book", icon: BookOpen },
-  { id: "sim", label: "Ruin Simulator", icon: Dices },
+/** Har view ka apna rang — green yahan kuch nahi keh raha hota, isliye neutral family. */
+const VIEWS: { id: View; label: string; sub: string; icon: typeof Calculator; tone: string }[] = [
+  { id: "planner", label: "Position Planner", sub: "Size, stop aur liquidation", icon: Calculator, tone: "#2563eb" },
+  { id: "book", label: "Risk Book", sub: "Saare open plans ka heat", icon: BookOpen, tone: "#d97706" },
+  { id: "sim", label: "Ruin Simulator", sub: "Edge par sizing ka asar", icon: Dices, tone: "#7c3aed" },
 ];
+
+/** Book heat ka rang — thanda se garam. */
+function heatTone(pct: number): string {
+  if (pct <= 3) return "var(--green)";
+  if (pct <= 6) return "#a3e635";
+  if (pct <= 10) return "var(--amber)";
+  return "var(--red)";
+}
+
+function coinTint(symbol: string): string {
+  const s = symbol.toUpperCase();
+  if (s.startsWith("BTC")) return "linear-gradient(145deg, #f7931a, #e67e00)";
+  if (s.startsWith("ETH")) return "linear-gradient(145deg, #627eea, #4b64c7)";
+  if (s.startsWith("SOL")) return "linear-gradient(145deg, #9945ff, #14f195)";
+  return "linear-gradient(145deg, #94a3b8, #64748b)";
+}
 
 /** Settings jo trade-se-trade nahi badalte — equity, fees, leverage. */
 type Sticky = Pick<PlanInput, "equity" | "riskPct" | "leverage" | "feePct" | "maintMarginPct">;
@@ -191,13 +211,71 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
             Chart batata hai kahan ghusna hai; ye batata hai <b>kitna</b>.
           </p>
         </div>
-        <div className="trade-page-actions">
-          <span className={`trade-badge ${heat.heatPct > 6 ? "trade-badge-red" : "trade-badge-neutral"}`}>
-            Heat {heat.heatPct.toFixed(2)}%
-          </span>
-          <span className="trade-badge trade-badge-neutral">
-            {symbolLabel(plan.symbol)} · 1h ATR
-          </span>
+      </div>
+
+      {/*
+        Context bar — ye numbers har view par saath rehte hain. Pehle sirf
+        Planner par the, to Book ya Simulator par jaate hi pata nahi chalta
+        tha ki equity kitni hai aur book pehle se kitni garam hai.
+      */}
+      <div className="risk-bar">
+        <div className="risk-bar-cell" data-lead="true">
+          <div className="risk-bar-label">Instrument</div>
+          <div className="risk-bar-pair" style={{ marginTop: 6 }}>
+            <span className="risk-bar-coin" style={{ background: coinTint(plan.symbol) }} aria-hidden>
+              {plan.symbol.replace(/USDT$/, "").slice(0, 1)}
+            </span>
+            <div className="min-w-0">
+              <div className="risk-bar-value" style={{ marginTop: 0, fontSize: 15 }}>
+                {market ? fmtNum(market.current_price) : loading ? "—" : "offline"}
+                {market && (
+                  <span
+                    className="risk-bar-delta"
+                    style={{ color: market.change_24h >= 0 ? "var(--green)" : "var(--red)" }}
+                  >
+                    {market.change_24h >= 0 ? <TrendingUp className="w-3 h-3 inline mb-px" /> : <TrendingDown className="w-3 h-3 inline mb-px" />}
+                    {market.change_24h >= 0 ? "+" : ""}{market.change_24h.toFixed(2)}%
+                  </span>
+                )}
+              </div>
+              <div className="risk-bar-sub">{symbolLabel(plan.symbol)} · 1h ATR</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="risk-bar-cell">
+          <div className="risk-bar-label">Account equity</div>
+          <div className="risk-bar-value">{fmtUsd(plan.equity)}</div>
+          <div className="risk-bar-sub">{plan.riskPct}% per trade = {fmtUsd((plan.equity * plan.riskPct) / 100)}</div>
+        </div>
+
+        <div className="risk-bar-cell">
+          <div className="risk-bar-label">Open heat</div>
+          <div className="risk-bar-value" style={{ color: heat.count ? heatTone(heat.heatPct) : undefined }}>
+            {heat.heatPct.toFixed(2)}%
+            {heat.heatPct > 6 && <Flame className="w-3.5 h-3.5" style={{ color: "var(--red)" }} />}
+          </div>
+          <div className="risk-bar-heat" aria-hidden>
+            <span
+              style={{
+                width: `${Math.min(100, (heat.heatPct / 12) * 100)}%`,
+                background: heatTone(heat.heatPct),
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="risk-bar-cell">
+          <div className="risk-bar-label">This plan</div>
+          <div className="risk-bar-value" style={{ color: math.valid ? "var(--red)" : undefined }}>
+            {math.valid ? `-${fmtUsd(math.netRisk)}` : "—"}
+          </div>
+          <div className="risk-bar-sub">
+            {math.valid ? `${fmtQty(math.qty)} units · ${plan.leverage}x` : "entry + stop daalo"}
+          </div>
+        </div>
+
+        <div className="risk-bar-actions">
           <button
             type="button"
             className="trade-btn trade-btn-ghost trade-size-sm"
@@ -205,48 +283,54 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
             disabled={loading}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
-            Sync live
+            Sync
           </button>
         </div>
       </div>
 
-      <div className="trade-panel">
-        <div className="trade-toolbar">
-          <div className="trade-seg overflow-x-auto scrollbar-hide">
-            {VIEWS.map((v) => {
-              const Icon = v.icon;
-              return (
-                <button
-                  key={v.id}
-                  type="button"
-                  data-active={view === v.id}
-                  onClick={() => setView(v.id)}
-                  className="trade-seg-btn"
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {v.label}
-                </button>
-              );
-            })}
-          </div>
+      <div className="risk-tabs" role="tablist" aria-label="Risk desk views">
+        {VIEWS.map((v) => {
+          const Icon = v.icon;
+          return (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={view === v.id}
+              data-active={view === v.id}
+              onClick={() => setView(v.id)}
+              className="risk-tab"
+              style={{ ["--tab-tone" as string]: v.tone }}
+            >
+              <span className="risk-tab-icon" aria-hidden>
+                <Icon className="w-4 h-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="risk-tab-label block">{v.label}</span>
+                <span className="risk-tab-sub block">{v.sub}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
-          <div className="flex-1 min-w-[8px]" />
-
+      {(savedFlash || syncedAt || error) && (
+        <div className="flex flex-wrap items-center gap-2.5 text-[11.5px]" style={{ color: "var(--text-muted)" }}>
           {savedFlash && (
             <span className="trade-badge trade-badge-green">
               <ShieldCheck className="w-3 h-3" />
               Book mein add ho gaya
             </span>
           )}
-          {syncedAt && <span className="trade-toolbar-meta">Synced {syncedAt}</span>}
+          {error ? (
+            <span style={{ color: "var(--red)" }}>
+              {error} — numbers manual daal kar bhi plan bana sakte ho.
+            </span>
+          ) : (
+            syncedAt && <span>Synced {syncedAt}</span>
+          )}
         </div>
-
-        {error && (
-          <p className="px-4 py-2.5 text-[12.5px]" style={{ color: "var(--red)", borderTop: "1px solid var(--tr-line-soft)" }}>
-            {error} — numbers manual daal kar bhi plan bana sakte ho.
-          </p>
-        )}
-      </div>
+      )}
 
       {view === "planner" && (
         <RiskPlanner

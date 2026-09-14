@@ -3467,7 +3467,8 @@ textarea:focus-visible {
   transition: border-color .15s, background .15s, color .15s;
   text-align: left;
 }
-.risk-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+.risk-chip:hover { border-color: var(--border-strong); background: var(--bg-hover); color: var(--text-primary); }
+.risk-chip[data-on="true"] { border-color: rgba(148, 163, 184, .55); color: var(--text-primary); }
 .risk-chip-label { font-size: 11px; font-weight: 700; letter-spacing: .02em; }
 .risk-chip-hint {
   font-size: 9.5px;
@@ -3476,34 +3477,65 @@ textarea:focus-visible {
   letter-spacing: -.01em;
 }
 
+/*
+ * Thumb pehle mint tha, glow ke saath — har slider par, "Risk per trade" aur
+ * "Leverage" par bhi. Risk badhane wale control par green glow ulta matlab
+ * deta hai ("aur upar le jao"). Ab thumb neutral hai; rang track batata hai,
+ * kyunki track hi jaanta hai ki kaunsi value safe hai.
+ */
 .risk-slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 4px;
+  height: 5px;
   border-radius: 999px;
-  background: var(--tr-line);
+  background: var(--slider-track, var(--tr-line));
   outline: none;
   margin: 10px 0 2px;
 }
 .risk-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid #05080d;
-  box-shadow: 0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);
+  background: #e2e8f0;
+  border: 3px solid #05080d;
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, .75), 0 3px 8px rgba(0, 0, 0, .65);
   cursor: pointer;
+  transition: box-shadow .15s;
+}
+.risk-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px #f8fafc, 0 0 0 4px rgba(148, 163, 184, .3);
 }
 .risk-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid #05080d;
+  background: #e2e8f0;
+  border: 3px solid #05080d;
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, .75);
   cursor: pointer;
+}
+
+/*
+ * Leverage slider ka track safety zones dikhata hai: green wahan tak jahan
+ * liquidation stop ke paar rehti hai, amber us kinaare ke paas, red uske aage
+ * jahan exchange stop se pehle position band kar dega. Tick us threshold par
+ * hai. Yahan green ka matlab hai "is size par stop pehle lagega" — decoration
+ * nahi. Label neeche wali helper line mein hai, isliye tick khud chup hai.
+ */
+.risk-lev { position: relative; }
+.risk-lev-mark {
+  position: absolute;
+  top: 3px;
+  height: 17px;
+  width: 2px;
+  border-radius: 1px;
+  background: #f8fafc;
+  opacity: .8;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 .risk-slider-scale {
   display: flex;
@@ -3551,6 +3583,26 @@ textarea:focus-visible {
 .risk-rail-zone[data-kind="danger"][data-open="true"] {
   -webkit-mask-image: linear-gradient(180deg, #000 30%, transparent 100%);
   mask-image: linear-gradient(180deg, #000 30%, transparent 100%);
+}
+
+/* Rail ke rang bands ka legend — warna hatched zone ka matlab guess karna padta hai. */
+.risk-rail-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--tr-line-soft);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.risk-rail-key-item { display: inline-flex; align-items: center; gap: 6px; }
+.risk-rail-key-swatch {
+  width: 16px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+  border: 1px solid var(--tr-line-soft);
 }
 
 .risk-rail-foot {
@@ -3786,9 +3838,23 @@ textarea:focus-visible {
 @media (min-width: 720px) { .risk-stat-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (min-width: 900px) { .risk-stat-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .risk-stat {
+  position: relative;
   background: var(--bg-card);
-  padding: 12px 14px;
+  padding: 13px 14px 14px;
 }
+/* Tone sirf wahan jahan number ka matlab ho — risk red, caution amber, headroom green. */
+.risk-stat[data-tone]::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--stat-tone);
+  opacity: .8;
+}
+.risk-stat[data-tone="risk"] { --stat-tone: var(--red); }
+.risk-stat[data-tone="warn"] { --stat-tone: var(--amber); }
+.risk-stat[data-tone="good"] { --stat-tone: var(--green); }
+.risk-stat[data-tone="info"] { --stat-tone: rgba(148, 163, 184, .55); }
 .risk-stat-label {
   font-size: 9.5px;
   font-weight: 700;
@@ -3798,7 +3864,7 @@ textarea:focus-visible {
 }
 .risk-stat-value {
   font-family: var(--tr-mono);
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: -.02em;
   font-variant-numeric: tabular-nums;
@@ -4071,4 +4137,152 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--sa) 55%, var(--tr-line));
   color: var(--sa);
   background: var(--sa-soft, var(--tr-field));
+}
+
+/* ══ Risk Desk chrome ════════════════════════════════════
+   Do cheezein jo pehle nahi thi:
+
+   1. Context bar — pair, live price, equity, book heat. Pehle ye numbers
+      sirf Planner par dikhte the, to Simulator ya Book par switch karte hi
+      risk picture gayab ho jaati thi. Risk desk par wahi picture hamesha
+      screen par honi chahiye.
+   2. Tab rail — teen views pehle ek chhote segmented control mein dabe the,
+      jabki wo is page ki sabse badi navigation hai. */
+
+.risk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 1px;
+  border-radius: var(--tr-radius);
+  overflow: hidden;
+  background: var(--tr-line-soft);
+  border: 1px solid var(--tr-line);
+}
+.risk-bar-cell {
+  flex: 1 1 150px;
+  min-width: 0;
+  padding: 11px 14px;
+  background: linear-gradient(180deg, rgba(18, 24, 33, 0.95), rgba(12, 16, 23, 0.98));
+}
+.risk-bar-cell[data-lead="true"] { flex: 1.4 1 210px; }
+.risk-bar-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.risk-bar-value {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 5px;
+  font-family: var(--tr-mono);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.025em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--tr-ink);
+}
+.risk-bar-delta { font-size: 11px; font-weight: 700; }
+.risk-bar-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.risk-bar-pair { display: flex; align-items: center; gap: 9px; }
+.risk-bar-coin {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #05080d;
+}
+.risk-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  background: linear-gradient(180deg, rgba(18, 24, 33, 0.95), rgba(12, 16, 23, 0.98));
+}
+
+/* Heat meter ka chhota version — bar ke andar */
+.risk-bar-heat {
+  height: 4px;
+  border-radius: 999px;
+  margin-top: 7px;
+  background: var(--tr-line);
+  overflow: hidden;
+}
+.risk-bar-heat > span { display: block; height: 100%; border-radius: 999px; }
+
+/* ── View tabs ───────────────────────────────────────────── */
+.risk-tabs {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-radius: var(--tr-radius);
+  overflow: hidden;
+  background: var(--tr-line-soft);
+  border: 1px solid var(--tr-line);
+}
+.risk-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 0;
+  background: linear-gradient(180deg, rgba(18, 24, 33, 0.95), rgba(12, 16, 23, 0.98));
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+  transition: background .15s, color .15s;
+}
+.risk-tab:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.risk-tab[data-active="true"] { color: var(--tr-ink); background: #121821; }
+.risk-tab[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background: var(--tab-tone, #94a3b8);
+}
+.risk-tab-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line);
+  color: var(--text-muted);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.risk-tab[data-active="true"] .risk-tab-icon {
+  background: color-mix(in srgb, var(--tab-tone) 16%, transparent);
+  border-color: color-mix(in srgb, var(--tab-tone) 40%, transparent);
+  color: var(--tab-tone);
+}
+.risk-tab-label { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; }
+.risk-tab-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.3;
+}
+@media (max-width: 720px) {
+  .risk-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .risk-tab { flex-direction: column; align-items: flex-start; gap: 7px; padding: 10px 11px; }
+  .risk-tab-sub { display: none; }
 }
