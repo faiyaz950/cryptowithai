@@ -35,7 +35,7 @@ function RiskView() {
   const symbol = CRYPTO_SYMBOLS.some((s) => s.value === requested) ? requested : "BTCUSDT";
 
   return (
-    <div className="trade-root h-full overflow-y-auto">
+    <div className="trade-root trade-scroll h-full">
       <header className="trade-topbar">
         <div className="trade-topbar-inner">
           <div className="trade-topbar-row" style={{ paddingBottom: 12 }}>

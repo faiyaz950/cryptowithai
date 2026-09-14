@@ -154,7 +154,7 @@ function Shell({
     : STRATEGIES.map((s) => ({ id: s.id, name: s.name, href: `/trade/strategies/${s.id}` }));
 
   return (
-    <div className="trade-root h-full overflow-y-auto">
+    <div className="trade-root trade-scroll h-full">
       <header className="trade-topbar">
         <div className="trade-topbar-inner">
           <div className="trade-topbar-row" style={{ paddingBottom: 10 }}>
@@ -231,7 +231,7 @@ function Shell({
 
 function UnknownStrategy({ id }: { id: string }) {
   return (
-    <div className="trade-root h-full overflow-y-auto flex items-center justify-center px-4" style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
+    <div className="trade-root trade-scroll h-full flex items-center justify-center px-4" style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
       <div className="trade-panel trade-panel-body max-w-[460px] w-full text-center space-y-3">
         <h1 className="text-[16px] font-bold">Ye strategy nahi mili</h1>
         <p className="text-[13px]" style={{ color: "var(--text-secondary)" }}>

@@ -308,6 +308,21 @@ textarea:focus-visible {
   color-scheme: dark;
 }
 
+/*
+ * Standalone sub-pages (strategy runner, Risk Desk) poori height khud scroll
+ * karte hain — desk ki tarah andar-andar panels mein nahi.
+ *
+ * Tailwind ki `overflow-y-auto` yahan kaam nahi karti: wo `@layer utilities`
+ * mein hai aur unlayered CSS hamesha layered se jeetta hai, isliye upar wala
+ * `.trade-root { overflow: hidden }` use dabaa deta tha aur page scroll hi
+ * nahi hota tha. Scroll ko apna unlayered class chahiye.
+ */
+.trade-root.trade-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 .trade-root .tnum,
 .trade-root .trade-ticker-value,
