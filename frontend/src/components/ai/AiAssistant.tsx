@@ -85,18 +85,12 @@ function loadDailyLimit(): number {
   }
 }
 
+/**
+ * Desk sirf Gemini par chalta hai (backend mein GEMINI_ONLY dekho). Purane
+ * users ke localStorage mein "auto" ya doosre model ka naam pada ho sakta hai —
+ * usse ignore karke hamesha Gemini.
+ */
 function loadSelectedModel(): AIModelId {
-  try {
-    const saved = localStorage.getItem(MODEL_KEY);
-    if (saved === "groq" || saved === "openai" || saved === "grok" || saved === "claude") {
-      return "gemini";
-    }
-    if (saved && ["auto", "gemini"].includes(saved)) {
-      return saved as AIModelId;
-    }
-  } catch {
-    // ignore
-  }
   return "gemini";
 }
 
