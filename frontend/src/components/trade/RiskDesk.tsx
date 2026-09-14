@@ -15,6 +15,7 @@ import {
   type Candle,
   type MarketInfo,
   syncStamp,
+  DESK_TZ_LABEL,
 } from "@/lib/cryptoApi";
 import {
   DEFAULT_PLAN,
@@ -23,7 +24,6 @@ import {
   buildRiskPrompt,
   bookHeat,
   computePlan,
-  fmtNum,
   fmtQty,
   fmtUsd,
   listPlans,
@@ -36,6 +36,20 @@ import {
 } from "@/lib/risk";
 
 type View = "planner" | "book" | "sim";
+
+/** "abhi" / "12s ago" / "4m ago" — taaki purana data chupke se na baitha rahe. */
+function ageLabel(seconds: number): string {
+  if (seconds < 5) return "abhi";
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  return `${Math.round(seconds / 3600)}h ago`;
+}
+
+/** Markets desk jitna hi — 30s. */
+const POLL_MS = 30_000;
+
+/** Itna purana data hone par stamp amber ho jata hai. */
+const STALE_AFTER_S = 90;
 
 /** Har view ka apna rang — green yahan kuch nahi keh raha hota, isliye neutral family. */
 const VIEWS: { id: View; label: string; sub: string; icon: typeof Calculator; tone: string }[] = [
@@ -103,6 +117,8 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
+  const [syncedMs, setSyncedMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [savedFlash, setSavedFlash] = useState(false);
 
   /** Kis symbol par entry/stop apne aap bhare ja chuke hain — dobara overwrite na ho. */
@@ -119,8 +135,16 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
     };
   }, []);
 
-  const load = useCallback(async (symbol: string, refill: boolean) => {
-    setLoading(true);
+  /**
+   * `mode` tay karta hai ki plan ke fields chhune hain ya nahi:
+   *   "refill" — naya symbol / manual Sync: entry, stop aur funding bhar do.
+   *   "keep"   — wahi symbol, manual Sync: funding refresh, entry/stop chhodo.
+   *   "quiet"  — background poll: sirf market aur candles. Plan ko haath mat
+   *              lagao, warna har 30 second mein user ka typed hua stop ya
+   *              funding rate chup-chaap badal jayega.
+   */
+  const load = useCallback(async (symbol: string, mode: "refill" | "keep" | "quiet") => {
+    if (mode !== "quiet") setLoading(true);
     setError(null);
     try {
       const [candleRes, info, funding] = await Promise.all([
@@ -138,33 +162,75 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
       setFundingLive(rate != null);
 
       const price = info?.success ? info.current_price : bars.at(-1)?.close;
-      setPlan((prev) => {
-        const next: PlanInput = { ...prev };
-        if (rate != null) next.fundingPct = Number(rate.toFixed(4));
-        if (refill && price && price > 0) {
-          next.entry = Number(price.toPrecision(8));
-          const a = lastAtr(bars, 14);
-          if (a != null && a > 0) {
-            const stop = prev.side === "long" ? price - a * 1.5 : price + a * 1.5;
-            if (stop > 0) next.stop = Number(stop.toPrecision(8));
+      if (mode !== "quiet") {
+        setPlan((prev) => {
+          const next: PlanInput = { ...prev };
+          if (rate != null) next.fundingPct = Number(rate.toFixed(4));
+          if (mode === "refill" && price && price > 0) {
+            next.entry = Number(price.toPrecision(8));
+            const a = lastAtr(bars, 14);
+            if (a != null && a > 0) {
+              const stop = prev.side === "long" ? price - a * 1.5 : price + a * 1.5;
+              if (stop > 0) next.stop = Number(stop.toPrecision(8));
+            }
           }
-        }
-        return next;
-      });
-      if (refill) autoFilled.current = symbol;
+          return next;
+        });
+        if (mode === "refill") autoFilled.current = symbol;
+      }
       setSyncedAt(syncStamp());
+      setSyncedMs(Date.now());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Market data load nahi hua");
-      setCandles([]);
-      setMarket(null);
+      if (mode !== "quiet") {
+        setCandles([]);
+        setMarket(null);
+      }
     } finally {
-      setLoading(false);
+      if (mode !== "quiet") setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load(plan.symbol, autoFilled.current !== plan.symbol);
+    void load(plan.symbol, autoFilled.current !== plan.symbol ? "refill" : "keep");
   }, [load, plan.symbol]);
+
+  /*
+   * Live poll. Risk Desk pehle sirf mount par fetch karta tha, to page khula
+   * chhodne par LTP aur ATR wahin jam jaate the — aur sizing unhi purane
+   * numbers par hoti rehti thi. Tab chhupi ho to poll band, dikhte hi turant
+   * ek refresh (Markets desk wala hi pattern).
+   */
+  useEffect(() => {
+    let timer: number | undefined;
+
+    const start = () => {
+      window.clearInterval(timer);
+      timer = window.setInterval(() => void load(plan.symbol, "quiet"), POLL_MS);
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        window.clearInterval(timer);
+        return;
+      }
+      void load(plan.symbol, "quiet");
+      start();
+    };
+
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [load, plan.symbol]);
+
+  /* Stamp ki umar — absolute time akela ye nahi batata ki data kitna taaza hai. */
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const onChange = useCallback((patch: Partial<PlanInput>) => {
     setPlan((prev) => {
@@ -173,6 +239,9 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
       return next;
     });
   }, []);
+
+  /** Aakhri successful sync kitna purana hai, seconds mein. */
+  const age = syncedMs == null ? null : Math.max(0, Math.round((nowMs - syncedMs) / 1000));
 
   const math = useMemo(() => computePlan(plan), [plan]);
   const heat = useMemo(() => bookHeat(plans, plan.equity), [plans, plan.equity]);
@@ -217,7 +286,7 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
             </span>
             <div className="min-w-0">
               <div className="risk-bar-value" style={{ marginTop: 0, fontSize: 15 }}>
-                {market ? fmtNum(market.current_price) : loading ? "—" : "offline"}
+                {market ? fmtUsd(market.current_price) : loading ? "—" : "offline"}
                 {market && (
                   <span
                     className="risk-bar-delta"
@@ -269,7 +338,7 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
           <button
             type="button"
             className="trade-btn trade-btn-ghost trade-size-sm"
-            onClick={() => void load(plan.symbol, true)}
+            onClick={() => void load(plan.symbol, "refill")}
             disabled={loading}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
@@ -317,7 +386,12 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
               {error} — numbers manual daal kar bhi plan bana sakte ho.
             </span>
           ) : (
-            syncedAt && <span>Synced {syncedAt}</span>
+            syncedAt && (
+              <span style={{ color: age != null && age > STALE_AFTER_S ? "var(--amber)" : undefined }}>
+                Synced {syncedAt} {DESK_TZ_LABEL}
+                {age != null && ` · ${ageLabel(age)}`} · poll {POLL_MS / 1000}s
+              </span>
+            )
           )}
         </div>
       )}
