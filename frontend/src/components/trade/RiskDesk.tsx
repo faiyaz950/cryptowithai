@@ -202,17 +202,6 @@ export default function RiskDesk({ initialSymbol = "BTCUSDT" }: { initialSymbol?
 
   return (
     <div className="space-y-4">
-      <div className="trade-page-head">
-        <div>
-          <div className="trade-page-kicker">Risk management</div>
-          <h2 className="trade-page-title">Risk Desk</h2>
-          <p className="trade-page-sub">
-            Position size, liquidation buffer, funding cost aur poori book ka heat — ek jagah.
-            Chart batata hai kahan ghusna hai; ye batata hai <b>kitna</b>.
-          </p>
-        </div>
-      </div>
-
       {/*
         Context bar — ye numbers har view par saath rehte hain. Pehle sirf
         Planner par the, to Book ya Simulator par jaate hi pata nahi chalta
