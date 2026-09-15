@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Briefcase, CandlestickChart } from "lucide-react";
+import { Briefcase, CandlestickChart, Maximize2 } from "lucide-react";
 import type { Message, Conversation, UserType, Topic, Attachment, AIModelId, AIModelOption } from "@/lib/types";
 import { TOPIC_CONFIG } from "@/lib/types";
 import { sendMessageStream, fetchAvailableModels } from "@/lib/api";
@@ -578,6 +578,20 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
           </div>
 
           <div className="flex-1" />
+
+          {embedded && (
+            <button
+              onClick={() => router.push("/ai")}
+              className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.background = "transparent"; }}
+              title="Fullscreen mein kholo"
+              aria-label="AI ko fullscreen mein kholo"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+          )}
 
           {!embedded && (
             <nav className="flex items-center gap-1 mr-1">
