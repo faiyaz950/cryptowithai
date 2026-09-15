@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import type { Message } from "@/lib/types";
 import { TOPIC_CONFIG } from "@/lib/types";
 import { parseFollowUps } from "@/lib/parseResponse";
+import { Globe, Search } from "lucide-react";
 import ModelBadge from "./ModelBadge";
 import Logo from "@/components/Logo";
 import ThinkingPad from "./ThinkingPad";
@@ -326,24 +327,51 @@ function ChatMessage({ message, onFollowUp }: Props) {
 
         {answerReady && message.sources && message.sources.length > 0 && (
           <div className="mt-3 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+            {message.searchQueries && message.searchQueries.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+                <Search className="w-3 h-3 flex-none" style={{ color: "var(--text-muted)" }} />
+                <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>Searched</span>
+                {message.searchQueries.map((q, i) => (
+                  <span
+                    key={`${q}-${i}`}
+                    className="text-[11px] px-1.5 py-0.5 rounded"
+                    style={{ background: "var(--bg-hover)", color: "var(--text-secondary)" }}
+                  >
+                    {q}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <p className="text-xs font-medium mb-2" style={{ color: "var(--text-muted)" }}>
-              Google Search sources
+              Sources · {message.sources.length}
             </p>
             <div className="flex flex-wrap gap-2">
-              {message.sources.map((src, i) => (
-                <a
-                  key={`${src.url}-${i}`}
-                  href={src.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs px-2.5 py-1 rounded-lg transition-colors"
-                  style={{ background: "var(--bg-hover)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; e.currentTarget.style.borderColor = "var(--text-muted)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; e.currentTarget.style.borderColor = "var(--border)"; }}
-                >
-                  {src.title}
-                </a>
-              ))}
+              {message.sources.map((src, i) => {
+                const domain = sourceDomain(src);
+                return (
+                  <a
+                    key={`${src.url}-${i}`}
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={src.title}
+                    className="flex items-center gap-1.5 text-xs pl-1.5 pr-2.5 py-1 rounded-lg transition-colors"
+                    style={{ background: "var(--bg-hover)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--text-muted)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+                  >
+                    <span
+                      className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold flex-none"
+                      style={{ background: "var(--border)", color: "var(--text-muted)" }}
+                    >
+                      {i + 1}
+                    </span>
+                    <SourceIcon domain={domain} />
+                    <span className="truncate max-w-[180px]">{domain}</span>
+                  </a>
+                );
+              })}
             </div>
           </div>
         )}
@@ -354,6 +382,49 @@ function ChatMessage({ message, onFollowUp }: Props) {
         )}
       </div>
     </div>
+  );
+}
+
+
+/**
+ * Gemini grounding ka `url` asli site ka nahi hota — wo Google ka redirect
+ * link hota hai (vertexaisearch.cloud.google.com/...), jiske hostname se kuch
+ * pata nahi chalta. `title` mein aksar asli domain aata hai, isliye pehle wahi
+ * dekho aur URL sirf fallback hai.
+ */
+function sourceDomain(src: { title: string; url: string }): string {
+  const title = (src.title || "").trim();
+  if (isDomain(title)) return title.replace(/^www\./, "");
+  try {
+    const host = new URL(src.url).hostname.replace(/^www\./, "");
+    if (host.endsWith("google.com") && title) return title;
+    return host;
+  } catch {
+    return title || "source";
+  }
+}
+
+function isDomain(value: string): boolean {
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(value);
+}
+
+/** Favicon, aur na mile to neutral globe — toota hua icon nahi. */
+function SourceIcon({ domain }: { domain: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!isDomain(domain) || failed) {
+    return <Globe className="w-3.5 h-3.5 flex-none" style={{ color: "var(--text-muted)" }} />;
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+      alt=""
+      width={14}
+      height={14}
+      loading="lazy"
+      className="rounded-sm flex-none"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
