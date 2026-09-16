@@ -3,38 +3,45 @@ const CRYPTO_API = process.env.NEXT_PUBLIC_CRYPTO_API_URL || "http://127.0.0.1:8
 /**
  * Delta India ke live perpetuals — turnover ke hisaab se chune gaye majors.
  * Backend ka SCREENER_UNIVERSE isi list se match karta hai.
+ *
+ * `value` API ka key hai (backend "BTCUSDT" -> Delta "BTCUSD" map karta hai),
+ * isliye wo waisa hi rehta hai. `label` wo hai jo screen par dikhta hai, aur
+ * wahan pehle "BTC/USDT" likha tha — jabki Delta ka ye contract USD mein quote,
+ * settle aur margin hota hai, USDT mein nahi. Upar se header "Spot" kehta tha,
+ * jabki ye perpetual future hai. Isi galat label ki wajah se chart ko Coinbase
+ * ke BTC/USD spot se compare kiya jaata tha aur ~0.05% ka farak "bug" lagta tha.
  */
 export const CRYPTO_SYMBOLS = [
-  { value: "BTCUSDT", label: "BTC/USDT" },
-  { value: "ETHUSDT", label: "ETH/USDT" },
-  { value: "SOLUSDT", label: "SOL/USDT" },
-  { value: "XRPUSDT", label: "XRP/USDT" },
-  { value: "BNBUSDT", label: "BNB/USDT" },
-  { value: "DOGEUSDT", label: "DOGE/USDT" },
-  { value: "ADAUSDT", label: "ADA/USDT" },
-  { value: "AVAXUSDT", label: "AVAX/USDT" },
-  { value: "LINKUSDT", label: "LINK/USDT" },
-  { value: "LTCUSDT", label: "LTC/USDT" },
-  { value: "UNIUSDT", label: "UNI/USDT" },
-  { value: "AAVEUSDT", label: "AAVE/USDT" },
-  { value: "ARBUSDT", label: "ARB/USDT" },
-  { value: "ZECUSDT", label: "ZEC/USDT" },
-  { value: "BCHUSDT", label: "BCH/USDT" },
-  { value: "DASHUSDT", label: "DASH/USDT" },
-  { value: "ENAUSDT", label: "ENA/USDT" },
-  { value: "TRUMPUSDT", label: "TRUMP/USDT" },
-  { value: "DOTUSDT", label: "DOT/USDT" },
-  { value: "SUIUSDT", label: "SUI/USDT" },
-  { value: "FILUSDT", label: "FIL/USDT" },
-  { value: "TRXUSDT", label: "TRX/USDT" },
-  { value: "APTUSDT", label: "APT/USDT" },
-  { value: "INJUSDT", label: "INJ/USDT" },
-  { value: "NEARUSDT", label: "NEAR/USDT" },
-  { value: "XLMUSDT", label: "XLM/USDT" },
-  { value: "TIAUSDT", label: "TIA/USDT" },
-  { value: "POLUSDT", label: "POL/USDT" },
-  { value: "1000PEPEUSDT", label: "1000PEPE/USDT" },
-  { value: "PENGUUSDT", label: "PENGU/USDT" },
+  { value: "BTCUSDT", label: "BTC/USD" },
+  { value: "ETHUSDT", label: "ETH/USD" },
+  { value: "SOLUSDT", label: "SOL/USD" },
+  { value: "XRPUSDT", label: "XRP/USD" },
+  { value: "BNBUSDT", label: "BNB/USD" },
+  { value: "DOGEUSDT", label: "DOGE/USD" },
+  { value: "ADAUSDT", label: "ADA/USD" },
+  { value: "AVAXUSDT", label: "AVAX/USD" },
+  { value: "LINKUSDT", label: "LINK/USD" },
+  { value: "LTCUSDT", label: "LTC/USD" },
+  { value: "UNIUSDT", label: "UNI/USD" },
+  { value: "AAVEUSDT", label: "AAVE/USD" },
+  { value: "ARBUSDT", label: "ARB/USD" },
+  { value: "ZECUSDT", label: "ZEC/USD" },
+  { value: "BCHUSDT", label: "BCH/USD" },
+  { value: "DASHUSDT", label: "DASH/USD" },
+  { value: "ENAUSDT", label: "ENA/USD" },
+  { value: "TRUMPUSDT", label: "TRUMP/USD" },
+  { value: "DOTUSDT", label: "DOT/USD" },
+  { value: "SUIUSDT", label: "SUI/USD" },
+  { value: "FILUSDT", label: "FIL/USD" },
+  { value: "TRXUSDT", label: "TRX/USD" },
+  { value: "APTUSDT", label: "APT/USD" },
+  { value: "INJUSDT", label: "INJ/USD" },
+  { value: "NEARUSDT", label: "NEAR/USD" },
+  { value: "XLMUSDT", label: "XLM/USD" },
+  { value: "TIAUSDT", label: "TIA/USD" },
+  { value: "POLUSDT", label: "POL/USD" },
+  { value: "1000PEPEUSDT", label: "1000PEPE/USD" },
+  { value: "PENGUUSDT", label: "PENGU/USD" },
 ] as const;
 
 export const CRYPTO_INTERVALS = [
@@ -694,6 +701,16 @@ export async function fetchFundingFor(symbol: string): Promise<FundingRow | null
  * Sirf VWAP ka daily reset UTC par rehta hai (dekho `indicators.ts`) — wo
  * display nahi, signal ka hissa hai.
  */
+/**
+ * Desk ka market. Chart, screener, Risk Desk aur AI — sab isi venue ke numbers
+ * dikhate hain. Doosre platform se compare karna ho to wahan bhi yahi contract
+ * kholna hoga; kisi aur exchange ka spot thoda alag price dega (perp basis +
+ * exchange spread), jo bug nahi hai.
+ */
+export const DESK_VENUE = "Delta Exchange India";
+export const DESK_VENUE_SHORT = "Delta";
+export const DESK_CONTRACT = "Perpetual";
+
 export const DESK_TZ = "Asia/Kolkata";
 export const DESK_TZ_LABEL = "IST";
 
@@ -709,5 +726,5 @@ export function syncStamp(at: Date = new Date()): string {
 
 export function symbolLabel(symbol: string): string {
 
-  return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace("USDT", "/USDT");
+  return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace(/USDT?$/, "/USD");
 }

@@ -61,6 +61,8 @@ import {
   syncStamp,
   deskClock,
   DESK_TZ_LABEL,
+  DESK_CONTRACT,
+  DESK_VENUE,
 } from "@/lib/cryptoApi";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
@@ -573,7 +575,7 @@ function TradeTerminal() {
                     </div>
                     <div>
                       <div className="desk-pair-name">{symbolLabel(symbol)}</div>
-                      <div className="desk-pair-tag">Spot · Delta exchange</div>
+                      <div className="desk-pair-tag">{DESK_CONTRACT} · {DESK_VENUE}</div>
                     </div>
                   </div>
 

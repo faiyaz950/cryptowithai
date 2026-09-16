@@ -14,7 +14,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { DESK_TZ, DESK_TZ_LABEL, type Candle } from "@/lib/cryptoApi";
+import { DESK_TZ, DESK_TZ_LABEL, DESK_VENUE_SHORT, type Candle } from "@/lib/cryptoApi";
 import type { DrawTool } from "@/components/trade/ChartDeskTools";
 
 /** Delta timestamps UTC hote hain; axis/tooltip desk ke timezone mein dikhao. */
@@ -478,6 +478,9 @@ export default function CandleChart({
           <span className="font-bold" style={{ color: "var(--text-primary)" }}>
             {symbol ?? "—"}
             <span style={{ color: "var(--text-muted)" }}>
+              {/* Venue chart par hi — doosre platform se milaane wale ko pata ho
+                  ki ye kis exchange ka kaunsa contract hai. */}
+              {` · Perp · ${DESK_VENUE_SHORT}`}
               {interval ? ` · ${interval}` : ""} · {DESK_TZ_LABEL}
               {compareLabel ? ` · vs ${compareLabel}` : ""}
               {drawTool !== "cursor" ? ` · draw:${drawTool}` : ""}
