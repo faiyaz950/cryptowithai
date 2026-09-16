@@ -81,6 +81,12 @@ interface Props {
   compareLabel?: string;
   drawTool?: DrawTool;
   clearDrawingsKey?: number;
+  /**
+   * Kis dataset ki candles hain (symbol + timeframe + history). Ye badle tabhi
+   * chart poora fit hota hai; wahi dataset refresh ho to user ka zoom/scroll
+   * jaisa tha waisa rehta hai. Na diya ho to symbol + interval se banta hai.
+   */
+  viewKey?: string;
 }
 
 interface Readout {
@@ -125,9 +131,16 @@ export default function CandleChart({
   compareLabel,
   drawTool = "cursor",
   clearDrawingsKey = 0,
+  viewKey,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  /** Chart abhi kis dataset ka hai — isi se tay hota hai fit karna hai ya view bachana. */
+  const viewKeyRef = useRef<string | null>(null);
+  /** Pichhli setData ki bar count — user aakhri candle par hai ya nahi, ye isi se pata chalta hai. */
+  const barCountRef = useRef(0);
+  /** Pichhli baar kaunsa candles array draw hua tha. */
+  const lastCandlesRef = useRef<Candle[] | null>(null);
   const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeries = useRef<ISeriesApi<"Histogram"> | null>(null);
   const compareSeries = useRef<ISeriesApi<"Line"> | null>(null);
@@ -399,6 +412,23 @@ export default function CandleChart({
   useEffect(() => {
     if (!candleSeries.current || !candles.length) return;
 
+    const timeScale = chartRef.current?.timeScale();
+    const key = viewKey ?? `${symbol ?? ""}|${interval ?? ""}`;
+    // Naya dataset tabhi jab key ke saath candles bhi badli hon. Symbol dropdown
+    // badalte hi key badal jaati hai par candles abhi purani hoti hain — us waqt
+    // fit karne se purane chart par zoom reset ho jaata, aur nayi candles aane
+    // par wo "refresh" maani jaati.
+    const candlesChanged = lastCandlesRef.current !== candles;
+    lastCandlesRef.current = candles;
+    const isNewView = candlesChanged && viewKeyRef.current !== key;
+
+    // Refresh se pehle user kahan dekh raha tha. Time range (bar index nahi)
+    // isliye ki har poll par sabse purani candle hat-ti hai aur nayi judti hai —
+    // index wala range har minute ek candle aage khisak jaata.
+    const prevLogical = isNewView ? null : timeScale?.getVisibleLogicalRange() ?? null;
+    const prevTimeRange = isNewView ? null : timeScale?.getVisibleRange() ?? null;
+    const followingLive = prevLogical == null || prevLogical.to >= barCountRef.current - 2;
+
     const valid = candles.filter((c) => c.open && c.high && c.low && c.close);
 
     const bars = valid
@@ -437,8 +467,27 @@ export default function CandleChart({
           .sort((a, b) => (a.time as number) - (b.time as number)),
       );
     }
-    chartRef.current?.timeScale().fitContent();
-  }, [candles, lineSig, showVolume]);
+    barCountRef.current = bars.length;
+
+    /*
+     * Pehle yahan har baar fitContent() chalta tha. Markets page har kuch
+     * second mein naya data laata hai, to user zoom karta, poll aata aur chart
+     * wapas poora zoom-out ho jaata — scroll karke purani candle dekh raha ho
+     * to wo bhi seedha aakhri candle par kood jaata.
+     *
+     * Ab: naya dataset (symbol/timeframe badla) -> fit. Wahi dataset refresh
+     * hua aur user aakhri candle dekh raha tha -> zoom wahi, bas live candle
+     * ke saath chalo. User pichhe history dekh raha tha -> wahi jagah rakho.
+     */
+    if (isNewView) {
+      viewKeyRef.current = key;
+      timeScale?.fitContent();
+    } else if (followingLive) {
+      timeScale?.scrollToRealTime();
+    } else if (prevTimeRange) {
+      timeScale?.setVisibleRange(prevTimeRange);
+    }
+  }, [candles, lineSig, showVolume, viewKey, symbol, interval]);
 
   useEffect(() => {
     const chart = chartRef.current;

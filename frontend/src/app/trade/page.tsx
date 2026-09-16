@@ -40,6 +40,7 @@ import StrategyBuilder from "@/components/trade/StrategyBuilder";
 import {
   CHART_RANGES,
   barsForDays,
+  intervalMinutes,
   candlesSpanDays,
   checkCryptoHealth,
   fetchCandles,
@@ -126,7 +127,37 @@ function fmtCompact(n: number): string {
   return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(n);
 }
 
-const MARKET_POLL_MS = 30_000;
+/**
+ * Live refresh. Pehle 30s tha aur har baar poori history (1m par 4000 candles)
+ * dobara aati thi — bhaari bhi, aur 1m chart par aakhri candle aadha minute
+ * purani dikhti thi. Ab har poll sirf aakhri LIVE_TAIL_FETCH candles laata hai,
+ * isliye 10s par chalana sasta hai.
+ */
+const MARKET_POLL_MS = 10_000;
+
+/**
+ * Poll par itni candles aati hain. EMA backend isi window par calculate karta
+ * hai, isliye window itni lambi chahiye ki EMA50 settle ho jaye: naap kar
+ * dekha, band candles par 300 vs 4000 bar ka EMA9/21/RSI bilkul same aur EMA50
+ * mein $0.0004 ka farak.
+ */
+const LIVE_TAIL_FETCH = 300;
+
+/** In aakhri candles ko hi purane data mein jodte hain — inke EMA settle ho chuke hote hain. */
+const LIVE_TAIL_KEEP = 20;
+
+/**
+ * Poll ki taaza candles purane data ke aakhir mein jodo. Aakhri candle abhi ban
+ * rahi hoti hai, isliye pichhle kuch bars bhi badal dete hain. Window ka size
+ * wahi rehta hai jo user ne history mein chuna tha.
+ */
+function mergeLiveTail(prev: Candle[], fresh: Candle[], keep: number): Candle[] {
+  const tail = fresh.slice(-LIVE_TAIL_KEEP);
+  if (!tail.length) return prev;
+  const cut = tail[0].time;
+  const merged = prev.filter((c) => c.time < cut).concat(tail);
+  return merged.length > keep ? merged.slice(-keep) : merged;
+}
 
 function shortInterval(value: string): string {
   return value.endsWith("m") ? value : value.toUpperCase();
@@ -198,6 +229,12 @@ function TradeTerminal() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
+  /** Ye candles kis symbol|interval|history ki hain — chart isi se zoom bachata hai. */
+  const [candlesKey, setCandlesKey] = useState("");
+  const candlesRef = useRef<Candle[]>([]);
+  const candlesKeyRef = useRef("");
+  /** Abhi screen par kaunsa symbol|interval|history chuna hua hai. */
+  const activeKeyRef = useRef("");
   const [market, setMarket] = useState<MarketInfo | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [orders, setOrders] = useState<DemoOrder[]>([]);
@@ -225,24 +262,63 @@ function TradeTerminal() {
     return () => window.clearInterval(id);
   }, []);
 
-  const loadMarket = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  /**
+   * `mode`:
+   *   "full" — poori history (pehli baar, symbol/timeframe badla, tab wapas aaya).
+   *   "poll" — sirf aakhri candles, purane chart mein jodi jaati hain.
+   *
+   * Poll fail ho to chart waisa hi rehta hai. Pehle har failure par
+   * setCandles([]) hota tha — ek network hichki aur poora chart gayab.
+   */
+  const loadMarket = useCallback(async (mode: "full" | "poll" = "full") => {
+    const key = `${symbol}|${interval}|${historyDays}`;
+    const wanted = barsForDays(historyDays, interval);
+    const poll = mode === "poll";
+    if (!poll) setLoading(true);
     try {
+      const prev = candlesRef.current;
+      const tailOnly = poll && wanted > LIVE_TAIL_FETCH && prev.length > 0 && candlesKeyRef.current === key;
       const [candleRes, info] = await Promise.all([
-        fetchCandles({ symbol, interval, limit: barsForDays(historyDays, interval) }),
+        fetchCandles({ symbol, interval, limit: tailOnly ? LIVE_TAIL_FETCH : wanted }),
         fetchMarketInfo(symbol).catch(() => null),
       ]);
       if (!candleRes.success) throw new Error(candleRes.error || "Candle data nahi mili");
-      setCandles(candleRes.candles ?? []);
+
+      // Is beech user ne symbol/timeframe badal diya — ye jawab ab kisi kaam ka nahi.
+      if (activeKeyRef.current !== key) return;
+
+      let next = candleRes.candles ?? [];
+      if (tailOnly) {
+        const lastPrev = prev[prev.length - 1]?.time ?? 0;
+        const gapMs = LIVE_TAIL_KEEP * intervalMinutes(interval) * 60_000;
+        // Tab bahut der so raha tha (laptop sleep) — beech ki candles gayab
+        // hongi, to jodne ke bajaye poori history dobara lo.
+        if (!next.length || next[next.length - 1].time - lastPrev > gapMs) {
+          const full = await fetchCandles({ symbol, interval, limit: wanted });
+          if (activeKeyRef.current !== key) return;
+          next = full.success ? full.candles ?? [] : prev;
+        } else {
+          next = mergeLiveTail(prev, next, wanted);
+        }
+      }
+
+      candlesRef.current = next;
+      candlesKeyRef.current = key;
+      setCandles(next);
+      setCandlesKey(key);
       setMarket(info?.success ? info : null);
       setUpdatedAt(syncStamp());
       setOnline(true);
+      setError(null);
     } catch (err) {
+      if (activeKeyRef.current !== key) return;
       setError(err instanceof Error ? err.message : "Crypto backend connect nahi ho raha (port 2000)");
-      setCandles([]);
+      if (!poll) {
+        candlesRef.current = [];
+        setCandles([]);
+      }
     } finally {
-      setLoading(false);
+      if (!poll) setLoading(false);
     }
   }, [symbol, interval, historyDays]);
 
@@ -260,8 +336,9 @@ function TradeTerminal() {
   }, []);
 
   useEffect(() => {
-    loadMarket();
-  }, [loadMarket]);
+    activeKeyRef.current = `${symbol}|${interval}|${historyDays}`;
+    void loadMarket("full");
+  }, [loadMarket, symbol, interval, historyDays]);
 
   useEffect(() => {
     if (!compareSymbol) {
@@ -291,7 +368,7 @@ function TradeTerminal() {
 
     const start = () => {
       window.clearInterval(timer);
-      timer = window.setInterval(() => void loadMarket(), MARKET_POLL_MS);
+      timer = window.setInterval(() => void loadMarket("poll"), MARKET_POLL_MS);
     };
 
     const onVisibility = () => {
@@ -299,7 +376,8 @@ function TradeTerminal() {
         window.clearInterval(timer);
         return;
       }
-      void loadMarket();
+      // Tab wapas aaya — itni der mein kitni candles chhooti pata nahi, poori lo.
+      void loadMarket("full");
       start();
     };
 
@@ -768,7 +846,7 @@ function TradeTerminal() {
                         ))}
                       </select>
 
-                      <button type="button" onClick={loadMarket} disabled={loading} className="trade-btn trade-btn-ghost trade-size-sm">
+                      <button type="button" onClick={() => void loadMarket("full")} disabled={loading} className="trade-btn trade-btn-ghost trade-size-sm">
                         <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
                       </button>
                     </div>
@@ -795,6 +873,7 @@ function TradeTerminal() {
                           compareLabel={compareSymbol ? symbolLabel(compareSymbol) : undefined}
                           drawTool={drawTool}
                           clearDrawingsKey={clearDrawingsKey}
+                          viewKey={candlesKey}
                         />
                       )}
                     </div>
