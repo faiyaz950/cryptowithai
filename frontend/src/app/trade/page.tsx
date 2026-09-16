@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import dynamic from "next/dynamic";
+import type { LiveStatus } from "@/lib/deltaLive";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -231,6 +232,10 @@ function TradeTerminal() {
   const [candles, setCandles] = useState<Candle[]>([]);
   /** Ye candles kis symbol|interval|history ki hain — chart isi se zoom bachata hai. */
   const [candlesKey, setCandlesKey] = useState("");
+  /** Delta live feed ka sabse taaza close, kis symbol ka hai uske saath. */
+  const liveTickRef = useRef<{ symbol: string; close: number } | null>(null);
+  const [liveTick, setLiveTick] = useState<{ symbol: string; close: number } | null>(null);
+  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const candlesKeyRef = useRef("");
   /** Abhi screen par kaunsa symbol|interval|history chuna hua hai. */
@@ -256,6 +261,9 @@ function TradeTerminal() {
     const tick = () => {
       const now = new Date();
       setDeskTime(deskClock(now));
+      // Header ka price har tick par nahi — clock ke saath second mein ek baar.
+      const latest = liveTickRef.current;
+      if (latest) setLiveTick((prev) => (prev?.close === latest.close && prev.symbol === latest.symbol ? prev : latest));
     };
     tick();
     const id = window.setInterval(tick, 1000);
@@ -469,12 +477,30 @@ function TradeTerminal() {
     [showEma9, showEma21, showEma50],
   );
 
+  /**
+   * Screen par dikhne wala price. Live feed chal rahi ho aur usi symbol ki ho to
+   * uska close — warna market-info wala (jo poll par aata hai). Symbol check
+   * zaroori hai: ETH par switch karte hi BTC ka aakhri tick na dikhe.
+   */
+  const lastPrice =
+    liveTick && liveTick.symbol === symbol ? liveTick.close : market?.current_price;
+
+  /**
+   * Live feed usi symbol/timeframe ki jiski candles abhi chart par hain —
+   * `candlesKey` se, current selection se nahi. Selection badalte hi feed
+   * badal jaati to naye coin ke ticks purane coin ke chart par lag jaate.
+   */
+  const liveFeed = useMemo(() => {
+    const [feedSymbol, feedInterval] = candlesKey.split("|");
+    return feedSymbol && feedInterval ? { symbol: feedSymbol, interval: feedInterval } : undefined;
+  }, [candlesKey]);
+
   const rangePct = useMemo(() => {
-    if (!market) return 50;
+    if (!market || lastPrice == null) return 50;
     const span = market.high_24h - market.low_24h;
     if (span <= 0) return 50;
-    return Math.min(100, Math.max(0, ((market.current_price - market.low_24h) / span) * 100));
-  }, [market]);
+    return Math.min(100, Math.max(0, ((lastPrice - market.low_24h) / span) * 100));
+  }, [market, lastPrice]);
 
   const sentiment = useMemo(() => {
     const ch = market?.change_24h ?? 0;
@@ -659,7 +685,7 @@ function TradeTerminal() {
 
                   <div>
                     <div className="desk-pair-price">
-                      {market ? fmtUsd(market.current_price) : "—"}
+                      {lastPrice != null ? fmtUsd(lastPrice) : "—"}
                     </div>
                     <div className="desk-pair-change mt-1.5" style={{ color: market ? changeColor : undefined }}>
                       {market && <ChangeIcon className="w-3.5 h-3.5" />}
@@ -708,7 +734,7 @@ function TradeTerminal() {
                         <span className="desk-stat-label">Last Price</span>
                         <span className="desk-stat-icon"><Zap className="w-3.5 h-3.5" /></span>
                       </div>
-                      <div className="desk-stat-value">{market ? fmtUsd(market.current_price) : "—"}</div>
+                      <div className="desk-stat-value">{lastPrice != null ? fmtUsd(lastPrice) : "—"}</div>
                     </div>
                     <div className="desk-stat-card">
                       <div className="desk-stat-card-top">
@@ -874,11 +900,24 @@ function TradeTerminal() {
                           drawTool={drawTool}
                           clearDrawingsKey={clearDrawingsKey}
                           viewKey={candlesKey}
+                          live={liveFeed}
+                          onLiveBar={(bar) => {
+                            // Feed ka apna symbol — selection abhi naya ho sakta hai jabki
+                            // ye tick purane chart ki feed se aaya ho.
+                            if (liveFeed) liveTickRef.current = { symbol: liveFeed.symbol, close: bar.close };
+                          }}
+                          onLiveStatus={setLiveStatus}
                         />
                       )}
                     </div>
                     {updatedAt && (
                       <div className="px-4 py-2 text-[11px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--tr-line-soft)" }}>
+                        {liveStatus === "live" ? (
+                          <span style={{ color: "var(--green)", fontWeight: 600 }}>● Live · Delta stream</span>
+                        ) : liveStatus === "connecting" ? (
+                          <span style={{ color: "var(--amber)" }}>● Live feed jud raha hai…</span>
+                        ) : null}
+                        {liveStatus === "live" || liveStatus === "connecting" ? " · " : ""}
                         Synced {updatedAt} {DESK_TZ_LABEL} · poll {MARKET_POLL_MS / 1000}s
                         {compareSymbol ? ` · compare ${symbolLabel(compareSymbol)}` : ""}
                         {drawTool !== "cursor" ? ` · drawing ${drawTool}` : ""}
@@ -905,7 +944,7 @@ function TradeTerminal() {
                     <div className="desk-range-ends">
                       <span>{market ? fmtUsd(market.low_24h) : "—"}</span>
                       <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                        {market ? fmtUsd(market.current_price) : "—"}
+                        {lastPrice != null ? fmtUsd(lastPrice) : "—"}
                       </span>
                       <span>{market ? fmtUsd(market.high_24h) : "—"}</span>
                     </div>
@@ -937,7 +976,7 @@ function TradeTerminal() {
                   <aside className="trade-sticky-rail">
                     <TradePanel
                       symbol={symbol}
-                      lastPrice={market?.current_price}
+                      lastPrice={lastPrice}
                       orders={orders}
                       positions={positions.positions}
                       positionsUnavailable={positions.configured ? null : positions.message}

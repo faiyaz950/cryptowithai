@@ -15,6 +15,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { DESK_TZ, DESK_TZ_LABEL, DESK_VENUE_SHORT, type Candle } from "@/lib/cryptoApi";
+import { subscribeLiveCandles, type LiveBar, type LiveStatus } from "@/lib/deltaLive";
 import type { DrawTool } from "@/components/trade/ChartDeskTools";
 
 /** Delta timestamps UTC hote hain; axis/tooltip desk ke timezone mein dikhao. */
@@ -87,6 +88,14 @@ interface Props {
    * jaisa tha waisa rehta hai. Na diya ho to symbol + interval se banta hai.
    */
   viewKey?: string;
+  /**
+   * Delta ka live feed. Diya ho to aakhri candle har trade par badalti hai aur
+   * interval poora hote hi nayi candle apne aap banti hai — Delta ki site jaisa.
+   * Ye usi symbol/timeframe ka hona chahiye jiski `candles` abhi chart par hain.
+   */
+  live?: { symbol: string; interval: string };
+  onLiveBar?: (bar: LiveBar) => void;
+  onLiveStatus?: (status: LiveStatus) => void;
 }
 
 interface Readout {
@@ -99,6 +108,46 @@ interface Readout {
 
 const UP = "#00e676";
 const DOWN = "#ff5252";
+
+const EMA_KEY = /^ema_(\d+)$/;
+
+type EmaState = Map<string, { barTime: number; prev: number; lastClose: number }>;
+
+/**
+ * Ek live candle chart par lagao. `update()` aakhri candle badalta hai ya nayi
+ * jodta hai, aur setData() ki tarah zoom/scroll nahi chhedta.
+ */
+function paintLiveBar(
+  bar: LiveBar,
+  candle: ISeriesApi<"Candlestick">,
+  volume: ISeriesApi<"Histogram"> | null,
+  lines: Map<string, ISeriesApi<"Line">>,
+  emaState: EmaState,
+  showVolume: boolean,
+) {
+  const time = toUnix(bar.time);
+  candle.update({ time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+  if (showVolume && volume) {
+    volume.update({
+      time,
+      value: bar.volume,
+      color: bar.close >= bar.open ? "rgba(0, 230, 118, 0.32)" : "rgba(255, 82, 82, 0.28)",
+    });
+  }
+  for (const [key, line] of lines) {
+    const match = EMA_KEY.exec(key);
+    const state = emaState.get(key);
+    if (!match || !state) continue;
+    const alpha = 2 / (Number(match[1]) + 1);
+    if (bar.time > state.barTime) {
+      // Pichhli candle band ho gayi — uska aakhri EMA hi nayi candle ka base.
+      state.prev = alpha * state.lastClose + (1 - alpha) * state.prev;
+      state.barTime = bar.time;
+    }
+    state.lastClose = bar.close;
+    line.update({ time, value: alpha * bar.close + (1 - alpha) * state.prev });
+  }
+}
 
 function toUnix(timeMs: number): UTCTimestamp {
   return Math.floor(timeMs / 1000) as UTCTimestamp;
@@ -132,6 +181,9 @@ export default function CandleChart({
   drawTool = "cursor",
   clearDrawingsKey = 0,
   viewKey,
+  live,
+  onLiveBar,
+  onLiveStatus,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -141,6 +193,20 @@ export default function CandleChart({
   const barCountRef = useRef(0);
   /** Pichhli baar kaunsa candles array draw hua tha. */
   const lastCandlesRef = useRef<Candle[] | null>(null);
+  /** Chart par aakhri candle ka time (ms). null = abhi history load nahi hui. */
+  const lastBarTimeRef = useRef<number | null>(null);
+  /** Feed se aayi sabse taaza candle — poll ka purana data use peeche na khiskaye. */
+  const liveBarRef = useRef<LiveBar | null>(null);
+  /**
+   * EMA line har key ke liye: `prev` = live candle se pehle wali band candle ka
+   * EMA. Live candle ka EMA = α·close + (1−α)·prev — backend jaisa hi formula,
+   * bas aakhri point browser mein.
+   */
+  const emaStateRef = useRef(new Map<string, { barTime: number; prev: number; lastClose: number }>());
+  const showVolumeRef = useRef(showVolume);
+  const onLiveBarRef = useRef(onLiveBar);
+  const onLiveStatusRef = useRef(onLiveStatus);
+  const [liveView, setLiveView] = useState<{ key: string; bar: LiveBar } | null>(null);
   const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeries = useRef<ISeriesApi<"Histogram"> | null>(null);
   const compareSeries = useRef<ISeriesApi<"Line"> | null>(null);
@@ -427,7 +493,8 @@ export default function CandleChart({
     // index wala range har minute ek candle aage khisak jaata.
     const prevLogical = isNewView ? null : timeScale?.getVisibleLogicalRange() ?? null;
     const prevTimeRange = isNewView ? null : timeScale?.getVisibleRange() ?? null;
-    const followingLive = prevLogical == null || prevLogical.to >= barCountRef.current - 2;
+    const prevBarCount = barCountRef.current;
+    const followingLive = prevLogical == null || prevLogical.to >= prevBarCount - 2;
 
     const valid = candles.filter((c) => c.open && c.high && c.low && c.close);
 
@@ -469,6 +536,30 @@ export default function CandleChart({
     }
     barCountRef.current = bars.length;
 
+    // Live feed ke liye base: har EMA line ka "aakhri se pehle wali candle" ka value.
+    const sorted = [...candles].sort((a, b) => a.time - b.time);
+    const lastBar = sorted[sorted.length - 1];
+    const beforeLast = sorted[sorted.length - 2];
+    emaStateRef.current.clear();
+    if (lastBar && beforeLast) {
+      for (const key of lineSeries.current.keys()) {
+        const prev = Number((beforeLast as unknown as Record<string, unknown>)[key]);
+        if (EMA_KEY.test(key) && Number.isFinite(prev)) {
+          emaStateRef.current.set(key, { barTime: lastBar.time, prev, lastClose: lastBar.close });
+        }
+      }
+    }
+    lastBarTimeRef.current = lastBar?.time ?? null;
+
+    // Poll ka data live feed se kuch second purana ho sakta hai — bani hui candle
+    // peeche na jaaye, isliye taaza live candle dobara lagao.
+    const liveBar = liveBarRef.current;
+    if (liveBar && lastBar && liveBar.time >= lastBar.time) {
+      paintLiveBar(liveBar, candleSeries.current, volumeSeries.current, lineSeries.current, emaStateRef.current, showVolume);
+      if (liveBar.time > lastBar.time) barCountRef.current = bars.length + 1;
+      lastBarTimeRef.current = liveBar.time;
+    }
+
     /*
      * Pehle yahan har baar fitContent() chalta tha. Markets page har kuch
      * second mein naya data laata hai, to user zoom karta, poll aata aur chart
@@ -476,18 +567,91 @@ export default function CandleChart({
      * to wo bhi seedha aakhri candle par kood jaata.
      *
      * Ab: naya dataset (symbol/timeframe badla) -> fit. Wahi dataset refresh
-     * hua aur user aakhri candle dekh raha tha -> zoom wahi, bas live candle
-     * ke saath chalo. User pichhe history dekh raha tha -> wahi jagah rakho.
+     * hua aur user aakhri candle dekh raha tha -> jitna zoom aur aakhri candle
+     * ke right mein jitni khaali jagah thi, wahi rakho; nayi candle aaye to view
+     * ek candle aage chale. User pichhe history dekh raha tha -> wahi jagah.
+     *
+     * Live edge par pehle scrollToRealTime() tha. Wo right ki khaali jagah hata
+     * kar aakhri candle ko edge se chipka deta tha, to har 10s ke poll par chart
+     * thoda khisak jaata tha — "jaisa chhoda tha waisa" nahi rehta tha.
      */
     if (isNewView) {
       viewKeyRef.current = key;
       timeScale?.fitContent();
+    } else if (followingLive && prevLogical) {
+      const width = prevLogical.to - prevLogical.from;
+      const rightGap = prevLogical.to - (prevBarCount - 1);
+      const to = barCountRef.current - 1 + rightGap;
+      timeScale?.setVisibleLogicalRange({ from: to - width, to });
     } else if (followingLive) {
       timeScale?.scrollToRealTime();
     } else if (prevTimeRange) {
       timeScale?.setVisibleRange(prevTimeRange);
     }
   }, [candles, lineSig, showVolume, viewKey, symbol, interval]);
+
+  // Callbacks aur toggles ref mein — inke badalne par socket dobara nahi kholna.
+  useEffect(() => {
+    onLiveBarRef.current = onLiveBar;
+    onLiveStatusRef.current = onLiveStatus;
+    showVolumeRef.current = showVolume;
+  });
+
+  const liveSymbol = live?.symbol;
+  const liveInterval = live?.interval;
+
+  useEffect(() => {
+    if (!liveSymbol || !liveInterval) return;
+    const key = `${liveSymbol}|${liveInterval}`;
+    liveBarRef.current = null;
+    let pending: LiveBar | null = null;
+
+    const onBar = (bar: LiveBar) => {
+      const candle = candleSeries.current;
+      const lastTime = lastBarTimeRef.current;
+      // History abhi aayi nahi, ya ye tick chart ki aakhri candle se purana hai.
+      if (!candle || lastTime == null || bar.time < lastTime) return;
+      if (bar.time > lastTime) barCountRef.current += 1;
+      liveBarRef.current = bar;
+      paintLiveBar(bar, candle, volumeSeries.current, lineSeries.current, emaStateRef.current, showVolumeRef.current);
+      lastBarTimeRef.current = bar.time;
+      pending = bar;
+      onLiveBarRef.current?.(bar);
+    };
+
+    let stop = () => {};
+    const start = () => {
+      stop();
+      stop = subscribeLiveCandles(liveSymbol, liveInterval, onBar, (status) => onLiveStatusRef.current?.(status));
+    };
+    // Tab chhupi ho to socket band — wapas aane par page poori history laata hai
+    // aur feed phir se jud jaati hai.
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+        stop = () => {};
+      } else {
+        start();
+      }
+    };
+
+    // Legend ke numbers ko har tick par React re-render nahi chahiye — chart
+    // khud turant badalta hai, legend 4 baar/second kaafi hai.
+    const flush = window.setInterval(() => {
+      if (!pending) return;
+      const bar = pending;
+      pending = null;
+      setLiveView({ key, bar });
+    }, 250);
+
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
+  }, [liveSymbol, liveInterval]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -506,7 +670,11 @@ export default function CandleChart({
     chart.priceScale("compare").applyOptions({ visible: true });
   }, [compareCandles, compareLabel]);
 
-  const last = candles.at(-1);
+  const liveKey = liveSymbol && liveInterval ? `${liveSymbol}|${liveInterval}` : null;
+  const liveLegendBar = liveView && liveView.key === liveKey ? liveView.bar : null;
+  const lastCandle = candles.at(-1);
+  const last =
+    liveLegendBar && (!lastCandle || liveLegendBar.time >= lastCandle.time) ? liveLegendBar : lastCandle;
   const view: Readout | null =
     readout ??
     (last && last.open
