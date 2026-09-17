@@ -42,3 +42,13 @@ services:
       # Session tokens aur stored API keys encrypt karne ke liye.
       - key: DJANGO_SECRET_KEY
         generateValue: true
+
+      # ── User accounts aur exchange keys ─────────────────
+      # Users ki exchange API keys isse encrypt hoti hain. Ek baar set karke kabhi
+      # mat badlein — badli to judi hui saari keys khul nahi payengi.
+      - key: BYOK_ENCRYPTION_KEY
+        sync: false
+      # Postgres. Iske bina SQLite use hoti hai, jo Render free par har deploy par
+      # mit jaati hai — saare user accounts aur judi keys samet.
+      - key: DATABASE_URL
+        sync: false

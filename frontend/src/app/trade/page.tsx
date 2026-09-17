@@ -16,6 +16,7 @@ import {
   Layers,
   LineChart,
   Moon,
+  Plug,
   Radar,
   RefreshCw,
   Search,
@@ -25,12 +26,13 @@ import {
   Star,
   TrendingDown,
   TrendingUp,
-  User,
   Wand2,
   X,
   Zap,
 } from "lucide-react";
 import TradePanel from "@/components/trade/TradePanel";
+import AccountMenu from "@/components/trade/AccountMenu";
+import ExchangesDesk from "@/components/trade/ExchangesDesk";
 import ChartDeskTools, { type DrawTool } from "@/components/trade/ChartDeskTools";
 import BacktestPanel from "@/components/trade/BacktestPanel";
 import StrategyCards from "@/components/trade/StrategyCards";
@@ -82,7 +84,7 @@ const PortfolioDesk = dynamic(() => import("@/components/portfolio/PortfolioDesk
   loading: () => <div className="w-full h-full shimmer rounded-xl" />,
 });
 
-type Tab = "ai" | "markets" | "screener" | "backtest" | "strategies" | "mine" | "builder" | "options" | "portfolio";
+type Tab = "ai" | "markets" | "screener" | "backtest" | "strategies" | "mine" | "builder" | "options" | "portfolio" | "exchanges";
 
 const SHOW_OPTIONS_TAB = true;
 
@@ -91,6 +93,7 @@ const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screeners", icon: Radar },
   { id: "portfolio", label: "Portfolio", icon: Briefcase },
+  { id: "exchanges", label: "Exchanges", icon: Plug },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
   { id: "strategies", label: "Catalogue", icon: Layers },
   { id: "mine", label: "My Strategies", icon: FolderKanban },
@@ -111,6 +114,7 @@ const NAV: {
   { id: "watchlist", label: "Watchlist", icon: Star },
   { id: "risk", label: "Risk Desk", icon: ShieldCheck, href: "/trade/risk" },
   { id: "portfolio", label: "Portfolio", icon: Briefcase },
+  { id: "exchanges", label: "Exchanges", icon: Plug },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
   { id: "strategies", label: "Catalogue", icon: Layers },
   { id: "mine", label: "My Strategies", icon: FolderKanban },
@@ -620,9 +624,7 @@ function TradeTerminal() {
               <button type="button" className="trade-iconbtn" aria-label="Ask AI" onClick={askAi}>
                 <Sparkles className="w-4 h-4" />
               </button>
-              <div className="desk-avatar" aria-hidden>
-                <User className="w-4 h-4" />
-              </div>
+              <AccountMenu onOpenExchanges={() => goTab("exchanges")} />
             </div>
           </header>
 
@@ -669,6 +671,8 @@ function TradeTerminal() {
                 <PortfolioDesk embedded />
               </div>
             )}
+
+            {tab === "exchanges" && <ExchangesDesk />}
 
             {tab === "markets" && (
               <>
