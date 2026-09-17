@@ -16,6 +16,9 @@ export interface AuthUser {
   username: string;
   name: string;
   email: string;
+  emailVerified: boolean;
+  /** Account kab bana — profile page par "member since". */
+  createdAt: string | null;
   plan: "free" | "pro";
   avatar: string; // initials
 }
@@ -28,6 +31,8 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
+  /** Profile mein kuch badla (jaise naam) — backend se taaza user le aao. */
+  refreshUser: () => Promise<void>;
   /** Kisi API ne 401 diya — session khatam maan kar user ko logout dikhao. */
   handleExpiredSession: () => void;
 }
@@ -62,7 +67,16 @@ function getInitials(name: string): string {
 
 function toAuthUser(u: AccountUser): AuthUser {
   const name = u.full_name?.trim() || u.username;
-  return { id: u.id, username: u.username, name, email: u.email, plan: "free", avatar: getInitials(name) };
+  return {
+    id: u.id,
+    username: u.username,
+    name,
+    email: u.email,
+    emailVerified: Boolean(u.email_verified),
+    createdAt: u.created_at ?? null,
+    plan: "free",
+    avatar: getInitials(name),
+  };
 }
 
 function readSession(): StoredSession | null {
@@ -143,6 +157,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [applySession],
   );
 
+  const refreshUser = useCallback(async () => {
+    const current = session;
+    if (!current) return;
+    const { user } = await fetchMe(current.token);
+    const next = { ...current, user: toAuthUser(user) };
+    writeSession(next);
+    setSession(next);
+  }, [session]);
+
   const logout = useCallback(() => {
     const token = session?.token;
     clearSession();
@@ -159,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         signup,
         logout,
+        refreshUser,
         handleExpiredSession: clearSession,
       }}
     >

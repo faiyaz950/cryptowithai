@@ -66,6 +66,8 @@ export interface AccountUser {
   full_name: string;
   email: string;
   email_verified: boolean;
+  /** Account kab bana — profile page "member since" dikhata hai. */
+  created_at?: string | null;
 }
 
 interface SessionResponse {
@@ -91,6 +93,14 @@ export function fetchMe(token: string) {
 
 export function logoutAccount(token: string) {
   return request<{ message: string }>("/auth/logout", { method: "POST", token });
+}
+
+export function updateFullName(token: string, fullName: string) {
+  return request<{ data: { full_name: string } }>("/profile/name", {
+    method: "PATCH",
+    token,
+    body: { full_name: fullName },
+  }).then((r) => r.data.full_name);
 }
 
 /* ── Exchanges (BYOK) ──────────────────────────────────── */
@@ -144,6 +154,95 @@ export function verifyExchangeAccount(token: string, accountId: number) {
 /** Disconnect — backend encrypted key aur secret dono permanently delete karta hai. */
 export function deleteExchangeAccount(token: string, accountId: number) {
   return request<{ message: string }>(`/byok/exchange-accounts/${accountId}`, { method: "DELETE", token });
+}
+
+export interface EgressIps {
+  /** Server ke outbound IP — exchange par key ki IP allowlist mein yahi jaate hain. */
+  ips: string[];
+  source: "configured" | "detected" | "unknown";
+  /** false = ye poori list nahi hai, server kisi aur IP se bhi bahar ja sakta hai. */
+  complete: boolean;
+}
+
+export function fetchEgressIps(token: string) {
+  return request<{ data: EgressIps }>("/byok/egress-ips", { token }).then((r) => r.data);
+}
+
+export interface ExchangePosition {
+  symbol: string;
+  side: "long" | "short";
+  size: number;
+  entry_price: number;
+  /** Public ticker se live mark — na mile to null. */
+  mark_price: number | null;
+  /** Entry se mark tak ka move, side ke hisaab se. Exact hai, estimate nahi. */
+  move_pct: number | null;
+  /** Sirf tab jab exchange khud bheje — hum khud PnL nahi ginte. */
+  unrealized_pnl: number | null;
+  realized_pnl: number;
+  realized_funding: number;
+  margin: number;
+  liquidation_price: number | null;
+}
+
+export interface ExchangeOrder {
+  id: number | string | null;
+  symbol: string;
+  side: string;
+  order_type: string;
+  size: number;
+  unfilled_size: number;
+  price: number | null;
+  state: string;
+  created_at: string;
+}
+
+interface Section<T> {
+  items: T[];
+  error: string;
+}
+
+export interface ExchangeOverview {
+  account: {
+    id: number;
+    exchange: ExchangeId;
+    label: string;
+    key_hint: string;
+    can_trade: boolean;
+    permissions_verified: boolean;
+    /** Abhi ke wallet call ka nateeja — list row se zyada taaza. */
+    last_error: string;
+    last_verified_at: string | null;
+    created_at: string | null;
+  };
+  balances: Section<ExchangeBalance>;
+  positions: Section<ExchangePosition>;
+  orders: Section<ExchangeOrder>;
+  /** Exchange ka apna profile (naam/email) — best effort, na mile to null. */
+  exchange_profile: {
+    account_name?: string;
+    exchange_email?: string;
+    exchange_username?: string;
+    exchange_phone?: string;
+    created_at?: string;
+  } | null;
+  totals: {
+    cash: number;
+    cash_available: number;
+    open_positions: number;
+    open_orders: number;
+    unrealized_pnl: number | null;
+    realized_pnl: number;
+  };
+  client_ip: string | null;
+  fetched_at: string;
+}
+
+/** Profile page ka ek hi call — wallet, positions, orders aur exchange profile. */
+export function fetchExchangeOverview(token: string, accountId: number) {
+  return request<{ data: ExchangeOverview }>(`/byok/exchange-accounts/${accountId}/overview`, { token }).then(
+    (r) => r.data,
+  );
 }
 
 export function fetchExchangeBalances(token: string, accountId: number) {

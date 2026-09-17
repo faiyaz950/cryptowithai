@@ -8,8 +8,10 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  ExternalLink,
   Eye,
   EyeOff,
+  Globe2,
   KeyRound,
   Loader2,
   Lock,
@@ -27,9 +29,11 @@ import {
   AccountApiError,
   connectExchangeAccount,
   deleteExchangeAccount,
+  fetchEgressIps,
   fetchExchangeBalances,
   listExchangeAccounts,
   verifyExchangeAccount,
+  type EgressIps,
   type ExchangeAccount,
   type ExchangeBalance,
   type ExchangeId,
@@ -219,9 +223,13 @@ export default function ExchangesDesk() {
         </div>
         {user && (
           <div className="trade-page-actions">
-            <button type="button" className="trade-btn trade-btn-primary" onClick={() => setConnecting(deltaEntry)}>
-              <Plus className="w-4 h-4" />
-              Connect exchange
+            <button
+              type="button"
+              className="trade-btn trade-btn-primary"
+              onClick={() => setConnecting((cur) => (cur ? null : deltaEntry))}
+            >
+              {connecting ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              {connecting ? "Form band karein" : "Connect exchange"}
             </button>
           </div>
         )}
@@ -308,6 +316,17 @@ export default function ExchangesDesk() {
         </>
       )}
 
+      {connecting && token && (
+        <ConnectPanel
+          entry={connecting}
+          token={token}
+          onPickExchange={setConnecting}
+          onClose={() => setConnecting(null)}
+          onConnected={() => void loadAccounts()}
+          onApiError={onApiError}
+        />
+      )}
+
       <section>
         <div className="ex-section-head">
           <h3>All exchanges</h3>
@@ -328,9 +347,14 @@ export default function ExchangesDesk() {
               </p>
               {entry.available ? (
                 user ? (
-                  <button type="button" className="trade-btn trade-btn-ghost ex-tile-btn" onClick={() => setConnecting(entry)}>
+                  <button
+                    type="button"
+                    className="trade-btn trade-btn-ghost ex-tile-btn"
+                    data-open={connecting?.id === entry.id}
+                    onClick={() => setConnecting(entry)}
+                  >
                     <Plug className="w-3.5 h-3.5" />
-                    Connect
+                    {connecting?.id === entry.id ? "Form neeche khula hai" : "Connect"}
                   </button>
                 ) : (
                   <Link href="/login?next=%2Ftrade%3Ftab%3Dexchanges" className="trade-btn trade-btn-ghost ex-tile-btn">
@@ -347,15 +371,6 @@ export default function ExchangesDesk() {
         </div>
       </section>
 
-      {connecting && token && (
-        <ConnectModal
-          entry={connecting}
-          token={token}
-          onClose={() => setConnecting(null)}
-          onConnected={() => void loadAccounts()}
-          onApiError={onApiError}
-        />
-      )}
     </div>
   );
 }
@@ -525,43 +540,59 @@ function ConnectedCard({
   );
 }
 
-/* ── Connect modal ─────────────────────────────────────── */
+/* ── Connect panel (inline, page ke andar hi) ──────────── */
 
-function ConnectModal({
+/**
+ * Pehle ye ek overlay modal tha. Asli desks par ye form page ke andar hi khulta
+ * hai — exchange chuniye, key paste kijiye, aur saath mein hi dikhta hai ki
+ * kaunsi permission chahiye aur exchange par kaun sa IP allow karna hai.
+ */
+function ConnectPanel({
   entry,
   token,
+  onPickExchange,
   onClose,
   onConnected,
   onApiError,
 }: {
   entry: CatalogEntry;
   token: string;
+  onPickExchange: (entry: CatalogEntry) => void;
   onClose: () => void;
   onConnected: () => void;
   onApiError: (err: unknown) => void;
 }) {
-  const [step, setStep] = useState<"guide" | "form" | "done">("guide");
-  const [label, setLabel] = useState("Main account");
+  const [label, setLabel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [secret, setSecret] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [withdrawOff, setWithdrawOff] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [issue, setIssue] = useState<{ message: string; clientIp: string | null } | null>(null);
-  const [keyHint, setKeyHint] = useState("");
-  const firstFieldRef = useRef<HTMLInputElement>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [egress, setEgress] = useState<EgressIps | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const labelRef = useRef<HTMLInputElement>(null);
+
+  const defaultLabel = `${entry.name} main`;
+
+  // Form page ke andar khulta hai, isliye khud hi view mein aa jaye.
+  useEffect(() => {
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    labelRef.current?.focus({ preventScroll: true });
+  }, [entry.id]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !submitting) onClose();
+    let alive = true;
+    fetchEgressIps(token)
+      .then((data) => alive && setEgress(data))
+      .catch(() => {
+        /* IP allowlist sirf madad ke liye hai — na mile to form phir bhi chalta hai */
+      });
+    return () => {
+      alive = false;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, submitting]);
-
-  useEffect(() => {
-    if (step === "form") firstFieldRef.current?.focus();
-  }, [step]);
+  }, [token]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -571,15 +602,14 @@ function ConnectModal({
     try {
       const result = await connectExchangeAccount(token, {
         exchange: entry.id as ExchangeId,
-        label: label.trim() || "Main account",
+        label: label.trim() || defaultLabel,
         apiKey: apiKey.trim(),
         secretKey: secret.trim(),
       });
-      setKeyHint(result.key_hint);
-      // Secret browser memory mein bhi zaroorat se zyada na rahe.
+      // Secret browser memory mein zaroorat se zyada der na rahe.
       setApiKey("");
       setSecret("");
-      setStep("done");
+      setDone(result.key_hint);
       onConnected();
     } catch (err) {
       onApiError(err);
@@ -592,185 +622,241 @@ function ConnectModal({
     }
   };
 
-  return (
-    <div className="ex-overlay" onMouseDown={(e) => e.target === e.currentTarget && !submitting && onClose()}>
-      <div className="ex-modal" role="dialog" aria-modal="true" aria-labelledby="ex-modal-title">
-        <div className="ex-modal-head">
-          <ExchangeMark entry={entry} size={38} />
-          <div className="min-w-0 flex-1">
-            <h3 id="ex-modal-title">Connect {entry.name}</h3>
-            <p>{step === "done" ? "Ho gaya" : step === "guide" ? "Step 1 of 2 · API key banayein" : "Step 2 of 2 · Key daalein"}</p>
-          </div>
-          <button type="button" className="trade-iconbtn trade-iconbtn-sm" onClick={onClose} disabled={submitting} aria-label="Band karein">
-            <X className="w-4 h-4" />
-          </button>
+  if (done !== null) {
+    return (
+      <section className="ex-connect ex-connect-done" ref={panelRef}>
+        <span className="ex-done-icon">
+          <CheckCircle2 className="w-7 h-7" />
+        </span>
+        <div className="min-w-0">
+          <h3>{entry.name} connected</h3>
+          <p>
+            Key <span className="tnum">{done}</span> Delta se verify hokar judi — wallet balance upar card par aa
+            gaya hai.
+          </p>
         </div>
+        <button type="button" className="trade-btn trade-btn-ghost" onClick={onClose}>
+          Done
+        </button>
+      </section>
+    );
+  }
 
-        {step !== "done" && (
-          <div className="ex-steps" aria-hidden>
-            <span data-on="true" />
-            <span data-on={step === "form"} />
+  return (
+    <section className="ex-connect" ref={panelRef} aria-labelledby="ex-connect-title">
+      <div className="ex-connect-head">
+        <ExchangeMark entry={entry} size={34} />
+        <div className="min-w-0 flex-1">
+          <span className="ex-connect-kicker">Connecting · {entry.name}</span>
+          <h3 id="ex-connect-title">API credentials paste karein</h3>
+        </div>
+        <button
+          type="button"
+          className="trade-iconbtn trade-iconbtn-sm"
+          onClick={onClose}
+          disabled={submitting}
+          aria-label="Form band karein"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="ex-connect-grid">
+        <form className="ex-connect-form" onSubmit={submit}>
+          <label className="ex-field">
+            <span className="trade-label">Exchange</span>
+            <select
+              className="trade-input ex-connect-select"
+              value={entry.id}
+              onChange={(e) => {
+                const next = CATALOG.find((c) => c.id === e.target.value);
+                if (next?.available) onPickExchange(next);
+              }}
+            >
+              {CATALOG.map((c) => (
+                <option key={c.id} value={c.id} disabled={!c.available}>
+                  {c.name}
+                  {c.available ? "" : " · jald aa raha hai"}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="ex-field">
+            <span className="trade-label">Label</span>
+            <input
+              ref={labelRef}
+              className="trade-input"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              maxLength={40}
+              placeholder={defaultLabel}
+            />
+          </label>
+
+          <label className="ex-field">
+            <span className="trade-label">API key</span>
+            <input
+              className="trade-input ex-mono"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Delta se copy ki hui API key"
+              autoComplete="off"
+              spellCheck={false}
+              required
+            />
+          </label>
+
+          <label className="ex-field">
+            <span className="trade-label">API secret</span>
+            <span className="ex-secret">
+              <input
+                className="trade-input ex-mono"
+                type={showSecret ? "text" : "password"}
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder="API secret"
+                autoComplete="off"
+                spellCheck={false}
+                required
+              />
+              <button
+                type="button"
+                className="ex-secret-eye"
+                onClick={() => setShowSecret((v) => !v)}
+                aria-label={showSecret ? "Secret chhupao" : "Secret dikhao"}
+              >
+                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </span>
+          </label>
+
+          <label className="ex-check">
+            <input type="checkbox" checked={withdrawOff} onChange={(e) => setWithdrawOff(e.target.checked)} />
+            <span>
+              Maine is key par <b>withdrawal / transfer permission OFF</b> rakhi hai.
+            </span>
+          </label>
+
+          {issue && <IssueBox message={issue.message} clientIp={issue.clientIp} />}
+
+          <div className="ex-connect-actions">
+            <button
+              type="submit"
+              className="trade-btn trade-btn-primary"
+              disabled={submitting || !withdrawOff || !apiKey.trim() || !secret.trim()}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Delta se verify ho raha hai…
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4" />
+                  Save &amp; connect
+                </>
+              )}
+            </button>
+            <p className="ex-secure-note">
+              <Lock className="w-3.5 h-3.5 flex-none mt-px" />
+              Save se pehle key Delta se verify hoti hai, phir encrypt hokar jaati hai. Secret dobara kabhi screen par
+              nahi dikhega.
+            </p>
           </div>
-        )}
+        </form>
 
-        {step === "guide" && (
-          <div className="ex-modal-body">
+        <aside className="ex-connect-side">
+          <div className="ex-side-block">
+            <h4 className="ex-side-title">Zaroori permissions</h4>
+            <ul className="ex-req">
+              <li data-on="true">
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  <b>Trading</b> — orders aur positions
+                </span>
+              </li>
+              <li data-on="true">
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  <b>Read data</b> — balance aur fills
+                </span>
+              </li>
+              <li data-on="false">
+                <X className="w-3.5 h-3.5" />
+                <span>
+                  <b>Withdrawal / transfer</b> — is desk se kabhi use nahi hoti
+                </span>
+              </li>
+            </ul>
+          </div>
+
+          <div className="ex-side-block">
+            <h4 className="ex-side-title">
+              <Globe2 className="w-3.5 h-3.5" />
+              IP allowlist
+            </h4>
+            {egress === null ? (
+              <div className="ex-ip-skeleton shimmer" />
+            ) : egress.ips.length === 0 ? (
+              <p className="ex-side-note">
+                Key par IP restriction <b>band</b> (Unrestricted) rakhein — tab kuch add karne ki zaroorat nahi.
+              </p>
+            ) : (
+              <>
+                <div className="ex-ip-chips">
+                  {egress.ips.map((ip) => (
+                    <CopyChip key={ip} value={ip} />
+                  ))}
+                </div>
+                <p className="ex-side-note">
+                  {egress.complete
+                    ? "Key par IP restriction lagayein to Delta par yahi IP add karein."
+                    : "IP restriction band rakhna sabse aasan hai — server kabhi doosre IP se bhi jaa sakta hai. Lagani ho to ye IP add karke connect karke dekh lein."}
+                </p>
+              </>
+            )}
+          </div>
+
+          <details className="ex-side-block ex-howto">
+            <summary>Delta par key kaise banayein?</summary>
             <ol className="ex-guide">
               <li>
                 <span className="ex-guide-num">1</span>
                 <div>
-                  <b>Delta Exchange India par login karein</b>
+                  <b>india.delta.exchange par login</b>
                   <p>
-                    <a href="https://india.delta.exchange" target="_blank" rel="noopener noreferrer" className="ex-link">
-                      india.delta.exchange
-                    </a>{" "}
-                    → Account → <b>API Keys</b> → Create new API key. Global delta.exchange ki key yahan kaam nahi karegi.
+                    Account → <b>API Keys</b> → Create new API key. Global delta.exchange ki key yahan nahi chalegi.
                   </p>
                 </div>
               </li>
               <li>
                 <span className="ex-guide-num">2</span>
                 <div>
-                  <b>Permissions chuniye</b>
-                  <div className="ex-perms">
-                    <span className="ex-perm ex-perm-on"><Check className="w-3 h-3" /> Read Data</span>
-                    <span className="ex-perm ex-perm-on"><Check className="w-3 h-3" /> Trading</span>
-                    <span className="ex-perm ex-perm-off"><X className="w-3 h-3" /> Withdrawal / Transfer</span>
-                  </div>
+                  <b>Read Data + Trading on, Withdrawal off</b>
+                  <p>Trading on na ho to orders place nahi honge.</p>
                 </div>
               </li>
               <li>
                 <span className="ex-guide-num">3</span>
                 <div>
-                  <b>IP whitelist (agar lagayein)</b>
-                  <p>
-                    Key par IP restriction lagayi to humare server ka IP add karna hoga. Connect fail hua to hum wahi
-                    exact IP dikhayenge, copy karke add kar dijiye.
-                  </p>
-                </div>
-              </li>
-              <li>
-                <span className="ex-guide-num">4</span>
-                <div>
                   <b>Key aur Secret copy karein</b>
-                  <p>Secret sirf ek baar dikhta hai — abhi copy kar lijiye.</p>
+                  <p>Secret sirf ek baar dikhta hai — wahin copy kar lijiye.</p>
                 </div>
               </li>
             </ol>
-            <div className="ex-modal-actions">
-              <button type="button" className="trade-btn trade-btn-ghost" onClick={onClose}>
-                Baad mein
-              </button>
-              <button type="button" className="trade-btn trade-btn-primary" onClick={() => setStep("form")}>
-                Key ready hai
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {step === "form" && (
-          <form className="ex-modal-body" onSubmit={submit}>
-            <label className="ex-field">
-              <span className="trade-label">Label</span>
-              <input
-                ref={firstFieldRef}
-                className="trade-input"
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                maxLength={40}
-                placeholder="Main account"
-              />
-            </label>
-            <label className="ex-field">
-              <span className="trade-label">API key</span>
-              <input
-                className="trade-input ex-mono"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Delta se copy ki hui API key"
-                autoComplete="off"
-                spellCheck={false}
-                required
-              />
-            </label>
-            <label className="ex-field">
-              <span className="trade-label">API secret</span>
-              <span className="ex-secret">
-                <input
-                  className="trade-input ex-mono"
-                  type={showSecret ? "text" : "password"}
-                  value={secret}
-                  onChange={(e) => setSecret(e.target.value)}
-                  placeholder="API secret"
-                  autoComplete="off"
-                  spellCheck={false}
-                  required
-                />
-                <button
-                  type="button"
-                  className="ex-secret-eye"
-                  onClick={() => setShowSecret((v) => !v)}
-                  aria-label={showSecret ? "Secret chhupao" : "Secret dikhao"}
-                >
-                  {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </span>
-            </label>
-
-            <label className="ex-check">
-              <input type="checkbox" checked={withdrawOff} onChange={(e) => setWithdrawOff(e.target.checked)} />
-              <span>Maine is key par <b>withdrawal / transfer permission OFF</b> rakhi hai.</span>
-            </label>
-
-            <p className="ex-secure-note">
-              <Lock className="w-3.5 h-3.5 flex-none mt-px" />
-              Key connect hone se pehle Delta se verify hoti hai, phir encrypt hokar save hoti hai. Secret dobara kabhi
-              screen par nahi dikhaya jaata.
-            </p>
-
-            {issue && <IssueBox message={issue.message} clientIp={issue.clientIp} />}
-
-            <div className="ex-modal-actions">
-              <button type="button" className="trade-btn trade-btn-ghost" onClick={() => setStep("guide")} disabled={submitting}>
-                Peeche
-              </button>
-              <button
-                type="submit"
-                className="trade-btn trade-btn-primary"
-                disabled={submitting || !withdrawOff || !apiKey.trim() || !secret.trim()}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Delta se verify ho raha hai…
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-4 h-4" />
-                    Verify & connect
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {step === "done" && (
-          <div className="ex-modal-body ex-done">
-            <span className="ex-done-icon">
-              <CheckCircle2 className="w-8 h-8" />
-            </span>
-            <h4>{entry.name} connected</h4>
-            <p>
-              Key <span className="tnum">{keyHint}</span> verify hokar judi. Wallet balance card par dikh raha hai.
-            </p>
-            <button type="button" className="trade-btn trade-btn-primary" onClick={onClose}>
-              Done
-            </button>
-          </div>
-        )}
+            <a
+              href="https://india.delta.exchange/app/account/manageapikeys"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ex-link"
+            >
+              Delta API Keys page kholein
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </details>
+        </aside>
       </div>
-    </div>
+    </section>
   );
 }

@@ -52,3 +52,8 @@ services:
       # mit jaati hai — saare user accounts aur judi keys samet.
       - key: DATABASE_URL
         sync: false
+      # Is service ke outbound IP (comma se alag) — Settings → Outbound IP
+      # addresses se copy karein. Exchanges page par user ko yahi IP dikhte hain
+      # jo unhe exchange par API key ki allowlist mein daalne hote hain.
+      - key: BYOK_EGRESS_IPS
+        sync: false

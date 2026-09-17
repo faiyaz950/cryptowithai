@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { LogIn, LogOut, Plug } from "lucide-react";
+import { LogIn, LogOut, Plug, UserRound } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 /**
@@ -62,6 +62,10 @@ export default function AccountMenu({ onOpenExchanges }: { onOpenExchanges: () =
               <span className="acct-id-email">{user.email || `@${user.username}`}</span>
             </span>
           </div>
+          <Link href="/profile" role="menuitem" className="acct-item" onClick={() => setOpen(false)}>
+            <UserRound className="w-4 h-4" />
+            Profile
+          </Link>
           <button
             type="button"
             role="menuitem"
