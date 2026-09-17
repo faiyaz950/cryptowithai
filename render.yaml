@@ -35,6 +35,8 @@ services:
         sync: false
 
       # ── Crypto trading (Delta Exchange) ─────────────────
+      # Legacy: trading ab user ki apni key se hoti hai. Ise khaali rakhna
+      # theek hai — server par trading key na rakhna zyada safe hai.
       - key: DELTA_API_KEY
         sync: false
       - key: DELTA_SECRET_KEY

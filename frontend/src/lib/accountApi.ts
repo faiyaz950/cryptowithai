@@ -238,6 +238,27 @@ export interface ExchangeOverview {
   fetched_at: string;
 }
 
+export interface MyPositions {
+  /** false = user ne koi exchange joda hi nahi. Ye "koi position nahi" se alag baat hai. */
+  connected: boolean;
+  account_id?: number;
+  exchange?: ExchangeId;
+  label?: string;
+  positions: ExchangePosition[];
+  error: string;
+}
+
+/**
+ * Desk ke liye: logged-in user ke apne account ki positions.
+ *
+ * Pehle desk `/delta/positions` maangta tha, jo server ki apni key se chalta
+ * tha — yaani har visitor ko app owner ki positions dikhti thin aur user ko
+ * apni nahi. Ab ye user ke token se uske apne account se aati hain.
+ */
+export function fetchMyPositions(token: string) {
+  return request<{ data: MyPositions }>("/byok/positions", { token }).then((r) => r.data);
+}
+
 /** Profile page ka ek hi call — wallet, positions, orders aur exchange profile. */
 export function fetchExchangeOverview(token: string, accountId: number) {
   return request<{ data: ExchangeOverview }>(`/byok/exchange-accounts/${accountId}/overview`, { token }).then(

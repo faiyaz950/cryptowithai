@@ -5217,3 +5217,16 @@ textarea:focus-visible {
   .pf-logout { width: 100%; }
   .pf-ex-actions { width: 100%; }
 }
+
+/* ── Desk positions panel notices ── */
+.trade-pos-notice {
+  display: flex;
+  gap: 10px;
+  padding: 12px 13px;
+  border-radius: 11px;
+  background: var(--tr-field);
+  border: 1px solid var(--tr-line-soft);
+}
+.trade-pos-notice-icon { flex: none; margin-top: 1px; color: var(--accent); }
+.trade-pos-notice b { display: block; font-size: 12.5px; color: var(--tr-ink-2); }
+.trade-pos-notice p { margin-top: 3px; font-size: 11.5px; line-height: 1.55; color: var(--text-muted); }

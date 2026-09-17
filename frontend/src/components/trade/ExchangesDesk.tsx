@@ -826,7 +826,7 @@ function ConnectPanel({
                 <div>
                   <b>india.delta.exchange par login</b>
                   <p>
-                    Account → <b>API Keys</b> → Create new API key. Global delta.exchange ki key yahan nahi chalegi.
+                    Account → <b>API Management</b> → New API Key. Global delta.exchange ki key yahan nahi chalegi.
                   </p>
                 </div>
               </li>
@@ -834,14 +834,17 @@ function ConnectPanel({
                 <span className="ex-guide-num">2</span>
                 <div>
                   <b>Read Data + Trading on, Withdrawal off</b>
-                  <p>Trading on na ho to orders place nahi honge.</p>
+                  <p>Balance aur positions ke liye Trading permission zaroori hai.</p>
                 </div>
               </li>
               <li>
                 <span className="ex-guide-num">3</span>
                 <div>
-                  <b>Key aur Secret copy karein</b>
-                  <p>Secret sirf ek baar dikhta hai — wahin copy kar lijiye.</p>
+                  <b>Key aur Secret wahin copy karein</b>
+                  <p>
+                    Secret <b>sirf ek baar</b> — key banate waqt — dikhta hai. Baad mein Delta bhi use dobara nahi
+                    dikha sakta; kho gaya to nayi key banani padegi.
+                  </p>
                 </div>
               </li>
             </ol>

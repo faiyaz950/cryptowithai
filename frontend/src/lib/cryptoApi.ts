@@ -156,25 +156,6 @@ export interface DemoOrder {
   limit_price?: number;
 }
 
-export interface DeltaPosition {
-  symbol?: string;
-  size?: number;
-  entry_price?: number;
-  mark_price?: number;
-  unrealized_pnl?: number;
-}
-
-/**
- * Positions ke saath ye bhi batata hai ki list khali kyun hai.
- * `configured: false` => Delta API keys set/usable nahi hain (ye "no open positions" nahi hai).
- */
-export interface DeltaPositionsResult {
-  positions: DeltaPosition[];
-  configured: boolean;
-  reason: string | null;
-  message: string | null;
-}
-
 export interface BacktestTrade {
   entry_time: number;
   exit_time: number;
@@ -309,61 +290,35 @@ export async function checkCryptoHealth(timeoutMs = HEALTH_TIMEOUT_MS): Promise<
   }
 }
 
-export async function placeDemoOrder(payload: {
-  symbol: string;
-  side: "buy" | "sell";
-  order_type: "market" | "limit";
-  quantity: number;
-  price?: number | null;
-}): Promise<{ success: boolean; order_id?: string; error?: string }> {
+/**
+ * Paper (demo) order — exchange par nahi jaata, sirf user ke naam se record
+ * hota hai. Token zaroori hai: pehle ye khula tha aur sabke orders ek hi
+ * common list mein chale jaate the.
+ */
+export async function placeDemoOrder(
+  token: string,
+  payload: {
+    symbol: string;
+    side: "buy" | "sell";
+    order_type: "market" | "limit";
+    quantity: number;
+    price?: number | null;
+  },
+): Promise<{ success: boolean; order_id?: string; error?: string }> {
   return cryptoFetch("/place-order", {
     method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
   });
 }
 
-export async function fetchDemoOrders(): Promise<DemoOrder[]> {
-  const data = await cryptoFetch<{ success: boolean; data: DemoOrder[] }>("/orders");
+export async function fetchDemoOrders(token: string): Promise<DemoOrder[]> {
+  const data = await cryptoFetch<{ success: boolean; data: DemoOrder[] }>("/orders", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
   return data.data ?? [];
 }
 
-/** Backend flat array bhejta hai; purana `{ result: [...] }` envelope bhi handle karo. */
-function extractPositions(raw: unknown): DeltaPosition[] {
-  if (Array.isArray(raw)) return raw as DeltaPosition[];
-  if (raw && typeof raw === "object" && Array.isArray((raw as { result?: unknown }).result)) {
-    return (raw as { result: DeltaPosition[] }).result;
-  }
-  return [];
-}
-
-export async function fetchDeltaPositions(symbol?: string): Promise<DeltaPositionsResult> {
-  try {
-    const q = symbol ? `?${new URLSearchParams({ symbol })}` : "";
-    const data = await cryptoFetch<{
-      success: boolean;
-      configured?: boolean;
-      reason?: string | null;
-      message?: string | null;
-      data?: unknown;
-    }>(`/delta/positions${q}`);
-
-    return {
-      positions: extractPositions(data.data),
-      // Purana backend `configured` nahi bhejta — us case mein assume karo keys theek hain.
-      configured: data.configured !== false,
-      reason: data.reason ?? null,
-      message: data.message ?? null,
-    };
-  } catch (err) {
-    // Backend down ya unexpected error — chup-chaap khali list dikhane ke bajaye reason surface karo.
-    return {
-      positions: [],
-      configured: false,
-      reason: "unreachable",
-      message: err instanceof Error ? err.message : "Delta positions load nahi hui",
-    };
-  }
-}
 
 export async function runBacktest(params: BacktestParams): Promise<BacktestResult> {
   const q = new URLSearchParams({

@@ -30,7 +30,9 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import TradePanel from "@/components/trade/TradePanel";
+import TradePanel, { type PositionsState } from "@/components/trade/TradePanel";
+import { useAuth } from "@/context/AuthContext";
+import { AccountApiError, fetchMyPositions } from "@/lib/accountApi";
 import AccountMenu from "@/components/trade/AccountMenu";
 import ExchangesDesk from "@/components/trade/ExchangesDesk";
 import ChartDeskTools, { type DrawTool } from "@/components/trade/ChartDeskTools";
@@ -48,7 +50,6 @@ import {
   checkCryptoHealth,
   fetchCandles,
   isLocalBackend,
-  fetchDeltaPositions,
   fetchDemoOrders,
   fetchMarketInfo,
   placeDemoOrder,
@@ -60,7 +61,6 @@ import {
   type BacktestResult,
   type Candle,
   type DemoOrder,
-  type DeltaPositionsResult,
   type MarketInfo,
   syncStamp,
   deskClock,
@@ -230,6 +230,9 @@ function TradeTerminal() {
   const [clearDrawingsKey, setClearDrawingsKey] = useState(0);
   const chartPanelRef = useRef<HTMLElement | null>(null);
 
+  // Positions aur paper orders user ke apne account se aate hain.
+  const { token, handleExpiredSession } = useAuth();
+
   const [online, setOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -247,12 +250,9 @@ function TradeTerminal() {
   const [market, setMarket] = useState<MarketInfo | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [orders, setOrders] = useState<DemoOrder[]>([]);
-  const [positions, setPositions] = useState<DeltaPositionsResult>({
-    positions: [],
-    configured: true,
-    reason: null,
-    message: null,
-  });
+  // Positions user ke apne exchange account se aati hain, isliye teen alag
+  // haal hain: login nahi, exchange nahi juda, ya juda hua (data/error).
+  const [positions, setPositions] = useState<PositionsState>({ kind: "signed-out", positions: [] });
   const [placing, setPlacing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -335,13 +335,31 @@ function TradeTerminal() {
   }, [symbol, interval, historyDays]);
 
   const loadBook = useCallback(async () => {
+    if (!token) {
+      setOrders([]);
+      setPositions({ kind: "signed-out", positions: [] });
+      return;
+    }
     const [nextOrders, nextPositions] = await Promise.all([
-      fetchDemoOrders().catch(() => [] as DemoOrder[]),
-      fetchDeltaPositions(symbol),
+      fetchDemoOrders(token).catch(() => [] as DemoOrder[]),
+      fetchMyPositions(token)
+        .then<PositionsState>((r) =>
+          r.connected
+            ? { kind: r.error ? "error" : "ready", positions: r.positions, message: r.error }
+            : { kind: "not-connected", positions: [] },
+        )
+        .catch((err): PositionsState => {
+          if (err instanceof AccountApiError && err.status === 401) handleExpiredSession();
+          return {
+            kind: "error",
+            positions: [],
+            message: err instanceof Error ? err.message : "Positions load nahi hui",
+          };
+        }),
     ]);
     setOrders(nextOrders);
     setPositions(nextPositions);
-  }, [symbol]);
+  }, [token, handleExpiredSession]);
 
   useEffect(() => {
     checkCryptoHealth().then(setOnline);
@@ -412,11 +430,15 @@ function TradeTerminal() {
     quantity: number;
     price?: number | null;
   }) => {
+    if (!token) {
+      setNotice("Paper order ke liye sign in karein");
+      return;
+    }
     setPlacing(true);
     try {
-      const res = await placeDemoOrder(payload);
+      const res = await placeDemoOrder(token, payload);
       if (!res.success) throw new Error(res.error || "Order fail");
-      setNotice(`${payload.side.toUpperCase()} order place ho gayi`);
+      setNotice(`${payload.side.toUpperCase()} paper order record ho gaya`);
       await loadBook();
     } finally {
       setPlacing(false);
@@ -983,7 +1005,8 @@ function TradeTerminal() {
                       lastPrice={lastPrice}
                       orders={orders}
                       positions={positions.positions}
-                      positionsUnavailable={positions.configured ? null : positions.message}
+                      positionsState={positions}
+                      signedIn={Boolean(token)}
                       placing={placing}
                       onPlace={handlePlace}
                     />

@@ -1,17 +1,31 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Inbox, Wallet, Zap } from "lucide-react";
-import type { DemoOrder, DeltaPosition } from "@/lib/cryptoApi";
+import Link from "next/link";
+import { AlertCircle, ArrowRight, Inbox, LogIn, Plug, Wallet, Zap } from "lucide-react";
+import type { DemoOrder } from "@/lib/cryptoApi";
 import { CRYPTO_SYMBOLS, symbolLabel } from "@/lib/cryptoApi";
+import type { ExchangePosition } from "@/lib/accountApi";
+
+/**
+ * Khaali positions ka matlab teen alag baatein ho sakti hain, aur user ko
+ * teenon ka jawab alag chahiye: login nahi hai, exchange nahi juda, ya key
+ * par koi dikkat hai. Isliye state hi ye farak rakhti hai.
+ */
+export type PositionsState = {
+  kind: "signed-out" | "not-connected" | "ready" | "error";
+  positions: ExchangePosition[];
+  message?: string;
+};
 
 interface Props {
   symbol: string;
   lastPrice?: number;
   orders: DemoOrder[];
-  positions: DeltaPosition[];
-  /** Delta keys set/usable na hon to reason — tab empty list ko "no positions" mat dikhao. */
-  positionsUnavailable?: string | null;
+  positions: ExchangePosition[];
+  positionsState: PositionsState;
+  /** Paper order ke liye login zaroori hai — ticket isi se batata hai. */
+  signedIn: boolean;
   placing: boolean;
   onPlace: (payload: {
     symbol: string;
@@ -37,7 +51,8 @@ export default function TradePanel({
   lastPrice,
   orders,
   positions,
-  positionsUnavailable,
+  positionsState,
+  signedIn,
   placing,
   onPlace,
 }: Props) {
@@ -224,18 +239,28 @@ export default function TradePanel({
               </p>
             )}
 
-            <button
-              type="button"
-              disabled={placing}
-              onClick={submit}
-              className={`trade-btn trade-btn-lg w-full ${side === "buy" ? "trade-btn-buy" : "trade-btn-sell"}`}
-            >
-              <Zap className="w-4 h-4" />
-              {placing ? "Placing…" : `${side === "buy" ? "Buy" : "Sell"} ${baseAsset(tradeSymbol)}`}
-            </button>
+            {signedIn ? (
+              <button
+                type="button"
+                disabled={placing}
+                onClick={submit}
+                className={`trade-btn trade-btn-lg w-full ${side === "buy" ? "trade-btn-buy" : "trade-btn-sell"}`}
+              >
+                <Zap className="w-4 h-4" />
+                {placing ? "Placing…" : `${side === "buy" ? "Buy" : "Sell"} ${baseAsset(tradeSymbol)}`}
+              </button>
+            ) : (
+              /* Paper order bhi user ke naam se save hota hai, isliye login ke bina
+                 button dabwa kar error dikhane ka koi matlab nahi. */
+              <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-lg trade-btn-primary w-full">
+                <LogIn className="w-4 h-4" />
+                Paper trade ke liye sign in karein
+              </Link>
+            )}
 
             <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              Demo orders yahan save hote hain. Live positions Delta API se aati hain.
+              Ye <b>paper order</b> hai — exchange par nahi jaata, sirf aapke account mein record hota hai.
+              Neeche positions aapke jude hue exchange se aati hain.
             </p>
           </div>
         ) : (
@@ -275,21 +300,8 @@ export default function TradePanel({
           <span className="trade-badge trade-badge-neutral tnum">{positions.length}</span>
         </div>
         <div className="p-3">
-          {positions.length === 0 && positionsUnavailable ? (
-            <div
-              className="flex items-start gap-2 px-3 py-2.5 rounded-[10px] text-[12px] leading-relaxed"
-              style={{
-                background: "var(--tr-field)",
-                border: "1px solid var(--tr-line-soft)",
-                color: "var(--text-secondary)",
-              }}
-            >
-              <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-none" style={{ color: "var(--red)" }} />
-              <span>
-                <b className="block mb-0.5">Live positions available nahi hain</b>
-                {positionsUnavailable}
-              </span>
-            </div>
+          {positions.length === 0 && positionsState.kind !== "ready" ? (
+            <PositionsNotice state={positionsState} />
           ) : positions.length === 0 ? (
             <div className="trade-empty">
               <span className="trade-empty-icon"><Wallet className="w-4 h-4" /></span>
@@ -298,20 +310,38 @@ export default function TradePanel({
           ) : (
             <div className="space-y-2">
               {positions.map((p, i) => {
-                const pnl = Number(p.unrealized_pnl || 0);
-                const up = pnl >= 0;
+                // Exchange unrealized PnL de to wahi; warna entry se mark tak
+                // ka move, jo exact hai. Apna PnL hum nahi ginte.
+                const hasPnl = p.unrealized_pnl !== null;
+                const value = hasPnl ? (p.unrealized_pnl as number) : p.move_pct;
+                const up = (value ?? 0) >= 0;
                 return (
-                  <div key={`${p.symbol}-${i}`} className="trade-row trade-row-stack gap-1.5">
+                  <div key={`${p.symbol}-${p.side}-${i}`} className="trade-row trade-row-stack gap-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[13px] font-bold">{p.symbol || "—"}</span>
-                      <span className={`trade-badge ${up ? "trade-badge-green" : "trade-badge-red"} tnum`}>
-                        {up ? "+" : ""}{pnl.toFixed(2)}
+                      <span className="flex items-center gap-2 text-[13px] font-bold">
+                        {p.symbol || "—"}
+                        <span
+                          className={`trade-badge ${p.side === "long" ? "trade-badge-green" : "trade-badge-red"}`}
+                        >
+                          {p.side === "long" ? "Long" : "Short"}
+                        </span>
                       </span>
+                      {value === null ? (
+                        <span className="trade-badge trade-badge-neutral">—</span>
+                      ) : (
+                        <span className={`trade-badge ${up ? "trade-badge-green" : "trade-badge-red"} tnum`}>
+                          {up ? "+" : ""}
+                          {hasPnl ? value.toFixed(2) : `${value.toFixed(2)}%`}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
-                      <span>Size <b style={{ color: "var(--text-secondary)" }}>{p.size ?? 0}</b></span>
-                      <span>Entry <b style={{ color: "var(--text-secondary)" }}>{p.entry_price ?? "—"}</b></span>
+                      <span>Size <b style={{ color: "var(--text-secondary)" }}>{p.size}</b></span>
+                      <span>Entry <b style={{ color: "var(--text-secondary)" }}>{p.entry_price || "—"}</b></span>
                       <span>Mark <b style={{ color: "var(--text-secondary)" }}>{p.mark_price ?? "—"}</b></span>
+                      {p.liquidation_price ? (
+                        <span>Liq <b style={{ color: "var(--amber)" }}>{p.liquidation_price}</b></span>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -360,6 +390,56 @@ export default function TradePanel({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Positions nahi hain" ke teen alag matlab, teen alag jawab — aur har ek ke
+ * saath wahi agla kadam jo user ko uthana hai.
+ */
+function PositionsNotice({ state }: { state: PositionsState }) {
+  if (state.kind === "signed-out") {
+    return (
+      <div className="trade-pos-notice">
+        <span className="trade-pos-notice-icon"><LogIn className="w-4 h-4" /></span>
+        <div className="min-w-0">
+          <b>Apni positions dekhne ke liye sign in karein</b>
+          <p>Charts aur analysis bina login bhi chalte hain.</p>
+          <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-primary trade-size-sm mt-2">
+            Sign in
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.kind === "not-connected") {
+    return (
+      <div className="trade-pos-notice">
+        <span className="trade-pos-notice-icon"><Plug className="w-4 h-4" /></span>
+        <div className="min-w-0">
+          <b>Koi exchange nahi juda</b>
+          <p>Delta Exchange India ki API key jodiye — phir aapki asli positions yahan dikhengi.</p>
+          <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary trade-size-sm mt-2">
+            Exchange jodein
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="trade-pos-notice" role="alert">
+      <span className="trade-pos-notice-icon" style={{ color: "var(--amber)" }}>
+        <AlertCircle className="w-4 h-4" />
+      </span>
+      <div className="min-w-0">
+        <b>Positions nahi aa payi</b>
+        <p>{state.message || "Exchange se jawab nahi mila."}</p>
       </div>
     </div>
   );
