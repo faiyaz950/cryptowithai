@@ -30,43 +30,86 @@ import {
   connectExchangeAccount,
   deleteExchangeAccount,
   fetchEgressIps,
+  fetchExchangeCatalogue,
   fetchExchangeBalances,
   listExchangeAccounts,
   verifyExchangeAccount,
   type EgressIps,
   type ExchangeAccount,
   type ExchangeBalance,
+  type ExchangeCatalogueEntry,
   type ExchangeId,
 } from "@/lib/accountApi";
 
 /* ── Catalogue ─────────────────────────────────────────── */
 
+/**
+ * Kaun se exchange jud sakte hain, ye backend batata hai (`/byok/exchanges`).
+ * Yahan sirf dikhne wali cheezein hain — har exchange ka nishaan aur rang —
+ * kyunki backend ko UI ke rangon se koi matlab nahi hona chahiye.
+ */
+const VISUALS: Record<string, { mark: string; tint: string }> = {
+  delta: { mark: "Δ", tint: "#ff8a3d" },
+  coindcx: { mark: "C", tint: "#3b82f6" },
+  bybit: { mark: "B", tint: "#f7a600" },
+  pi42: { mark: "π", tint: "#a78bfa" },
+  mudrex: { mark: "M", tint: "#8b5cf6" },
+  binance: { mark: "B", tint: "#f0b90b" },
+  okx: { mark: "O", tint: "#e5e7eb" },
+  deribit: { mark: "D", tint: "#34d399" },
+};
+
 interface CatalogEntry {
   id: string;
   name: string;
   tagline: string;
-  region: "India" | "Global";
+  region: string;
   /** Sirf wahi exchange "available" jiska backend adapter sach mein bana hai. */
   available: boolean;
+  keyUrl: string;
   mark: string;
   tint: string;
 }
 
-const CATALOG: CatalogEntry[] = [
-  { id: "delta", name: "Delta Exchange India", tagline: "BTC/ETH options · USD perpetuals", region: "India", available: true, mark: "Δ", tint: "#ff8a3d" },
-  { id: "coindcx", name: "CoinDCX", tagline: "USDT + INR perpetuals", region: "India", available: false, mark: "C", tint: "#3b82f6" },
-  { id: "pi42", name: "Pi42", tagline: "INR-margined perpetuals", region: "India", available: false, mark: "π", tint: "#a78bfa" },
-  { id: "coinswitch", name: "CoinSwitch", tagline: "INR ramps · spot", region: "India", available: false, mark: "S", tint: "#22d3ee" },
-  { id: "binance", name: "Binance", tagline: "Deepest liquidity · USDT perps", region: "Global", available: false, mark: "B", tint: "#f0b90b" },
-  { id: "bybit", name: "Bybit", tagline: "USDT-margined contracts", region: "Global", available: false, mark: "B", tint: "#f7a600" },
-  { id: "okx", name: "OKX", tagline: "Perps + options", region: "Global", available: false, mark: "O", tint: "#e5e7eb" },
-  { id: "deribit", name: "Deribit", tagline: "BTC/ETH options", region: "Global", available: false, mark: "D", tint: "#34d399" },
+function toEntry(row: ExchangeCatalogueEntry): CatalogEntry {
+  const visual = VISUALS[row.id] ?? { mark: row.name[0]?.toUpperCase() ?? "?", tint: "#94a3b8" };
+  return {
+    id: row.id,
+    name: row.name,
+    tagline: row.tagline,
+    region: row.region,
+    available: row.available,
+    keyUrl: row.key_url,
+    ...visual,
+  };
+}
+
+/** Jab tak list aa nahi jaati, aur agar kabhi na aaye — kuch to dikhna chahiye. */
+const FALLBACK: CatalogEntry[] = [
+  {
+    id: "delta",
+    name: "Delta Exchange India",
+    tagline: "BTC/ETH options · USD perpetuals",
+    region: "India",
+    available: true,
+    keyUrl: "https://india.delta.exchange/app/account/manageapikeys",
+    ...VISUALS.delta,
+  },
 ];
 
-const catalogFor = (exchange: string) =>
-  CATALOG.find((c) => c.id === exchange) ?? { ...CATALOG[0], id: exchange, name: exchange, mark: exchange[0]?.toUpperCase() ?? "?" };
-
 /* ── Helpers ───────────────────────────────────────────── */
+
+const catalogFor = (catalog: CatalogEntry[], exchange: string): CatalogEntry =>
+  catalog.find((c) => c.id === exchange) ?? {
+    id: exchange,
+    name: exchange,
+    tagline: "",
+    region: "",
+    available: true,
+    keyUrl: "",
+    mark: exchange[0]?.toUpperCase() ?? "?",
+    tint: "#94a3b8",
+  };
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "Kabhi nahi";
@@ -157,6 +200,7 @@ export default function ExchangesDesk() {
   const [accounts, setAccounts] = useState<ExchangeAccount[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<CatalogEntry | null>(null);
+  const [catalog, setCatalog] = useState<CatalogEntry[]>(FALLBACK);
   const [balances, setBalances] = useState<Record<number, BalanceState>>({});
 
   const onApiError = useCallback(
@@ -206,8 +250,21 @@ export default function ExchangesDesk() {
     void loadAccounts();
   }, [loadAccounts]);
 
+  useEffect(() => {
+    let alive = true;
+    fetchExchangeCatalogue()
+      .then((rows) => alive && rows.length && setCatalog(rows.map(toEntry)))
+      .catch(() => {
+        /* list na aaye to FALLBACK hi sahi — page bekaar nahi hona chahiye */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const connectedCount = accounts?.length ?? 0;
-  const deltaEntry = CATALOG[0];
+  const liveEntries = catalog.filter((c) => c.available);
+  const defaultEntry = liveEntries[0] ?? catalog[0];
 
   return (
     <div className="ex-page">
@@ -226,7 +283,7 @@ export default function ExchangesDesk() {
             <button
               type="button"
               className="trade-btn trade-btn-primary"
-              onClick={() => setConnecting((cur) => (cur ? null : deltaEntry))}
+              onClick={() => setConnecting((cur) => (cur ? null : defaultEntry))}
             >
               {connecting ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
               {connecting ? "Form band karein" : "Connect exchange"}
@@ -291,9 +348,10 @@ export default function ExchangesDesk() {
               </span>
               <h3>Abhi koi exchange nahi juda</h3>
               <p>
-                Delta Exchange India ki Read + Trading API key jodein. Withdrawal permission kabhi nahi maangi jaati.
+                Delta, CoinDCX ya Bybit ki Read + Trading API key jodein. Withdrawal permission kabhi nahi maangi
+                jaati.
               </p>
-              <button type="button" className="trade-btn trade-btn-primary" onClick={() => setConnecting(deltaEntry)}>
+              <button type="button" className="trade-btn trade-btn-primary" onClick={() => setConnecting(defaultEntry)}>
                 <Plus className="w-4 h-4" />
                 Pehla exchange jodein
               </button>
@@ -304,6 +362,7 @@ export default function ExchangesDesk() {
                 <ConnectedCard
                   key={account.id}
                   account={account}
+                  catalog={catalog}
                   token={token!}
                   balance={balances[account.id]}
                   onReloadBalance={() => loadBalances(account.id)}
@@ -319,6 +378,7 @@ export default function ExchangesDesk() {
       {connecting && token && (
         <ConnectPanel
           entry={connecting}
+          catalog={catalog}
           token={token}
           onPickExchange={setConnecting}
           onClose={() => setConnecting(null)}
@@ -330,10 +390,12 @@ export default function ExchangesDesk() {
       <section>
         <div className="ex-section-head">
           <h3>All exchanges</h3>
-          <span>{CATALOG.filter((c) => c.available).length} live · {CATALOG.filter((c) => !c.available).length} jald aa rahe hain</span>
+          <span>
+            {liveEntries.length} live · {catalog.length - liveEntries.length} jald aa rahe hain
+          </span>
         </div>
         <div className="ex-grid">
-          {CATALOG.map((entry) => (
+          {catalog.map((entry) => (
             <article key={entry.id} className="ex-tile" data-available={entry.available}>
               <div className="ex-tile-top">
                 <ExchangeMark entry={entry} size={36} />
@@ -379,6 +441,7 @@ export default function ExchangesDesk() {
 
 function ConnectedCard({
   account,
+  catalog,
   token,
   balance,
   onReloadBalance,
@@ -386,13 +449,14 @@ function ConnectedCard({
   onApiError,
 }: {
   account: ExchangeAccount;
+  catalog: CatalogEntry[];
   token: string;
   balance?: BalanceState;
   onReloadBalance: () => void;
   onChanged: () => Promise<void>;
   onApiError: (err: unknown) => void;
 }) {
-  const entry = catalogFor(account.exchange);
+  const entry = catalogFor(catalog, account.exchange);
   const [busy, setBusy] = useState<"verify" | "delete" | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [issue, setIssue] = useState<{ message: string; clientIp: string | null } | null>(null);
@@ -549,6 +613,7 @@ function ConnectedCard({
  */
 function ConnectPanel({
   entry,
+  catalog,
   token,
   onPickExchange,
   onClose,
@@ -556,6 +621,7 @@ function ConnectPanel({
   onApiError,
 }: {
   entry: CatalogEntry;
+  catalog: CatalogEntry[];
   token: string;
   onPickExchange: (entry: CatalogEntry) => void;
   onClose: () => void;
@@ -631,8 +697,8 @@ function ConnectPanel({
         <div className="min-w-0">
           <h3>{entry.name} connected</h3>
           <p>
-            Key <span className="tnum">{done}</span> Delta se verify hokar judi — wallet balance upar card par aa
-            gaya hai.
+            Key <span className="tnum">{done}</span> {entry.name} se verify hokar judi — wallet balance upar card
+            par aa gaya hai.
           </p>
         </div>
         <button type="button" className="trade-btn trade-btn-ghost" onClick={onClose}>
@@ -669,11 +735,11 @@ function ConnectPanel({
               className="trade-input ex-connect-select"
               value={entry.id}
               onChange={(e) => {
-                const next = CATALOG.find((c) => c.id === e.target.value);
+                const next = catalog.find((c) => c.id === e.target.value);
                 if (next?.available) onPickExchange(next);
               }}
             >
-              {CATALOG.map((c) => (
+              {catalog.map((c) => (
                 <option key={c.id} value={c.id} disabled={!c.available}>
                   {c.name}
                   {c.available ? "" : " · jald aa raha hai"}
@@ -700,7 +766,7 @@ function ConnectPanel({
               className="trade-input ex-mono"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Delta se copy ki hui API key"
+              placeholder={`${entry.name} se copy ki hui API key`}
               autoComplete="off"
               spellCheck={false}
               required
@@ -749,7 +815,7 @@ function ConnectPanel({
               {submitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Delta se verify ho raha hai…
+                  {entry.name} se verify ho raha hai…
                 </>
               ) : (
                 <>
@@ -760,8 +826,8 @@ function ConnectPanel({
             </button>
             <p className="ex-secure-note">
               <Lock className="w-3.5 h-3.5 flex-none mt-px" />
-              Save se pehle key Delta se verify hoti hai, phir encrypt hokar jaati hai. Secret dobara kabhi screen par
-              nahi dikhega.
+              Save se pehle key {entry.name} se verify hoti hai, phir encrypt hokar jaati hai. Secret dobara kabhi
+              screen par nahi dikhega.
             </p>
           </div>
         </form>
@@ -811,7 +877,7 @@ function ConnectPanel({
                 </div>
                 <p className="ex-side-note">
                   {egress.complete
-                    ? "Key par IP restriction lagayein to Delta par yahi IP add karein."
+                    ? `Key par IP restriction lagayein to ${entry.name} par yahi IP add karein.`
                     : "IP restriction band rakhna sabse aasan hai — server kabhi doosre IP se bhi jaa sakta hai. Lagani ho to ye IP add karke connect karke dekh lein."}
                 </p>
               </>
@@ -819,22 +885,24 @@ function ConnectPanel({
           </div>
 
           <details className="ex-side-block ex-howto">
-            <summary>Delta par key kaise banayein?</summary>
+            <summary>{entry.name} par key kaise banayein?</summary>
             <ol className="ex-guide">
               <li>
                 <span className="ex-guide-num">1</span>
                 <div>
-                  <b>india.delta.exchange par login</b>
+                  <b>{entry.name} par login karke API settings kholein</b>
                   <p>
-                    Account → <b>API Management</b> → New API Key. Global delta.exchange ki key yahan nahi chalegi.
+                    {entry.id === "delta"
+                      ? "Account → API Management → New API Key. Global delta.exchange ki key yahan nahi chalegi."
+                      : "Apne account ki API settings mein jaakar nayi key banayein."}
                   </p>
                 </div>
               </li>
               <li>
                 <span className="ex-guide-num">2</span>
                 <div>
-                  <b>Read Data + Trading on, Withdrawal off</b>
-                  <p>Balance aur positions ke liye Trading permission zaroori hai.</p>
+                  <b>Read + Trading on, Withdrawal off</b>
+                  <p>Balance aur positions ke liye trading permission zaroori hai.</p>
                 </div>
               </li>
               <li>
@@ -842,21 +910,18 @@ function ConnectPanel({
                 <div>
                   <b>Key aur Secret wahin copy karein</b>
                   <p>
-                    Secret <b>sirf ek baar</b> — key banate waqt — dikhta hai. Baad mein Delta bhi use dobara nahi
-                    dikha sakta; kho gaya to nayi key banani padegi.
+                    Secret <b>sirf ek baar</b> — key banate waqt — dikhta hai. Baad mein exchange bhi use dobara
+                    nahi dikha sakta; kho gaya to nayi key banani padegi.
                   </p>
                 </div>
               </li>
             </ol>
-            <a
-              href="https://india.delta.exchange/app/account/manageapikeys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ex-link"
-            >
-              Delta API Keys page kholein
-              <ExternalLink className="w-3 h-3" />
-            </a>
+            {entry.keyUrl && (
+              <a href={entry.keyUrl} target="_blank" rel="noopener noreferrer" className="ex-link">
+                {entry.name} ka API page kholein
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
           </details>
         </aside>
       </div>

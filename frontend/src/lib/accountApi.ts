@@ -156,6 +156,27 @@ export function deleteExchangeAccount(token: string, accountId: number) {
   return request<{ message: string }>(`/byok/exchange-accounts/${accountId}`, { method: "DELETE", token });
 }
 
+export interface ExchangeCatalogueEntry {
+  id: string;
+  name: string;
+  region: string;
+  tagline: string;
+  /** Exchange par key banane ka page — UI seedha wahan bhejta hai. */
+  key_url: string;
+  available: boolean;
+}
+
+/**
+ * Kaun se exchange jud sakte hain — list backend se aati hai.
+ *
+ * Yahan hardcode karne par har naye adapter ke saath frontend bhi badalna
+ * padta, aur bhoolne par UI aisa exchange dikha deta jise backend accept hi
+ * nahi karta. Login ki zarurat nahi — ye public list hai.
+ */
+export function fetchExchangeCatalogue() {
+  return request<{ data: ExchangeCatalogueEntry[] }>("/byok/exchanges").then((r) => r.data);
+}
+
 export interface EgressIps {
   /** Server ke outbound IP — exchange par key ki IP allowlist mein yahi jaate hain. */
   ips: string[];
