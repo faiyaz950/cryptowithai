@@ -18,6 +18,17 @@ export type PositionsState = {
   message?: string;
 };
 
+export type OrderMode = "paper" | "live";
+
+export type LiveTradeState = {
+  kind: "signed-out" | "not-connected" | "no-trade" | "ready";
+  accountId?: number;
+  label?: string;
+  /** Available USDT (or USD) for % sizing. */
+  availableUsdt: number;
+  message?: string;
+};
+
 interface Props {
   symbol: string;
   lastPrice?: number;
@@ -27,7 +38,9 @@ interface Props {
   /** Paper order ke liye login zaroori hai — ticket isi se batata hai. */
   signedIn: boolean;
   placing: boolean;
+  liveState: LiveTradeState;
   onPlace: (payload: {
+    mode: OrderMode;
     symbol: string;
     side: "buy" | "sell";
     order_type: "market" | "limit";
@@ -54,9 +67,11 @@ export default function TradePanel({
   positionsState,
   signedIn,
   placing,
+  liveState,
   onPlace,
 }: Props) {
   const [panel, setPanel] = useState<"ticket" | "trades">("ticket");
+  const [mode, setMode] = useState<OrderMode>("paper");
   const [tradeSymbol, setTradeSymbol] = useState(symbol);
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
@@ -70,6 +85,9 @@ export default function TradePanel({
     setTradeSymbol(symbol);
   }, [symbol]);
 
+  const liveReady = liveState.kind === "ready";
+  const effectiveMode: OrderMode = mode === "live" && liveReady ? "live" : mode === "live" ? "live" : "paper";
+
   const openOrders = useMemo(
     () => orders.filter((o) => OPEN_STATUSES.includes(String(o.status || "").toLowerCase())),
     [orders],
@@ -79,6 +97,9 @@ export default function TradePanel({
     [orders],
   );
 
+  const balanceForPct =
+    effectiveMode === "live" && liveReady ? Math.max(0, liveState.availableUsdt) : DEMO_BALANCE_USDT;
+
   const effectivePrice = orderType === "limit" ? Number(price || lastPrice || 0) : Number(lastPrice || 0);
   const orderValue = Number(quantity || 0) * effectivePrice;
 
@@ -86,12 +107,16 @@ export default function TradePanel({
     setQtyPct(pct);
     const px = orderType === "limit" ? Number(price || lastPrice || 0) : Number(lastPrice || 0);
     if (!px || px <= 0) return;
-    const qty = (DEMO_BALANCE_USDT * (pct / 100)) / px;
+    const qty = (balanceForPct * (pct / 100)) / px;
     setQuantity(qty >= 1 ? qty.toFixed(3) : qty.toFixed(6));
   };
 
   const submit = async () => {
     setError("");
+    if (effectiveMode === "live" && !liveReady) {
+      setError(liveState.message || "Live trade ke liye exchange jodiye");
+      return;
+    }
     const qty = Number(quantity);
     if (!qty || qty <= 0) {
       setError("Valid quantity daaliye");
@@ -103,7 +128,14 @@ export default function TradePanel({
       return;
     }
     try {
-      await onPlace({ symbol: tradeSymbol, side, order_type: orderType, quantity: qty, price: limitPrice });
+      await onPlace({
+        mode: effectiveMode,
+        symbol: tradeSymbol,
+        side,
+        order_type: orderType,
+        quantity: qty,
+        price: limitPrice,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Order fail ho gaya");
     }
@@ -111,6 +143,17 @@ export default function TradePanel({
 
   const shownOrders = book === "open" ? openOrders : history;
   const recentTrades = history.length ? history : openOrders;
+
+  const liveBlockedReason =
+    mode === "live" && !liveReady
+      ? liveState.kind === "signed-out"
+        ? "signed-out"
+        : liveState.kind === "not-connected"
+          ? "not-connected"
+          : liveState.kind === "no-trade"
+            ? "no-trade"
+            : "blocked"
+      : null;
 
   return (
     <div className="space-y-4">
@@ -126,6 +169,28 @@ export default function TradePanel({
 
         {panel === "ticket" ? (
           <div className="trade-panel-body space-y-3.5">
+            <div>
+              <span className="trade-label">Mode</span>
+              <div className="trade-seg trade-seg-full">
+                <button
+                  type="button"
+                  data-active={mode === "paper"}
+                  onClick={() => setMode("paper")}
+                  className="trade-seg-btn"
+                >
+                  Paper
+                </button>
+                <button
+                  type="button"
+                  data-active={mode === "live"}
+                  onClick={() => setMode("live")}
+                  className="trade-seg-btn"
+                >
+                  Live
+                </button>
+              </div>
+            </div>
+
             <div className="trade-seg trade-seg-full">
               <button type="button" data-active={side === "buy"} data-tone="buy" onClick={() => setSide("buy")} className="trade-seg-btn">
                 Buy / Long
@@ -162,6 +227,12 @@ export default function TradePanel({
             <div>
               <label className="trade-label" htmlFor="ticket-qty">
                 Quantity · {baseAsset(tradeSymbol)}
+                {mode === "live" && liveReady && (
+                  <span className="normal-case font-medium" style={{ color: "var(--text-muted)" }}>
+                    {" "}
+                    · avail ${liveState.availableUsdt.toFixed(2)}
+                  </span>
+                )}
               </label>
               <input
                 id="ticket-qty"
@@ -239,7 +310,40 @@ export default function TradePanel({
               </p>
             )}
 
-            {signedIn ? (
+            {liveBlockedReason === "signed-out" && (
+              <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-lg trade-btn-primary w-full">
+                <LogIn className="w-4 h-4" />
+                Live trade ke liye sign in
+              </Link>
+            )}
+            {liveBlockedReason === "not-connected" && (
+              <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-lg trade-btn-primary w-full">
+                <Plug className="w-4 h-4" />
+                Exchange jodein
+              </Link>
+            )}
+            {liveBlockedReason === "no-trade" && (
+              <div className="trade-pos-notice">
+                <span className="trade-pos-notice-icon"><AlertCircle className="w-4 h-4" /></span>
+                <div className="min-w-0">
+                  <b>Trading permission nahi hai</b>
+                  <p>{liveState.message || "Is API key se trade nahi ho sakta."}</p>
+                  <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary trade-size-sm mt-2">
+                    Exchanges
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {!liveBlockedReason && mode === "paper" && !signedIn && (
+              <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-lg trade-btn-primary w-full">
+                <LogIn className="w-4 h-4" />
+                Paper trade ke liye sign in karein
+              </Link>
+            )}
+
+            {!liveBlockedReason && (mode === "live" ? liveReady : signedIn) && (
               <button
                 type="button"
                 disabled={placing}
@@ -247,20 +351,24 @@ export default function TradePanel({
                 className={`trade-btn trade-btn-lg w-full ${side === "buy" ? "trade-btn-buy" : "trade-btn-sell"}`}
               >
                 <Zap className="w-4 h-4" />
-                {placing ? "Placing…" : `${side === "buy" ? "Buy" : "Sell"} ${baseAsset(tradeSymbol)}`}
+                {placing
+                  ? "Placing…"
+                  : `${mode === "live" ? "Live " : ""}${side === "buy" ? "Buy" : "Sell"} ${baseAsset(tradeSymbol)}`}
               </button>
-            ) : (
-              /* Paper order bhi user ke naam se save hota hai, isliye login ke bina
-                 button dabwa kar error dikhane ka koi matlab nahi. */
-              <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-lg trade-btn-primary w-full">
-                <LogIn className="w-4 h-4" />
-                Paper trade ke liye sign in karein
-              </Link>
             )}
 
             <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              Ye <b>paper order</b> hai — exchange par nahi jaata, sirf aapke account mein record hota hai.
-              Neeche positions aapke jude hue exchange se aati hain.
+              {mode === "live" ? (
+                <>
+                  Ye <b>live order</b> hai — aapke jude hue exchange ({liveState.label || "Delta"}) par
+                  asli funds se place hoga. Confirm karke hi bhejein.
+                </>
+              ) : (
+                <>
+                  Ye <b>paper order</b> hai — exchange par nahi jaata, sirf aapke account mein record hota hai.
+                  Neeche positions aapke jude hue exchange se aati hain.
+                </>
+              )}
             </p>
           </div>
         ) : (
@@ -310,8 +418,6 @@ export default function TradePanel({
           ) : (
             <div className="space-y-2">
               {positions.map((p, i) => {
-                // Exchange unrealized PnL de to wahi; warna entry se mark tak
-                // ka move, jo exact hai. Apna PnL hum nahi ginte.
                 const hasPnl = p.unrealized_pnl !== null;
                 const value = hasPnl ? (p.unrealized_pnl as number) : p.move_pct;
                 const up = (value ?? 0) >= 0;
@@ -395,10 +501,6 @@ export default function TradePanel({
   );
 }
 
-/**
- * "Positions nahi hain" ke teen alag matlab, teen alag jawab — aur har ek ke
- * saath wahi agla kadam jo user ko uthana hai.
- */
 function PositionsNotice({ state }: { state: PositionsState }) {
   if (state.kind === "signed-out") {
     return (

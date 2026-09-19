@@ -24,15 +24,22 @@ import {
   Sigma,
   Sparkles,
   Star,
+  ListOrdered,
   TrendingDown,
   TrendingUp,
   Wand2,
   X,
   Zap,
 } from "lucide-react";
-import TradePanel, { type PositionsState } from "@/components/trade/TradePanel";
+import TradePanel, { type LiveTradeState, type PositionsState } from "@/components/trade/TradePanel";
 import { useAuth } from "@/context/AuthContext";
-import { AccountApiError, fetchMyPositions } from "@/lib/accountApi";
+import {
+  AccountApiError,
+  fetchExchangeBalances,
+  fetchMyPositions,
+  listExchangeAccounts,
+  placeByokOrder,
+} from "@/lib/accountApi";
 import AccountMenu from "@/components/trade/AccountMenu";
 import ExchangesDesk from "@/components/trade/ExchangesDesk";
 import ChartDeskTools, { type DrawTool } from "@/components/trade/ChartDeskTools";
@@ -42,6 +49,8 @@ import Screener from "@/components/trade/Screener";
 import OptionsAnalytics from "@/components/trade/OptionsAnalytics";
 import MyStrategiesPanel from "@/components/trade/MyStrategiesPanel";
 import StrategyBuilder from "@/components/trade/StrategyBuilder";
+import WatchlistDesk from "@/components/trade/WatchlistDesk";
+import TradesDesk from "@/components/trade/TradesDesk";
 import {
   CHART_RANGES,
   barsForDays,
@@ -84,7 +93,19 @@ const PortfolioDesk = dynamic(() => import("@/components/portfolio/PortfolioDesk
   loading: () => <div className="w-full h-full shimmer rounded-xl" />,
 });
 
-type Tab = "ai" | "markets" | "screener" | "backtest" | "strategies" | "mine" | "builder" | "options" | "portfolio" | "exchanges";
+type Tab =
+  | "ai"
+  | "markets"
+  | "screener"
+  | "watchlist"
+  | "trades"
+  | "backtest"
+  | "strategies"
+  | "mine"
+  | "builder"
+  | "options"
+  | "portfolio"
+  | "exchanges";
 
 const SHOW_OPTIONS_TAB = true;
 
@@ -92,6 +113,8 @@ const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
   { id: "ai", label: "AI", icon: Sparkles },
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screeners", icon: Radar },
+  { id: "watchlist", label: "Watchlist", icon: Star },
+  { id: "trades", label: "Trades", icon: ListOrdered },
   { id: "portfolio", label: "Portfolio", icon: Briefcase },
   { id: "exchanges", label: "Exchanges", icon: Plug },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
@@ -102,7 +125,7 @@ const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
 ];
 
 const NAV: {
-  id: Tab | "watchlist" | "risk";
+  id: Tab | "risk";
   label: string;
   icon: typeof LineChart;
   /** Apna route rakhne wale sections — tab state ke bajaye navigate hote hain. */
@@ -112,6 +135,7 @@ const NAV: {
   { id: "markets", label: "Markets", icon: LineChart },
   { id: "screener", label: "Screeners", icon: Radar },
   { id: "watchlist", label: "Watchlist", icon: Star },
+  { id: "trades", label: "Trades", icon: ListOrdered },
   { id: "risk", label: "Risk Desk", icon: ShieldCheck, href: "/trade/risk" },
   { id: "portfolio", label: "Portfolio", icon: Briefcase },
   { id: "exchanges", label: "Exchanges", icon: Plug },
@@ -253,6 +277,10 @@ function TradeTerminal() {
   // Positions user ke apne exchange account se aati hain, isliye teen alag
   // haal hain: login nahi, exchange nahi juda, ya juda hua (data/error).
   const [positions, setPositions] = useState<PositionsState>({ kind: "signed-out", positions: [] });
+  const [liveState, setLiveState] = useState<LiveTradeState>({
+    kind: "signed-out",
+    availableUsdt: 0,
+  });
   const [placing, setPlacing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -338,9 +366,58 @@ function TradeTerminal() {
     if (!token) {
       setOrders([]);
       setPositions({ kind: "signed-out", positions: [] });
+      setLiveState({ kind: "signed-out", availableUsdt: 0 });
       return;
     }
-    const [nextOrders, nextPositions] = await Promise.all([
+
+    const loadLive = async (): Promise<LiveTradeState> => {
+      try {
+        const accounts = await listExchangeAccounts(token);
+        const primary =
+          accounts.find((a) => a.is_active && a.can_trade && !a.can_withdraw) ??
+          accounts.find((a) => a.is_active) ??
+          null;
+        if (!primary) {
+          return { kind: "not-connected", availableUsdt: 0 };
+        }
+        if (!primary.can_trade || primary.can_withdraw) {
+          return {
+            kind: "no-trade",
+            accountId: primary.id,
+            label: primary.label || primary.exchange,
+            availableUsdt: 0,
+            message: primary.can_withdraw
+              ? "Withdrawal-enabled keys allowed nahi hain — trade-only key jodiye."
+              : "Is key par trading permission nahi hai. Verify / nayi key try karein.",
+          };
+        }
+        let availableUsdt = 0;
+        try {
+          const balances = await fetchExchangeBalances(token, primary.id);
+          const usd = balances.find(
+            (b) => /^(USDT|USD|USDC)$/i.test(b.asset) || /USDT/i.test(b.asset),
+          );
+          availableUsdt = usd?.available ?? usd?.balance ?? 0;
+        } catch {
+          availableUsdt = 0;
+        }
+        return {
+          kind: "ready",
+          accountId: primary.id,
+          label: primary.label || primary.exchange,
+          availableUsdt,
+        };
+      } catch (err) {
+        if (err instanceof AccountApiError && err.status === 401) handleExpiredSession();
+        return {
+          kind: "not-connected",
+          availableUsdt: 0,
+          message: err instanceof Error ? err.message : "Exchange load nahi hua",
+        };
+      }
+    };
+
+    const [nextOrders, nextPositions, nextLive] = await Promise.all([
       fetchDemoOrders(token).catch(() => [] as DemoOrder[]),
       fetchMyPositions(token)
         .then<PositionsState>((r) =>
@@ -356,9 +433,11 @@ function TradeTerminal() {
             message: err instanceof Error ? err.message : "Positions load nahi hui",
           };
         }),
+      loadLive(),
     ]);
     setOrders(nextOrders);
     setPositions(nextPositions);
+    setLiveState(nextLive);
   }, [token, handleExpiredSession]);
 
   useEffect(() => {
@@ -424,6 +503,7 @@ function TradeTerminal() {
   }, [loadBook]);
 
   const handlePlace = async (payload: {
+    mode: "paper" | "live";
     symbol: string;
     side: "buy" | "sell";
     order_type: "market" | "limit";
@@ -431,14 +511,36 @@ function TradeTerminal() {
     price?: number | null;
   }) => {
     if (!token) {
-      setNotice("Paper order ke liye sign in karein");
+      setNotice("Order ke liye sign in karein");
       return;
     }
     setPlacing(true);
     try {
-      const res = await placeDemoOrder(token, payload);
-      if (!res.success) throw new Error(res.error || "Order fail");
-      setNotice(`${payload.side.toUpperCase()} paper order record ho gaya`);
+      if (payload.mode === "live") {
+        if (liveState.kind !== "ready" || liveState.accountId == null) {
+          throw new Error(liveState.message || "Live trade ke liye exchange jodiye");
+        }
+        const res = await placeByokOrder(token, {
+          exchange_account_id: liveState.accountId,
+          symbol: payload.symbol,
+          side: payload.side,
+          order_type: payload.order_type,
+          quantity: payload.quantity,
+          price: payload.price,
+        });
+        if (!res.success) throw new Error("Live order fail");
+        setNotice(`${payload.side.toUpperCase()} live order exchange par bhej diya`);
+      } else {
+        const res = await placeDemoOrder(token, {
+          symbol: payload.symbol,
+          side: payload.side,
+          order_type: payload.order_type,
+          quantity: payload.quantity,
+          price: payload.price,
+        });
+        if (!res.success) throw new Error(res.error || "Order fail");
+        setNotice(`${payload.side.toUpperCase()} paper order record ho gaya`);
+      }
       await loadBook();
     } finally {
       setPlacing(false);
@@ -564,14 +666,9 @@ function TradeTerminal() {
       );
     }
 
-    const isActive = item.id === "watchlist" ? false : item.id === activeNav;
+    const isActive = item.id === activeNav;
 
     const onClick = () => {
-      if (item.id === "watchlist") {
-        goTab("markets");
-        setNotice("Watchlist soon — Markets pe switch kiya");
-        return;
-      }
       goTab(item.id as Tab);
     };
 
@@ -695,6 +792,22 @@ function TradeTerminal() {
             )}
 
             {tab === "exchanges" && <ExchangesDesk />}
+
+            {tab === "watchlist" && (
+              <WatchlistDesk
+                onPickSymbol={(picked) => {
+                  setSymbol(picked);
+                  goTab("markets");
+                }}
+              />
+            )}
+
+            {tab === "trades" && (
+              <TradesDesk onPickSymbol={(picked) => {
+                setSymbol(picked);
+                goTab("markets");
+              }} />
+            )}
 
             {tab === "markets" && (
               <>
@@ -1008,6 +1121,7 @@ function TradeTerminal() {
                       positionsState={positions}
                       signedIn={Boolean(token)}
                       placing={placing}
+                      liveState={liveState}
                       onPlace={handlePlace}
                     />
                   </aside>

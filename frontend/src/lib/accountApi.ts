@@ -271,3 +271,67 @@ export function fetchExchangeBalances(token: string, accountId: number) {
     (r) => r.data,
   );
 }
+
+/* ── BYOK orders (live exchange) ───────────────────────── */
+
+export interface ByokOrder {
+  order_id: string;
+  symbol: string;
+  side: string;
+  order_type: string;
+  quantity: number;
+  price: number | null;
+  status: string;
+  timestamp?: string;
+  exchange_account_id?: number;
+}
+
+export function placeByokOrder(
+  token: string,
+  payload: {
+    exchange_account_id: number;
+    symbol: string;
+    side: "buy" | "sell";
+    order_type: "market" | "limit";
+    quantity: number;
+    price?: number | null;
+    reduce_only?: boolean;
+  },
+) {
+  return request<{
+    success: boolean;
+    message?: string;
+    data: {
+      order_id: string;
+      exchange_account_id: number;
+      status: string;
+      exchange: string;
+    };
+  }>("/byok/orders", {
+    method: "POST",
+    token,
+    body: payload,
+  });
+}
+
+export function fetchByokOrders(
+  token: string,
+  opts: { exchange_account_id?: number; limit?: number } = {},
+) {
+  const q = new URLSearchParams();
+  if (opts.exchange_account_id != null) q.set("exchange_account_id", String(opts.exchange_account_id));
+  if (opts.limit != null) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return request<{ data: ByokOrder[] }>(`/byok/orders${qs ? `?${qs}` : ""}`, { token }).then((r) => r.data);
+}
+
+export function cancelByokOrder(
+  token: string,
+  payload: { exchange_account_id: number; order_id: string },
+) {
+  return request<{ success: boolean; message?: string; data?: unknown }>("/byok/orders/cancel", {
+    method: "POST",
+    token,
+    body: payload,
+  });
+}
