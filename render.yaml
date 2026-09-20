@@ -59,3 +59,10 @@ services:
       # jo unhe exchange par API key ki allowlist mein daalne hote hain.
       - key: BYOK_EGRESS_IPS
         sync: false
+      # Live orders ka master switch — band rehne par order exchange par nahi
+      # jaata, sirf record banta hai. On karne ka matlab asli paisa chalna.
+      - key: LIVE_ORDERS_ENABLED
+        value: "false"
+      # Webhook URL banane ke liye is service ka public base URL.
+      - key: PUBLIC_API_URL
+        sync: false

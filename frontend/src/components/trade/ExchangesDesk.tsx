@@ -5,6 +5,8 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowRight,
+  Bot,
+  Copy as CopyIcon,
   Check,
   CheckCircle2,
   Copy,
@@ -31,6 +33,9 @@ import {
   deleteExchangeAccount,
   fetchEgressIps,
   fetchExchangeCatalogue,
+  fetchTradingViewSetup,
+  regenerateTradingViewToken,
+  updateTradingSettings,
   fetchExchangeBalances,
   listExchangeAccounts,
   verifyExchangeAccount,
@@ -38,6 +43,8 @@ import {
   type ExchangeAccount,
   type ExchangeBalance,
   type ExchangeCatalogueEntry,
+  type TradingSettings,
+  type TradingViewSetup,
   type ExchangeId,
 } from "@/lib/accountApi";
 
@@ -387,6 +394,8 @@ export default function ExchangesDesk() {
         />
       )}
 
+      {user && token && <AutomationPanel token={token} onApiError={onApiError} />}
+
       <section>
         <div className="ex-section-head">
           <h3>All exchanges</h3>
@@ -567,6 +576,8 @@ function ConnectedCard({
           </div>
         )}
       </div>
+
+      <TradingControls account={account} token={token} onApiError={onApiError} />
 
       {(issue || account.last_error) && (
         <IssueBox message={issue?.message ?? account.last_error} clientIp={issue?.clientIp} />
@@ -925,6 +936,289 @@ function ConnectPanel({
           </details>
         </aside>
       </div>
+    </section>
+  );
+}
+
+/* ── Live trading controls ─────────────────────────────── */
+
+/**
+ * "Key jud gayi" aur "is key se asli order laga sakte ho" do alag faisle
+ * hain. Doosra yahan se, jaan-boojh kar, diya jaata hai — aur uske saath
+ * ek order ki upper limit bhi, taaki galti ki keemat bandhi rahe.
+ */
+function TradingControls({
+  account,
+  token,
+  onApiError,
+}: {
+  account: ExchangeAccount;
+  token: string;
+  onApiError: (err: unknown) => void;
+}) {
+  const [settings, setSettings] = useState<TradingSettings | null>(null);
+  const [cap, setCap] = useState(account.max_order_notional ? String(account.max_order_notional) : "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const enabled = settings?.live_trading_enabled ?? account.live_trading_enabled;
+  const serverLive = settings?.server_live_orders_enabled ?? false;
+
+  const save = async (input: { liveTradingEnabled?: boolean; maxOrderNotional?: number | null }) => {
+    setBusy(true);
+    setError("");
+    try {
+      setSettings(await updateTradingSettings(token, account.id, input));
+    } catch (err) {
+      onApiError(err);
+      setError(err instanceof Error ? err.message : "Save nahi hua");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ex-trade-ctl">
+      <div className="ex-trade-row">
+        <span className="min-w-0">
+          <b>Live trading</b>
+          <small>
+            {enabled
+              ? serverLive
+                ? "Is key se asli order ja sakta hai."
+                : "Aapki taraf se on hai — par server par live orders abhi band hain, isliye order paper hi rahega."
+              : "Band hai. Orders sirf paper mein record honge."}
+          </small>
+        </span>
+        <button
+          type="button"
+          className={`ex-switch ${enabled ? "is-on" : ""}`}
+          role="switch"
+          aria-checked={enabled}
+          aria-label="Live trading"
+          disabled={busy}
+          onClick={() => void save({ liveTradingEnabled: !enabled })}
+        >
+          <span />
+        </button>
+      </div>
+
+      <div className="ex-trade-row">
+        <span className="min-w-0">
+          <b>Ek order ki limit</b>
+          <small>
+            Isse bade order khud hi ruk jaate hain. Khaali chhodne par default{" "}
+            {settings ? settings.default_max_order_notional.toLocaleString("en-US") : "500"} lagti hai.
+          </small>
+        </span>
+        <span className="ex-cap">
+          <input
+            className="trade-input"
+            inputMode="decimal"
+            placeholder="500"
+            value={cap}
+            onChange={(e) => setCap(e.target.value.replace(/[^\d.]/g, ""))}
+            disabled={busy}
+            aria-label="Max order value"
+          />
+          <button
+            type="button"
+            className="trade-btn trade-btn-ghost trade-size-sm"
+            disabled={busy}
+            onClick={() => void save({ maxOrderNotional: cap.trim() ? Number(cap) : null })}
+          >
+            Save
+          </button>
+        </span>
+      </div>
+
+      {error && <IssueBox message={error} />}
+    </div>
+  );
+}
+
+/* ── TradingView automation ────────────────────────────── */
+
+function CopyRow({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="ex-auto-row">
+      <span className="trade-label">{label}</span>
+      <span className="ex-auto-value">
+        <code className={mono ? "ex-mono" : ""}>{value}</code>
+        <button
+          type="button"
+          className="trade-btn trade-btn-ghost trade-size-sm"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(value);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1600);
+            } catch {
+              /* clipboard band ho to user khud select kar le */
+            }
+          }}
+        >
+          {copied ? <Check className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * TradingView se signal lekar order lagana.
+ *
+ * URL mein token hi poori pehchan hai (TradingView login nahi bhej sakta),
+ * isliye ise password ki tarah dikhaya aur samjhaya jaata hai.
+ */
+function AutomationPanel({ token, onApiError }: { token: string; onApiError: (err: unknown) => void }) {
+  const [setup, setSetup] = useState<TradingViewSetup | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchTradingViewSetup(token)
+      .then((data) => alive && setSetup(data))
+      .catch((err) => {
+        onApiError(err);
+        if (alive) setError(err instanceof Error ? err.message : "Setup load nahi hua");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, onApiError]);
+
+  const regenerate = async () => {
+    setBusy(true);
+    try {
+      const next = await regenerateTradingViewToken(token);
+      setSetup((cur) => (cur ? { ...cur, ...next } : cur));
+      setConfirming(false);
+    } catch (err) {
+      onApiError(err);
+      setError(err instanceof Error ? err.message : "Naya URL nahi bana");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="ex-auto">
+      <div className="ex-auto-head">
+        <span className="ex-auto-icon">
+          <Bot className="w-4 h-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3>TradingView automation</h3>
+          <p>Apne chart ke alert se seedha order — bina kuch code kiye.</p>
+        </div>
+        {setup && (
+          <span className={`ex-pill ${setup.mode === "live" ? "ex-pill-live" : ""}`}>
+            {setup.mode === "live" ? "Live" : "Paper mode"}
+          </span>
+        )}
+      </div>
+
+      {error && <IssueBox message={error} />}
+
+      {!setup ? (
+        <div className="ex-balance-skeleton shimmer" />
+      ) : (
+        <>
+          {setup.mode === "paper" && (
+            <p className="ex-auto-note">
+              Abhi <b>paper mode</b> hai: signal aayega, saare check honge aur order history mein record ho jayega —
+              par exchange par kuch nahi bheja jayega. Isse poora setup bina paise ke test kar sakte hain.
+            </p>
+          )}
+
+          <ol className="ex-guide">
+            <li>
+              <span className="ex-guide-num">1</span>
+              <div>
+                <b>TradingView par alert banayein</b>
+                <p>Chart par apna indicator lagayein → Alert → Notifications mein &ldquo;Webhook URL&rdquo; on karein.</p>
+              </div>
+            </li>
+            <li>
+              <span className="ex-guide-num">2</span>
+              <div>
+                <b>Neeche wala URL webhook mein paste karein</b>
+                <p>Ye URL aapki pehchan hai — kisi ke saath share na karein.</p>
+              </div>
+            </li>
+            <li>
+              <span className="ex-guide-num">3</span>
+              <div>
+                <b>Message box mein neeche wala JSON daalein</b>
+                <p>
+                  <code className="ex-mono">{"{{close}}"}</code> TradingView khud bhav se badal deta hai. Market
+                  order ke liye <code className="ex-mono">order_type</code> ko <code className="ex-mono">market</code>{" "}
+                  kar dein aur price hata dein.
+                </p>
+              </div>
+            </li>
+          </ol>
+
+          <CopyRow label="Webhook URL" value={setup.webhook_url} />
+          <div className="ex-auto-row">
+            <span className="trade-label">Alert message</span>
+            <span className="ex-auto-value">
+              <pre className="ex-auto-code">{setup.message_template}</pre>
+              <button
+                type="button"
+                className="trade-btn trade-btn-ghost trade-size-sm"
+                onClick={() => void navigator.clipboard.writeText(setup.message_template).catch(() => {})}
+              >
+                <CopyIcon className="w-3.5 h-3.5" />
+                Copy
+              </button>
+            </span>
+          </div>
+
+          <p className="ex-auto-note">
+            Ek minute mein zyada se zyada <b>{setup.rate_limit_per_minute} signal</b> liye jaate hain — alert loop
+            mein fans jaye to wo yahin ruk jaata hai. Har signal par order ki limit bhi waise hi lagti hai jaise desk
+            se lagaye order par.
+          </p>
+
+          {confirming ? (
+            <div className="ex-confirm">
+              <p>
+                <b>Naya URL banayein?</b> Purana URL turant kaam karna band kar dega — TradingView par bhi naya URL
+                daalna padega.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="trade-btn trade-btn-ghost trade-size-sm"
+                  onClick={() => setConfirming(false)}
+                  disabled={busy}
+                >
+                  Rehne dein
+                </button>
+                <button type="button" className="trade-btn trade-size-sm ex-danger" onClick={regenerate} disabled={busy}>
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  Haan, naya banayein
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="trade-btn trade-btn-ghost trade-size-sm ex-danger-ghost"
+              onClick={() => setConfirming(true)}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Naya URL banayein
+            </button>
+          )}
+        </>
+      )}
     </section>
   );
 }

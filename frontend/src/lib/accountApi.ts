@@ -117,6 +117,8 @@ export interface ExchangeAccount {
   can_trade: boolean;
   can_withdraw: boolean;
   permissions_verified: boolean;
+  live_trading_enabled: boolean;
+  max_order_notional: number | null;
   last_error: string;
   last_verified_at: string | null;
   created_at: string | null;
@@ -154,6 +156,55 @@ export function verifyExchangeAccount(token: string, accountId: number) {
 /** Disconnect — backend encrypted key aur secret dono permanently delete karta hai. */
 export function deleteExchangeAccount(token: string, accountId: number) {
   return request<{ message: string }>(`/byok/exchange-accounts/${accountId}`, { method: "DELETE", token });
+}
+
+/* ── Live trading settings + automation ────────────────── */
+
+export interface TradingSettings {
+  live_trading_enabled: boolean;
+  /** Khaali = server ki default limit lagti hai. */
+  max_order_notional: number | null;
+  default_max_order_notional: number;
+  hard_max_order_notional: number;
+  /** Server ka apna switch. Dono on hon tabhi order exchange tak jaata hai. */
+  server_live_orders_enabled: boolean;
+}
+
+export function updateTradingSettings(
+  token: string,
+  accountId: number,
+  input: { liveTradingEnabled?: boolean; maxOrderNotional?: number | null },
+) {
+  const body: Record<string, unknown> = {};
+  if (input.liveTradingEnabled !== undefined) body.live_trading_enabled = input.liveTradingEnabled;
+  if (input.maxOrderNotional !== undefined) body.max_order_notional = input.maxOrderNotional;
+  return request<{ data: TradingSettings }>(`/byok/exchange-accounts/${accountId}/trading`, {
+    method: "PATCH",
+    token,
+    body,
+  }).then((r) => r.data);
+}
+
+export interface TradingViewSetup {
+  /** TradingView alert isi URL par bhejta hai — ye password jaisa hai. */
+  webhook_url: string;
+  token: string;
+  message_template: string;
+  /** "paper" = signal record hoga, exchange par order nahi jayega. */
+  mode: "paper" | "live";
+  rate_limit_per_minute: number;
+}
+
+export function fetchTradingViewSetup(token: string) {
+  return request<{ data: TradingViewSetup }>("/automation/tradingview", { token }).then((r) => r.data);
+}
+
+/** Purana URL turant bekaar — leak ho jaane par yahi bachav hai. */
+export function regenerateTradingViewToken(token: string) {
+  return request<{ data: { webhook_url: string; token: string } }>("/automation/tradingview/regenerate", {
+    method: "POST",
+    token,
+  }).then((r) => r.data);
 }
 
 export interface ExchangeCatalogueEntry {
