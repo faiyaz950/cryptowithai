@@ -529,7 +529,9 @@ function TradeTerminal() {
           price: payload.price,
         });
         if (!res.success) throw new Error("Live order fail");
-        setNotice(`${payload.side.toUpperCase()} live order exchange par bhej diya`);
+        // Server hi batata hai ki order exchange tak gaya ya paper mein ruka —
+        // yahan apna jumla likhne par UI aisi baat keh sakta hai jo hui hi nahi.
+        setNotice(res.message || `${payload.side.toUpperCase()} order bhej diya`);
       } else {
         const res = await placeDemoOrder(token, {
           symbol: payload.symbol,

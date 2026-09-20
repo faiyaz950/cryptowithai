@@ -365,6 +365,7 @@ export function placeByokOrder(
     symbol: string;
     side: "buy" | "sell";
     order_type: "market" | "limit";
+    /** Coins mein (jaise 0.001 BTC). Backend ise contracts mein badal deta hai. */
     quantity: number;
     price?: number | null;
     reduce_only?: boolean;
@@ -375,9 +376,15 @@ export function placeByokOrder(
     message?: string;
     data: {
       order_id: string;
-      exchange_account_id: number;
       status: string;
-      exchange: string;
+      /** "paper" = exchange par nahi gaya, sirf record hua. */
+      mode: "paper" | "live";
+      /** Exchange ki apni unit — Delta par 1 contract = 0.001 BTC. */
+      contracts: number;
+      base_quantity: number;
+      base_unit: string;
+      /** Order lagbhag kitne ka tha. */
+      notional: number;
     };
   }>("/byok/orders", {
     method: "POST",
