@@ -208,6 +208,11 @@ export default function ExchangesDesk() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<CatalogEntry | null>(null);
   const [catalog, setCatalog] = useState<CatalogEntry[]>(FALLBACK);
+  // Free hosting par server so jaata hai aur pehli request lambi chalti hai.
+  // Us waqt list adhoori dikhane se behtar hai saaf batana ki abhi aa rahi
+  // hai — warna user ko lagta hai sirf ek hi exchange support hai.
+  const [catalogState, setCatalogState] = useState<"loading" | "ready" | "failed">("loading");
+  const [catalogTry, setCatalogTry] = useState(0);
   const [balances, setBalances] = useState<Record<number, BalanceState>>({});
 
   const onApiError = useCallback(
@@ -260,14 +265,29 @@ export default function ExchangesDesk() {
   useEffect(() => {
     let alive = true;
     fetchExchangeCatalogue()
-      .then((rows) => alive && rows.length && setCatalog(rows.map(toEntry)))
+      .then((rows) => {
+        if (!alive) return;
+        if (rows.length) setCatalog(rows.map(toEntry));
+        setCatalogState("ready");
+      })
       .catch(() => {
-        /* list na aaye to FALLBACK hi sahi — page bekaar nahi hona chahiye */
+        if (!alive) return;
+        // Free hosting par so raha server jaagne mein 30-50 second leta hai
+        // aur tab tak 502 deta hai. Isliye koshishein badhte gap ke saath —
+        // 3s, 6s, 12s, 20s — taaki poora boot cover ho jaye.
+        const waits = [3000, 6000, 12000, 20000];
+        if (catalogTry < waits.length) {
+          window.setTimeout(() => {
+            if (alive) setCatalogTry((n) => n + 1);
+          }, waits[catalogTry]);
+          return;
+        }
+        setCatalogState("failed");
       });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [catalogTry]);
 
   const connectedCount = accounts?.length ?? 0;
   const liveEntries = catalog.filter((c) => c.available);
@@ -400,9 +420,32 @@ export default function ExchangesDesk() {
         <div className="ex-section-head">
           <h3>All exchanges</h3>
           <span>
-            {liveEntries.length} live · {catalog.length - liveEntries.length} jald aa rahe hain
+            {catalogState === "ready"
+              ? `${liveEntries.length} live · ${catalog.length - liveEntries.length} jald aa rahe hain`
+              : catalogState === "loading"
+                ? "List aa rahi hai…"
+                : "List load nahi hui"}
           </span>
+          {catalogState === "failed" && (
+            <button
+              type="button"
+              className="ex-link"
+              onClick={() => {
+                setCatalogState("loading");
+                setCatalogTry((n) => n + 1);
+              }}
+            >
+              <RefreshCw className="w-3 h-3" />
+              Dobara try karein
+            </button>
+          )}
         </div>
+        {catalogState === "failed" && (
+          <p className="ex-auto-note" style={{ marginBottom: 10 }}>
+            Poori list server se nahi aa payi — free hosting par server jaagne mein thoda time lagta hai. Tab tak
+            sirf wahi dikh raha hai jo pakka support mein hai.
+          </p>
+        )}
         <div className="ex-grid">
           {catalog.map((entry) => (
             <article key={entry.id} className="ex-tile" data-available={entry.available}>
