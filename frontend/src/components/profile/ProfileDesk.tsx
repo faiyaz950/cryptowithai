@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import PnlPanel from "@/components/profile/PnlPanel";
 import { DESK_TZ, DESK_TZ_LABEL, syncStamp } from "@/lib/cryptoApi";
 import {
   AccountApiError,
@@ -136,6 +137,8 @@ export default function ProfileDesk() {
   return (
     <div className="pf-page">
       <IdentityCard onLogout={logout} />
+
+      {accounts && accounts.length > 0 && <PnlPanel token={token} onApiError={onApiError} />}
 
       <section>
         <div className="pf-section-head">

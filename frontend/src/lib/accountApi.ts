@@ -158,6 +158,52 @@ export function deleteExchangeAccount(token: string, accountId: number) {
   return request<{ message: string }>(`/byok/exchange-accounts/${accountId}`, { method: "DELETE", token });
 }
 
+/* ── P&L history ───────────────────────────────────────── */
+
+export interface PnlDay {
+  date: string;
+  pnl: number;
+}
+
+export interface PnlExchange {
+  account_id: number;
+  exchange: string;
+  label: string;
+  name: string;
+  /** null = pata nahi chala (call fail ya support nahi) — 0 nahi. */
+  pnl: number | null;
+  /** false = is exchange se P&L history abhi aati hi nahi. */
+  supported: boolean;
+  error: string;
+}
+
+export interface PnlSummary {
+  days: number;
+  by_day: PnlDay[];
+  by_month: { month: string; pnl: number }[];
+  by_exchange: PnlExchange[];
+  totals: {
+    realized: number;
+    traded_days: number;
+    win_days: number;
+    loss_days: number;
+    best_day: PnlDay | null;
+    worst_day: PnlDay | null;
+  };
+  note: string;
+  fetched_at: string;
+}
+
+/**
+ * Realized P&L — seedha exchange ke wallet se, apne records se nahi.
+ *
+ * Apne paas sirf wahi orders hain jo is desk se lage; user exchange par
+ * seedha bhi trade kar sakta hai. Sach wahi hai jo exchange ke paas likha hai.
+ */
+export function fetchPnl(token: string, days: number) {
+  return request<{ data: PnlSummary }>(`/byok/pnl?days=${days}`, { token }).then((r) => r.data);
+}
+
 /* ── Live trading settings + automation ────────────────── */
 
 export interface TradingSettings {
