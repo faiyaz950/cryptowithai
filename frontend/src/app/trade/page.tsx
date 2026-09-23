@@ -61,21 +61,25 @@ import {
   isLocalBackend,
   fetchDemoOrders,
   fetchMarketInfo,
+  fetchMarketSources,
   placeDemoOrder,
   runBacktest,
   symbolLabel,
+  venueName,
+  venueShort,
   CRYPTO_INTERVALS,
   CRYPTO_SYMBOLS,
+  DEFAULT_MARKET_SOURCES,
   type BacktestParams,
   type BacktestResult,
   type Candle,
   type DemoOrder,
   type MarketInfo,
+  type MarketSourceInfo,
   syncStamp,
   deskClock,
   DESK_TZ_LABEL,
   DESK_CONTRACT,
-  DESK_VENUE,
 } from "@/lib/cryptoApi";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
@@ -162,7 +166,9 @@ function fmtCompact(n: number): string {
  * purani dikhti thi. Ab har poll sirf aakhri LIVE_TAIL_FETCH candles laata hai,
  * isliye 10s par chalana sasta hai.
  */
+/** Delta par WS live hai to poll sirf backup; baaki exchanges par poll hi live hai. */
 const MARKET_POLL_MS = 10_000;
+const MARKET_POLL_FAST_MS = 2_000;
 
 /**
  * Poll par itni candles aati hain. EMA backend isi window par calculate karta
@@ -243,6 +249,12 @@ function TradeTerminal() {
   }, [router, searchParams]);
 
   const [interval, setInterval] = useState("1h");
+  /**
+   * Chart ka source. `null` = auto (connected exchange, warna delta).
+   * Manual override select se set hota hai.
+   */
+  const [chartSourceOverride, setChartSourceOverride] = useState<string | null>(null);
+  const [marketSources, setMarketSources] = useState<MarketSourceInfo[]>(DEFAULT_MARKET_SOURCES);
   const [historyDays, setHistoryDays] = useState(7);
   const [showEma9, setShowEma9] = useState(true);
   const [showEma21, setShowEma21] = useState(true);
@@ -284,6 +296,25 @@ function TradeTerminal() {
   const [placing, setPlacing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  /**
+   * Effective chart source: manual override, warna connected exchange,
+   * warna Delta (public desk default).
+   */
+  const chartSource = useMemo(() => {
+    if (chartSourceOverride) return chartSourceOverride;
+    const connected = liveState.exchange;
+    if (connected && marketSources.some((s) => s.id === connected)) return connected;
+    return "delta";
+  }, [chartSourceOverride, liveState.exchange, marketSources]);
+
+  const chartIntervals = useMemo(() => {
+    const src = marketSources.find((s) => s.id === chartSource);
+    const allowed = new Set(src?.intervals ?? DEFAULT_MARKET_SOURCES[0].intervals);
+    return CRYPTO_INTERVALS.filter((iv) => allowed.has(iv.value));
+  }, [chartSource, marketSources]);
+
+  const pollMs = chartSource === "delta" ? MARKET_POLL_MS : MARKET_POLL_FAST_MS;
+
   const [backtestRunning, setBacktestRunning] = useState(false);
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
   const [backtestError, setBacktestError] = useState<string | null>(null);
@@ -311,7 +342,7 @@ function TradeTerminal() {
    * setCandles([]) hota tha — ek network hichki aur poora chart gayab.
    */
   const loadMarket = useCallback(async (mode: "full" | "poll" = "full") => {
-    const key = `${symbol}|${interval}|${historyDays}`;
+    const key = `${symbol}|${interval}|${historyDays}|${chartSource}`;
     const wanted = barsForDays(historyDays, interval);
     const poll = mode === "poll";
     if (!poll) setLoading(true);
@@ -319,8 +350,8 @@ function TradeTerminal() {
       const prev = candlesRef.current;
       const tailOnly = poll && wanted > LIVE_TAIL_FETCH && prev.length > 0 && candlesKeyRef.current === key;
       const [candleRes, info] = await Promise.all([
-        fetchCandles({ symbol, interval, limit: tailOnly ? LIVE_TAIL_FETCH : wanted }),
-        fetchMarketInfo(symbol).catch(() => null),
+        fetchCandles({ symbol, interval, limit: tailOnly ? LIVE_TAIL_FETCH : wanted, exchange: chartSource }),
+        fetchMarketInfo(symbol, chartSource).catch(() => null),
       ]);
       if (!candleRes.success) throw new Error(candleRes.error || "Candle data nahi mili");
 
@@ -334,7 +365,7 @@ function TradeTerminal() {
         // Tab bahut der so raha tha (laptop sleep) — beech ki candles gayab
         // hongi, to jodne ke bajaye poori history dobara lo.
         if (!next.length || next[next.length - 1].time - lastPrev > gapMs) {
-          const full = await fetchCandles({ symbol, interval, limit: wanted });
+          const full = await fetchCandles({ symbol, interval, limit: wanted, exchange: chartSource });
           if (activeKeyRef.current !== key) return;
           next = full.success ? full.candles ?? [] : prev;
         } else {
@@ -360,7 +391,7 @@ function TradeTerminal() {
     } finally {
       if (!poll) setLoading(false);
     }
-  }, [symbol, interval, historyDays]);
+  }, [symbol, interval, historyDays, chartSource]);
 
   const loadBook = useCallback(async () => {
     if (!token) {
@@ -384,6 +415,7 @@ function TradeTerminal() {
           return {
             kind: "no-trade",
             accountId: primary.id,
+            exchange: primary.exchange,
             label: primary.label || primary.exchange,
             availableUsdt: 0,
             message: primary.can_withdraw
@@ -404,6 +436,7 @@ function TradeTerminal() {
         return {
           kind: "ready",
           accountId: primary.id,
+          exchange: primary.exchange,
           label: primary.label || primary.exchange,
           availableUsdt,
         };
@@ -442,12 +475,30 @@ function TradeTerminal() {
 
   useEffect(() => {
     checkCryptoHealth().then(setOnline);
+    void fetchMarketSources().then(setMarketSources);
   }, []);
 
+  // Connected exchange / source badle to unsupported timeframe hata do
+  // (jaise CoinDCX par 3m).
   useEffect(() => {
-    activeKeyRef.current = `${symbol}|${interval}|${historyDays}`;
+    if (chartIntervals.some((i) => i.value === interval)) return;
+    const fallback = chartIntervals.find((i) => i.value === "1h") ?? chartIntervals[0];
+    if (fallback) setInterval(fallback.value);
+  }, [chartSource, chartIntervals, interval]);
+
+  // Non-Delta par WS nahi — purana "live" status / tick chipakna nahi chahiye.
+  useEffect(() => {
+    if (chartSource !== "delta") {
+      setLiveStatus(null);
+      liveTickRef.current = null;
+      setLiveTick(null);
+    }
+  }, [chartSource]);
+
+  useEffect(() => {
+    activeKeyRef.current = `${symbol}|${interval}|${historyDays}|${chartSource}`;
     void loadMarket("full");
-  }, [loadMarket, symbol, interval, historyDays]);
+  }, [loadMarket, symbol, interval, historyDays, chartSource]);
 
   useEffect(() => {
     if (!compareSymbol) {
@@ -459,6 +510,7 @@ function TradeTerminal() {
       symbol: compareSymbol,
       interval,
       limit: barsForDays(historyDays, interval),
+      exchange: chartSource,
     })
       .then((res) => {
         if (cancelled) return;
@@ -470,14 +522,14 @@ function TradeTerminal() {
     return () => {
       cancelled = true;
     };
-  }, [compareSymbol, interval, historyDays]);
+  }, [compareSymbol, interval, historyDays, chartSource]);
 
   useEffect(() => {
     let timer: number | undefined;
 
     const start = () => {
       window.clearInterval(timer);
-      timer = window.setInterval(() => void loadMarket("poll"), MARKET_POLL_MS);
+      timer = window.setInterval(() => void loadMarket("poll"), pollMs);
     };
 
     const onVisibility = () => {
@@ -496,7 +548,7 @@ function TradeTerminal() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [loadMarket]);
+  }, [loadMarket, pollMs]);
 
   useEffect(() => {
     loadBook();
@@ -608,22 +660,27 @@ function TradeTerminal() {
   );
 
   /**
-   * Screen par dikhne wala price. Live feed chal rahi ho aur usi symbol ki ho to
-   * uska close — warna market-info wala (jo poll par aata hai). Symbol check
-   * zaroori hai: ETH par switch karte hi BTC ka aakhri tick na dikhe.
+   * Screen par dikhne wala price. Delta live feed chal rahi ho aur usi symbol
+   * ki ho to uska close — warna market-info wala (poll). Symbol check zaroori
+   * hai: ETH par switch karte hi BTC ka aakhri tick na dikhe.
    */
   const lastPrice =
-    liveTick && liveTick.symbol === symbol ? liveTick.close : market?.current_price;
+    chartSource === "delta" && liveTick && liveTick.symbol === symbol
+      ? liveTick.close
+      : market?.current_price;
 
   /**
    * Live feed usi symbol/timeframe ki jiski candles abhi chart par hain —
    * `candlesKey` se, current selection se nahi. Selection badalte hi feed
    * badal jaati to naye coin ke ticks purane coin ke chart par lag jaate.
+   *
+   * WebSocket abhi sirf Delta par hai — baaki exchanges poll se live rehte hain.
    */
   const liveFeed = useMemo(() => {
+    if (chartSource !== "delta") return undefined;
     const [feedSymbol, feedInterval] = candlesKey.split("|");
     return feedSymbol && feedInterval ? { symbol: feedSymbol, interval: feedInterval } : undefined;
-  }, [candlesKey]);
+  }, [candlesKey, chartSource]);
 
   const rangePct = useMemo(() => {
     if (!market || lastPrice == null) return 50;
@@ -820,7 +877,7 @@ function TradeTerminal() {
                     </div>
                     <div>
                       <div className="desk-pair-name">{symbolLabel(symbol)}</div>
-                      <div className="desk-pair-tag">{DESK_CONTRACT} · {DESK_VENUE}</div>
+                      <div className="desk-pair-tag">{DESK_CONTRACT} · {venueName(chartSource)}</div>
                     </div>
                   </div>
 
@@ -949,8 +1006,25 @@ function TradeTerminal() {
                         {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                       </select>
 
+                      <select
+                        value={chartSourceOverride ?? "auto"}
+                        onChange={(e) =>
+                          setChartSourceOverride(e.target.value === "auto" ? null : e.target.value)
+                        }
+                        aria-label="Chart exchange"
+                        className="trade-select trade-size-sm"
+                        title="Chart kis exchange ka dikhe"
+                      >
+                        <option value="auto">
+                          Auto · {venueShort(liveState.exchange || "delta")}
+                        </option>
+                        {marketSources.map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+
                       <div className="trade-seg overflow-x-auto scrollbar-hide max-w-full">
-                        {CRYPTO_INTERVALS.map((iv) => (
+                        {chartIntervals.map((iv) => (
                           <button
                             key={iv.value}
                             type="button"
@@ -1032,6 +1106,7 @@ function TradeTerminal() {
                           candles={candles}
                           symbol={symbolLabel(symbol)}
                           interval={shortInterval(interval)}
+                          venue={venueShort(chartSource)}
                           showEma9={showEma9}
                           showEma21={showEma21}
                           showEma50={showEma50}
@@ -1057,9 +1132,11 @@ function TradeTerminal() {
                           <span style={{ color: "var(--green)", fontWeight: 600 }}>● Live · Delta stream</span>
                         ) : liveStatus === "connecting" ? (
                           <span style={{ color: "var(--amber)" }}>● Live feed jud raha hai…</span>
+                        ) : chartSource !== "delta" ? (
+                          <span style={{ color: "var(--green)", fontWeight: 600 }}>● Live · {venueShort(chartSource)} poll</span>
                         ) : null}
-                        {liveStatus === "live" || liveStatus === "connecting" ? " · " : ""}
-                        Synced {updatedAt} {DESK_TZ_LABEL} · poll {MARKET_POLL_MS / 1000}s
+                        {(liveStatus === "live" || liveStatus === "connecting" || chartSource !== "delta") ? " · " : ""}
+                        Synced {updatedAt} {DESK_TZ_LABEL} · poll {pollMs / 1000}s
                         {compareSymbol ? ` · compare ${symbolLabel(compareSymbol)}` : ""}
                         {drawTool !== "cursor" ? ` · drawing ${drawTool}` : ""}
                       </div>

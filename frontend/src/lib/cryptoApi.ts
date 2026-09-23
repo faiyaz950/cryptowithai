@@ -123,6 +123,9 @@ export interface CandlesResponse {
   candles: Candle[];
   ema_periods: number[];
   total_candles: number;
+  /** Chart ka asal source — delta / coindcx / bybit. */
+  exchange?: string;
+  exchange_name?: string;
   error?: string;
 }
 
@@ -140,7 +143,47 @@ export interface MarketInfo {
   change_24h: number;
   /** "ticker" = exchange ke apne 24h stats, "candles" = fallback. */
   source?: "ticker" | "candles";
+  exchange?: string;
+  exchange_name?: string;
   error?: string;
+}
+
+/** Chart kis exchange se aa sakta hai — backend `/api/market/sources` se. */
+export interface MarketSourceInfo {
+  id: string;
+  name: string;
+  intervals: string[];
+}
+
+export const DEFAULT_MARKET_SOURCES: MarketSourceInfo[] = [
+  {
+    id: "delta",
+    name: "Delta Exchange India",
+    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"],
+  },
+  {
+    id: "coindcx",
+    name: "CoinDCX",
+    intervals: ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+  },
+  {
+    id: "bybit",
+    name: "Bybit",
+    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"],
+  },
+];
+
+export function venueShort(exchangeId: string | null | undefined): string {
+  const id = (exchangeId || "delta").toLowerCase();
+  if (id === "coindcx") return "CoinDCX";
+  if (id === "bybit") return "Bybit";
+  if (id === "delta") return "Delta";
+  return id;
+}
+
+export function venueName(exchangeId: string | null | undefined): string {
+  const hit = DEFAULT_MARKET_SOURCES.find((s) => s.id === (exchangeId || "delta").toLowerCase());
+  return hit?.name ?? venueShort(exchangeId);
 }
 
 export interface DemoOrder {
@@ -245,6 +288,8 @@ export async function fetchCandles(params: {
   interval: string;
   limit: number;
   emaPeriods?: number[];
+  /** Chart ka source — connected exchange. Default delta. */
+  exchange?: string;
 }): Promise<CandlesResponse> {
   const q = new URLSearchParams({
     symbol: params.symbol,
@@ -252,7 +297,7 @@ export async function fetchCandles(params: {
     limit: String(params.limit),
     ema_periods: (params.emaPeriods ?? [9, 21, 50]).join(","),
     include_rsi: "true",
-    exchange: "delta",
+    exchange: params.exchange || "delta",
   });
   return cryptoFetch<CandlesResponse>(`/candles?${q}`);
 }
@@ -262,9 +307,21 @@ export function candleEma(candle: Candle, period: number): number | null {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
-export async function fetchMarketInfo(symbol: string): Promise<MarketInfo> {
-  const q = new URLSearchParams({ symbol, exchange: "delta" });
+export async function fetchMarketInfo(
+  symbol: string,
+  exchange = "delta",
+): Promise<MarketInfo> {
+  const q = new URLSearchParams({ symbol, exchange });
   return cryptoFetch<MarketInfo>(`/market-info?${q}`);
+}
+
+export async function fetchMarketSources(): Promise<MarketSourceInfo[]> {
+  try {
+    const res = await cryptoFetch<{ success: boolean; data: MarketSourceInfo[] }>("/market/sources");
+    return res.data?.length ? res.data : DEFAULT_MARKET_SOURCES;
+  } catch {
+    return DEFAULT_MARKET_SOURCES;
+  }
 }
 
 /**
@@ -657,10 +714,8 @@ export async function fetchFundingFor(symbol: string): Promise<FundingRow | null
  * display nahi, signal ka hissa hai.
  */
 /**
- * Desk ka market. Chart, screener, Risk Desk aur AI — sab isi venue ke numbers
- * dikhate hain. Doosre platform se compare karna ho to wahan bhi yahi contract
- * kholna hoga; kisi aur exchange ka spot thoda alag price dega (perp basis +
- * exchange spread), jo bug nahi hai.
+ * Desk ka default market. User ne exchange joda ho to chart usi ka dikhta
+ * hai (kyunki har exchange ka bhaav alag hota hai). Manual override bhi hai.
  */
 export const DESK_VENUE = "Delta Exchange India";
 export const DESK_VENUE_SHORT = "Delta";

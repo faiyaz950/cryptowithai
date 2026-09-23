@@ -23,6 +23,8 @@ export type OrderMode = "paper" | "live";
 export type LiveTradeState = {
   kind: "signed-out" | "not-connected" | "no-trade" | "ready";
   accountId?: number;
+  /** Connected exchange id — chart isi se auto-switch hota hai. */
+  exchange?: string;
   label?: string;
   /** Available USDT (or USD) for % sizing. */
   availableUsdt: number;

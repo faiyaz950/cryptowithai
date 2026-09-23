@@ -105,7 +105,7 @@ export function updateFullName(token: string, fullName: string) {
 
 /* ── Exchanges (BYOK) ──────────────────────────────────── */
 
-export type ExchangeId = "delta" | "binance" | "bybit";
+export type ExchangeId = "delta" | "coindcx" | "bybit" | "binance";
 
 export interface ExchangeAccount {
   id: number;

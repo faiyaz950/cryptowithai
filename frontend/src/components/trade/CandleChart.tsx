@@ -72,6 +72,8 @@ interface Props {
   candles: Candle[];
   symbol?: string;
   interval?: string;
+  /** Chart kis exchange ka hai — legend mein dikhta hai. */
+  venue?: string;
   showEma9?: boolean;
   showEma21?: boolean;
   showEma50?: boolean;
@@ -171,6 +173,7 @@ export default function CandleChart({
   candles,
   symbol,
   interval,
+  venue = DESK_VENUE_SHORT,
   showEma9 = true,
   showEma21 = true,
   showEma50 = true,
@@ -697,7 +700,7 @@ export default function CandleChart({
             <span style={{ color: "var(--text-muted)" }}>
               {/* Venue chart par hi — doosre platform se milaane wale ko pata ho
                   ki ye kis exchange ka kaunsa contract hai. */}
-              {` · Perp · ${DESK_VENUE_SHORT}`}
+              {` · Perp · ${venue}`}
               {interval ? ` · ${interval}` : ""} · {DESK_TZ_LABEL}
               {compareLabel ? ` · vs ${compareLabel}` : ""}
               {drawTool !== "cursor" ? ` · draw:${drawTool}` : ""}

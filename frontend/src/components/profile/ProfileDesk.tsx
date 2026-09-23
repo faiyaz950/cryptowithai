@@ -33,8 +33,9 @@ import {
 
 const EXCHANGE_NAMES: Record<string, string> = {
   delta: "Delta Exchange India",
-  binance: "Binance",
+  coindcx: "CoinDCX",
   bybit: "Bybit",
+  binance: "Binance",
 };
 
 function fmtMoney(value: number, digits = 2): string {
