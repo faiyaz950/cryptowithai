@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   createChart,
   ColorType,
@@ -167,6 +167,45 @@ function pctSeries(candles: Candle[]): { time: UTCTimestamp; value: number }[] {
     time: toUnix(c.time),
     value: ((c.close - base) / base) * 100,
   }));
+}
+
+function resetChartView(chart: IChartApi | null) {
+  if (!chart) return;
+  chart.priceScale("right").applyOptions({ autoScale: true });
+  chart.timeScale().fitContent();
+}
+
+function ChartNavButton({
+  label,
+  shortcut,
+  onClick,
+  children,
+}: {
+  label: string;
+  shortcut?: string[];
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button type="button" className="trade-chart-nav-btn" aria-label={label} onClick={onClick}>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        {children}
+      </svg>
+      <span className="trade-chart-nav-tip" role="tooltip">
+        {label}
+        {shortcut && (
+          <span className="trade-chart-nav-keys">
+            {shortcut.map((k, i) => (
+              <span key={k}>
+                {i > 0 && <span className="trade-chart-nav-plus">+</span>}
+                <kbd>{k}</kbd>
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
+    </button>
+  );
 }
 
 export default function CandleChart({
@@ -691,8 +730,40 @@ export default function CandleChart({
       : null);
   const positive = (view?.change ?? 0) >= 0;
 
+  /** Right edge thami rehti hai — TradingView jaisa, aakhri candle nazar se nahi hatti. */
+  const zoom = (factor: number) => {
+    const ts = chartRef.current?.timeScale();
+    const range = ts?.getVisibleLogicalRange();
+    if (!ts || !range) return;
+    const width = Math.max(5, (range.to - range.from) * factor);
+    ts.setVisibleLogicalRange({ from: range.to - width, to: range.to });
+  };
+
+  const scroll = (direction: -1 | 1) => {
+    const ts = chartRef.current?.timeScale();
+    const range = ts?.getVisibleLogicalRange();
+    if (!ts || !range) return;
+    const step = Math.max(1, Math.round((range.to - range.from) * 0.15)) * direction;
+    ts.setVisibleLogicalRange({ from: range.from + step, to: range.to + step });
+  };
+
+  const resetChart = () => resetChartView(chartRef.current);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Mac par Option+R `e.key` mein "®" deta hai, isliye `code`.
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.code !== "KeyR") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      e.preventDefault();
+      resetChartView(chartRef.current);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <div className="relative w-full h-full">
+    <div className="relative w-full h-full trade-chart-shell">
       {view && (
         <div className="trade-chart-legend">
           <span className="font-bold" style={{ color: "var(--text-primary)" }}>
@@ -721,6 +792,26 @@ export default function CandleChart({
         role="img"
         aria-label="Crypto candlestick chart with indicator lines and volume"
       />
+      <div className="trade-chart-nav" role="toolbar" aria-label="Chart navigation">
+        <ChartNavButton label="Zoom Out" onClick={() => zoom(1.25)}>
+          <path d="M5 12h14" />
+        </ChartNavButton>
+        <ChartNavButton label="Zoom In" onClick={() => zoom(0.8)}>
+          <path d="M12 5v14M5 12h14" />
+        </ChartNavButton>
+        <span className="trade-chart-nav-gap" />
+        <ChartNavButton label="Scroll Left" onClick={() => scroll(-1)}>
+          <path d="M15 6l-6 6 6 6" />
+        </ChartNavButton>
+        <ChartNavButton label="Scroll Right" onClick={() => scroll(1)}>
+          <path d="M9 6l6 6-6 6" />
+        </ChartNavButton>
+        <span className="trade-chart-nav-gap" />
+        <ChartNavButton label="Reset Chart" shortcut={["Alt", "R"]} onClick={resetChart}>
+          <path d="M4 12a8 8 0 1 0 2.34-5.66" />
+          <path d="M4 4v4h4" />
+        </ChartNavButton>
+      </div>
     </div>
   );
 }
