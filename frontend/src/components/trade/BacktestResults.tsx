@@ -30,13 +30,25 @@ function fmtTime(value?: number): string {
 function statusTone(status?: string): string {
   const s = String(status || "").toLowerCase();
   if (s.includes("target")) return "trade-badge-green";
-  if (s.includes("sl") || s.includes("stop")) return "trade-badge-red";
+  if (s.includes("sl") || s.includes("stop") || s.includes("emergency")) return "trade-badge-red";
   return "trade-badge-neutral";
 }
 
 function prettyStatus(status?: string): string {
   return String(status || "—").replace(/_/g, " ");
 }
+
+function sideTone(side: string): string {
+  if (side === "buy" || side === "call" || side === "bull_call_spread") return "trade-badge-green";
+  if (side === "sell" || side === "put" || side === "bear_put_spread") return "trade-badge-red";
+  return "trade-badge-neutral";
+}
+
+const OPTIONS_KIND_LABEL: Record<string, string> = {
+  single: "Option buy",
+  spread: "Debit spread",
+  condor: "Iron condor",
+};
 
 export default function BacktestResults({ running, result, fallbackSymbol, fallbackTimeframe, emptyHint }: Props) {
   const trades = result?.trades?.slice().reverse().slice(0, 40) ?? [];
@@ -45,6 +57,7 @@ export default function BacktestResults({ running, result, fallbackSymbol, fallb
   const settled = wins + losses;
   const winPct = settled > 0 ? (wins / settled) * 100 : 0;
   const profit = Number(result?.total_profit ?? 0);
+  const options = result?.options;
 
   // Backend period ke timestamps alag se nahi bhejta — trades se nikaal lete hain.
   const allTrades = result?.trades ?? [];
@@ -99,7 +112,21 @@ export default function BacktestResults({ running, result, fallbackSymbol, fallb
             RSI {result.rsi_settings.period} · {result.rsi_settings.oversold}/{result.rsi_settings.overbought}
           </span>
         )}
-        <span className="tnum">SL {result.sl_points} · Target {result.target_points}</span>
+        {options ? (
+          <>
+            <span className="tnum">
+              {OPTIONS_KIND_LABEL[options.kind] ?? options.kind} · {options.underlying} mark price · 1 contract = {options.contract_value} {options.underlying}
+            </span>
+            <span className="tnum">Slippage {options.slippage_pct_per_side}% har fill par</span>
+            {options.skipped > 0 && (
+              <span className="tnum" title={Object.entries(options.skip_reasons).map(([r, n]) => `${r}: ${n}`).join("\n")}>
+                {options.skipped} signal skip ({Object.entries(options.skip_reasons).map(([r, n]) => `${r} ${n}`).join(", ")})
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="tnum">SL {result.sl_points} · Target {result.target_points}</span>
+        )}
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -114,7 +141,7 @@ export default function BacktestResults({ running, result, fallbackSymbol, fallb
           label="Net P&L"
           value={`${profit >= 0 ? "+" : ""}${profit.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           color={profit >= 0 ? "var(--green)" : "var(--red)"}
-          sub={`${result.lots ?? 1} lot(s)`}
+          sub={options ? `USD · ${result.lots ?? 1} contract(s)` : `${result.lots ?? 1} lot(s)`}
         />
         <Kpi label="Days covered" value={String(result.days_covered ?? 0)} sub={`${result.total_candles ?? 0} candles`} />
       </div>
@@ -153,11 +180,12 @@ export default function BacktestResults({ running, result, fallbackSymbol, fallb
               <thead>
                 <tr>
                   <th>Side</th>
+                  {options && <th>Contract</th>}
                   <th>Entry time</th>
-                  <th className="trade-num">Entry</th>
-                  <th className="trade-num">Exit</th>
+                  <th className="trade-num">{options ? "Premium in" : "Entry"}</th>
+                  <th className="trade-num">{options ? "Premium out" : "Exit"}</th>
                   <th>Status</th>
-                  <th className="trade-num">Points</th>
+                  <th className="trade-num">{options ? "Δ premium" : "Points"}</th>
                   <th className="trade-num">P&amp;L</th>
                 </tr>
               </thead>
@@ -167,8 +195,14 @@ export default function BacktestResults({ running, result, fallbackSymbol, fallb
                   return (
                     <tr key={`${t.entry_time}-${i}`}>
                       <td>
-                        <span className={`trade-badge ${t.side === "buy" ? "trade-badge-green" : "trade-badge-red"}`}>{t.side}</span>
+                        <span className={`trade-badge ${sideTone(t.side)}`}>{prettyStatus(t.side)}</span>
                       </td>
+                      {options && (
+                        <td className="tnum" style={{ color: "var(--text-secondary)" }} title={t.symbols?.join(", ")}>
+                          {t.instrument ?? "—"}
+                          {t.iv != null && <span style={{ color: "var(--text-muted)" }}> · IV {t.iv}%</span>}
+                        </td>
+                      )}
                       <td style={{ color: "var(--text-muted)" }}>{fmtTime(t.entry_time)}</td>
                       <td className="trade-num">{t.entry_price?.toFixed(2)}</td>
                       <td className="trade-num">{t.exit_price?.toFixed(2)}</td>

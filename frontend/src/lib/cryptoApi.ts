@@ -210,6 +210,20 @@ export interface BacktestTrade {
   pnl: number;
   pnl_points: number;
   status: string;
+  /** Options backtest: legs + expiry, jaise "+C76000 · 16 Sep". */
+  instrument?: string;
+  symbols?: string[];
+  spot?: number;
+  iv?: number;
+}
+
+export interface OptionsBacktestInfo {
+  kind: "single" | "spread" | "condor";
+  underlying: string;
+  contract_value: number;
+  slippage_pct_per_side: number;
+  skipped: number;
+  skip_reasons: Record<string, number>;
 }
 
 export interface BacktestResult {
@@ -243,6 +257,7 @@ export interface BacktestResult {
     sl_points: number;
     target_points: number;
   } | null;
+  options?: OptionsBacktestInfo;
   error?: string;
 }
 
@@ -400,6 +415,33 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
     exchange: "delta",
   });
   return cryptoFetch<BacktestResult>(`/backtest?${q}`);
+}
+
+/** Options signal replay ke liye perp candles — `/candles` ki 4000-bar limit ke bina. */
+export async function fetchOptionsBacktestCandles(symbol: string, timeframe: string, days: number): Promise<Candle[]> {
+  const q = new URLSearchParams({ symbol, timeframe, days: String(days) });
+  const res = await cryptoFetch<{ success: boolean; candles?: Candle[]; error?: string }>(`/options/backtest/candles?${q}`);
+  if (!res.success) throw new Error(res.error || "Candles nahi mili");
+  return res.candles ?? [];
+}
+
+export interface OptionsBacktestRequest {
+  kind: OptionsBacktestInfo["kind"];
+  strategy_name: string;
+  symbol: string;
+  timeframe: string;
+  days: number;
+  days_covered: number;
+  total_candles: number;
+  lots: number;
+  start: number;
+  params: Record<string, number>;
+  /** `time` = entry ka waqt (signal candle band hone ke baad), ms. */
+  entries: { time: number; direction: "bull" | "bear" | null; spot: number }[];
+}
+
+export async function runOptionsBacktestRequest(body: OptionsBacktestRequest): Promise<BacktestResult> {
+  return cryptoFetch<BacktestResult>("/options/backtest", { method: "POST", body: JSON.stringify(body) });
 }
 
 export interface ScreenerCandles {

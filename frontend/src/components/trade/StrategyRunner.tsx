@@ -34,6 +34,7 @@ import {
   type StrategyField,
   type StrategyValues,
 } from "@/lib/strategies";
+import { optionsKind, runOptionsBacktest } from "@/lib/optionsBacktest";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
   ssr: false,
@@ -45,6 +46,8 @@ interface Props {
   initialValues: StrategyValues;
   /** Page header live badge dikha sake, isliye state upar bhejte hain. */
   onActiveChange?: (active: boolean) => void;
+  /** Card ke Backtest button se aaye to page khulte hi backtest chalao. */
+  autoBacktest?: boolean;
 }
 
 /** Live monitor kitni der mein refresh ho. */
@@ -70,7 +73,7 @@ function fmtDay(timeMs: number): string {
   return new Date(timeMs).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-export default function StrategyRunner({ def, initialValues, onActiveChange }: Props) {
+export default function StrategyRunner({ def, initialValues, onActiveChange, autoBacktest }: Props) {
   const router = useRouter();
   const [values, setValues] = useState<StrategyValues>(initialValues);
   /**
@@ -92,6 +95,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
   const [btRunning, setBtRunning] = useState(false);
   const [btResult, setBtResult] = useState<BacktestResult | null>(null);
   const [btError, setBtError] = useState<string | null>(null);
+  const [btProgress, setBtProgress] = useState<string | null>(null);
 
   const symbol = str(values, "symbol", "BTCUSDT");
   const timeframe = str(values, "timeframe", "1h");
@@ -190,7 +194,9 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
     setBtResult(null);
     syncUrl();
     try {
-      const res = await runBacktest(def.toBacktest(values));
+      const res = optionsKind(def)
+        ? await runOptionsBacktest(def, values, setBtProgress)
+        : await runBacktest(def.toBacktest(values));
       if (!res.success) throw new Error(res.error || "Backtest fail");
       setBtResult(res);
       log(`Backtest done — ${res.total_trades ?? 0} trades, win rate ${res.win_rate ?? 0}%`);
@@ -198,8 +204,17 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
       setBtError(err instanceof Error ? err.message : "Backtest fail ho gaya");
     } finally {
       setBtRunning(false);
+      setBtProgress(null);
     }
   };
+
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (!autoBacktest || autoRan.current) return;
+    autoRan.current = true;
+    void handleBacktest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sirf pehli baar, card se aane par
+  }, [autoBacktest]);
 
   // Mount ke baad pichhli activation restore karo — localStorage sirf client par hai,
   // isliye ye effect mein hota hai, useState initialiser mein nahi (hydration mismatch).
@@ -278,6 +293,9 @@ export default function StrategyRunner({ def, initialValues, onActiveChange }: P
               >
                 {btRunning ? "Backtest chal raha hai…" : "Run backtest"}
               </button>
+            )}
+            {btProgress && (
+              <p className="text-[11.5px] tnum" style={{ color: "var(--text-muted)" }}>{btProgress}</p>
             )}
           </div>
 

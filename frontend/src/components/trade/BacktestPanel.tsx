@@ -6,6 +6,7 @@ import BacktestResults from "@/components/trade/BacktestResults";
 import type { BacktestParams, BacktestResult } from "@/lib/cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS } from "@/lib/cryptoApi";
 import { RANGE_TIMEZONES, STRATEGIES } from "@/lib/strategies";
+import { optionsKind } from "@/lib/optionsBacktest";
 
 interface Props {
   defaults: Partial<BacktestParams>;
@@ -44,18 +45,17 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
    * Dropdown registry se banti hai, hardcoded list se nahi — warna nayi strategy
    * add karne par ye panel peeche reh jaata hai.
    *
-   * Sirf wahi strategies aati hain jo backend ke do engines par imaandari se
-   * chal sakti hain. Options wali (`backtestable: false`) yahan nahi hain: unhe
-   * chalane par backtest EMA crossover ka result de deta, jiska us strategy se
-   * koi taalluk nahi hota — aur galat number dikhane se na dikhana behtar hai.
+   * Sirf wahi strategies aati hain jo backend ke do perp engines par imaandari
+   * se chal sakti hain. Options wali yahan nahi hain — unka backtest asli option
+   * data par strategy page se chalta hai, points wale is form se nahi.
    */
-  const backtestable = STRATEGIES.filter((d) => d.backtestable !== false);
+  const backtestable = STRATEGIES.filter((d) => d.backtestable !== false && !optionsKind(d));
   const [strategyId, setStrategyId] = useState<string>(() => backtestable[0]?.id ?? "custom-ema");
   const selectedDef = STRATEGIES.find((d) => d.id === strategyId);
 
   const pickStrategy = (id: string) => {
     const def = STRATEGIES.find((d) => d.id === id);
-    if (!def || def.backtestable === false) return;
+    if (!def || def.backtestable === false || optionsKind(def)) return;
     setStrategyId(id);
     // Us strategy ke apne parameters le aao, par market/window jaisa hai waisa rakho.
     setParams((prev) => ({

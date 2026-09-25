@@ -19,6 +19,7 @@ import {
   type StrategyField,
   type StrategyValues,
 } from "@/lib/strategies";
+import { optionsKind } from "@/lib/optionsBacktest";
 
 interface Props {
   defaultSymbol: string;
@@ -37,7 +38,7 @@ function cardFields(def: StrategyDef): StrategyField[] {
   return def.fields.filter((f) => f.onCard).slice(0, CARD_FIELD_LIMIT);
 }
 
-/** Options strategies alag family hain — unka backtest bhi nahi chalta. */
+/** Options strategies alag family hain — unka backtest asli option data par alag engine se. */
 function isOptions(def: StrategyDef): boolean {
   return def.category.toLowerCase().startsWith("options");
 }
@@ -73,6 +74,7 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
   const [active, setActive] = useState<Record<string, boolean>>({});
   const [openTune, setOpenTune] = useState<Record<string, boolean>>({});
 
+  const router = useRouter();
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [interval, setIntervalValue] = useState("1h");
   const [candles, setCandles] = useState<Candle[]>([]);
@@ -136,7 +138,7 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
 
   const groups = [
     { title: "Futures & spot", hint: "Perp / coin price — inka backtest chalta hai · pro setups featured", defs: STRATEGIES.filter((d) => !isOptions(d)) },
-    { title: "Options", hint: "OTM, debit, condor — live signal + strike / legs selection", defs: STRATEGIES.filter(isOptions) },
+    { title: "Options", hint: "OTM, debit, condor — live signal, strike / legs, aur asli option data par backtest", defs: STRATEGIES.filter(isOptions) },
   ];
 
   return (
@@ -222,7 +224,16 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
                 tuneOpen={!!openTune[def.id]}
                 onToggleTune={() => setOpenTune((p) => ({ ...p, [def.id]: !p[def.id] }))}
                 onField={(key, value) => setField(def.id, key, value)}
-                onTest={() => onTest(def.toBacktest({ ...values[def.id], symbol, timeframe: interval }))}
+                onTest={() => {
+                  const tuned = { ...values[def.id], symbol, timeframe: interval };
+                  // Options ka backtest signal replay + legs dikhata hai — wo strategy page par hi chalta hai.
+                  if (optionsKind(def)) {
+                    const href = strategyHref(def, tuned);
+                    router.push(`${href}${href.includes("?") ? "&" : "?"}backtest=1`);
+                    return;
+                  }
+                  onTest(def.toBacktest(tuned));
+                }}
               />
             ))}
           </div>

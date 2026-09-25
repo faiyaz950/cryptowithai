@@ -58,6 +58,8 @@ export interface LiveSignal {
   detail?: string;
   tone: SignalTone;
   readouts: LiveReadout[];
+  /** Condor jaisi non-directional entry — tone "neutral" rehta hai, isliye alag flag. */
+  entry?: boolean;
 }
 
 export interface ChartOverlay {
@@ -191,6 +193,15 @@ export const RANGE_TIMEZONES = [
 const backtestFields: StrategyField[] = [
   { key: "days", label: "History · days", kind: "number", group: "backtest", min: 1, max: 700 },
 ];
+
+/** Delta ki expired option listing ~2 mahine se peeche bharosemand nahi, isliye 60 din. */
+const optionsBacktestFields: StrategyField[] = [
+  { key: "days", label: "History · days", kind: "number", group: "backtest", min: 1, max: 60 },
+  { key: "lots", label: "Contracts", kind: "number", group: "backtest", min: 1, step: 1, hint: "Delta par BTC option ka 1 contract = 0.001 BTC." },
+];
+
+const OPTIONS_ENGINE_NOTE =
+  "Backtest asli Delta option data par chalta hai: har signal par us waqt listed contracts mein se wahi expiry/strike chuna jaata hai jo live rules chunte hain, aur premium Delta ke mark price se track hota hai. Purane bid/ask nahi milte, isliye har fill par max bid/ask spread ka aadha slippage lagta hai; fees shaamil nahi. Strike delta ATM IV se nikalta hai, aur liquidity (volume/OI) ka filter history mein nahi lag sakta.";
 
 const sharedDefaults: StrategyValues = {
   symbol: "BTCUSDT",
@@ -813,10 +824,8 @@ const otmDirectional: StrategyDef = {
     "Pehle 15M par regime: EMA 9 > EMA 21, price VWAP ke upar, aur ADX 20 se upar — tabhi market ko trending maana jata hai. Phir 5M par entry confirmation: EMA 9 > EMA 21, price recent swing high ke upar close kare, aur volume average se zyada ho. Chhe conditions ka score banta hai aur kam se kam 5/6 chahiye. Bearish taraf sab ulta — SELL nahi, OTM Put buy. Strike Delta 0.25-0.35 band se chunta hai, fixed percentage se nahi.",
   accent: "#7c3aed",
   icon: Target,
-  backtestable: false,
   optionChain: { bullish: "call", bearish: "put" },
-  engineNote:
-    "Ye options strategy hai — humara backtest engine sirf perpetual candles par chalta hai, isliye iska backtest button nahi hai. Signal engine poora doc ke hisaab se hai; premium par SL/target aur time-exit rules parameters mein hain par unhe execute karne ke liye options order routing chahiye, jo abhi nahi hai.",
+  engineNote: OPTIONS_ENGINE_NOTE,
   fields: [
     { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 100, onCard: true },
     { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 3, max: 200, onCard: true },
@@ -826,6 +835,7 @@ const otmDirectional: StrategyDef = {
     { key: "swing_span", label: "Swing span · bars", kind: "number", group: "signal", min: 1, max: 10 },
     { key: "min_score", label: "Minimum score (of 6)", kind: "number", group: "signal", min: 3, max: 6 },
     ...marketFields,
+    ...optionsBacktestFields,
     { key: "delta_min", label: "Strike delta · min", kind: "number", group: "risk", min: 0.05, max: 0.9, step: 0.01 },
     { key: "delta_max", label: "Strike delta · max", kind: "number", group: "risk", min: 0.05, max: 0.9, step: 0.01 },
     { key: "sl_premium_pct", label: "Stop loss · % premium", kind: "number", group: "risk", min: 10, max: 90, hint: "Doc: 40-50% premium loss par exit." },
@@ -844,6 +854,7 @@ const otmDirectional: StrategyDef = {
     volume_lookback: 20,
     swing_span: 3,
     min_score: 5,
+    days: 14,
     delta_min: 0.25,
     delta_max: 0.35,
     sl_premium_pct: 45,
@@ -994,7 +1005,7 @@ const otmDirectional: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    // backtestable: false hai, par interface ke liye sabse nazdeek mapping.
+    // Options backtest `runOptionsBacktest` se chalta hai; ye sirf interface ke liye.
     return { ...baseParams(values), ema9: num(values, "ema_fast", 9), ema21: num(values, "ema_slow", 21), ema50: num(values, "ema_slow", 21) };
   },
 };
@@ -1020,10 +1031,8 @@ const debitSpread: StrategyDef = {
     "Trend ho par bahut strong na ho — 15M par EMA 9 > EMA 21, price VWAP ke upar, aur ADX 20 se 30 ke beech. 5M par breakout aur volume confirmation. Tab near-the-money call BUY karke usse upar wali call SELL kar dete hain (Bull Call Spread); bearish mein put ke saath ulta (Bear Put Spread). Short leg premium ghatata hai, theta ka nuksaan kam karta hai, par profit bhi cap kar deta hai — maximum profit = strike width minus net debit. Exit: debit ka 40-50% doob jaaye to SL, maximum profit ka 70-80% mil jaaye to book, aur expiry se 1-2 ghante pehle mandatory.",
   accent: "#0891b2",
   icon: Layers,
-  backtestable: false,
   optionSpread: { bullish: "call", bearish: "put" },
-  engineNote:
-    "Ye do-leg options strategy hai — candle-based backtest engine ise imaandari se test nahi kar sakta, isliye backtest button nahi hai. Legs, debit, breakeven aur R:R live chain se aate hain; orders khud lagane honge.",
+  engineNote: OPTIONS_ENGINE_NOTE,
   fields: [
     { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 100, onCard: true },
     { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 3, max: 200, onCard: true },
@@ -1034,6 +1043,7 @@ const debitSpread: StrategyDef = {
     { key: "swing_span", label: "Swing span · bars", kind: "number", group: "signal", min: 1, max: 10 },
     { key: "min_score", label: "Minimum score (of 5)", kind: "number", group: "signal", min: 2, max: 5 },
     ...marketFields,
+    ...optionsBacktestFields,
     { key: "spread_width", label: "Strike width", kind: "number", group: "risk", min: 100, step: 100, hint: "Dono strikes ke beech ka fasla — max profit isi se bandha hai." },
     { key: "long_delta", label: "Long leg delta", kind: "number", group: "risk", min: 0.2, max: 0.8, step: 0.05, hint: "0.5 = near the money, jaisa doc ka example." },
     { key: "sl_debit_pct", label: "Stop loss · % of debit", kind: "number", group: "risk", min: 10, max: 90, hint: "Doc: debit ka 40-50% doobne par exit." },
@@ -1054,6 +1064,7 @@ const debitSpread: StrategyDef = {
     min_score: 4,
     spread_width: 2000,
     long_delta: 0.5,
+    days: 14,
     sl_debit_pct: 45,
     tp_max_profit_pct: 75,
     time_exit_hours: 1.5,
@@ -1218,10 +1229,8 @@ const ironCondor: StrategyDef = {
     "Market kahin nahi jaa raha — ADX 20 se neeche, EMA 9 aur 21 lagbhag barabar, price apni range ke andar, aur volatility shaant. Tab upar ek call bech kar usse door wali call khareedte hain, aur neeche ek put bech kar usse door wali put. Short legs ~0.15-0.20 delta par, protection ~0.05-0.10 par. Price dono short strikes ke beech rahe to poora credit milta hai. Max loss = bada wing minus credit. Exit: credit ka aadha profit ban jaaye to book, ya nuksaan credit ke 1.5 guna ho jaaye to nikal jao. Short strike ka delta bahut badh jaaye to bhi turant nikalna hai.",
   accent: "#d97706",
   icon: Waves,
-  backtestable: false,
   optionCondor: true,
-  engineNote:
-    "Chaar-leg options position — candle backtest engine ise test nahi kar sakta, isliye backtest button nahi hai. Legs, credit aur breakevens live chain se aate hain; orders khud lagane honge.",
+  engineNote: OPTIONS_ENGINE_NOTE,
   fields: [
     { key: "adx_max", label: "ADX maximum", kind: "number", group: "signal", min: 5, max: 40, onCard: true, hint: "Isse upar trend hai — condor ke liye nahi." },
     { key: "adx_period", label: "ADX period", kind: "number", group: "signal", min: 5, max: 50 },
@@ -1232,6 +1241,7 @@ const ironCondor: StrategyDef = {
     { key: "range_buffer_pct", label: "Range edge buffer · %", kind: "number", group: "signal", min: 1, max: 40, hint: "Price range ke kinare se itna door ho — warna breakout ka risk." },
     { key: "atr_spike_mult", label: "ATR spike limit · x", kind: "number", group: "signal", min: 1, max: 5, step: 0.1, hint: "Current ATR apne average se itna guna se zyada ho to volatility spike." },
     ...marketFields,
+    ...optionsBacktestFields,
     { key: "short_delta", label: "Short legs delta", kind: "number", group: "risk", min: 0.05, max: 0.4, step: 0.005, hint: "Doc: 0.15-0.20." },
     { key: "long_delta", label: "Protection delta", kind: "number", group: "risk", min: 0.01, max: 0.2, step: 0.005, hint: "Doc: 0.05-0.10." },
     { key: "max_iv_pct", label: "Max IV · %", kind: "number", group: "risk", min: 10, max: 200, hint: "Isse upar IV elevated maani jayegi — doc naye entries block karta hai." },
@@ -1252,6 +1262,7 @@ const ironCondor: StrategyDef = {
     range_lookback: 96,
     range_buffer_pct: 15,
     atr_spike_mult: 1.8,
+    days: 14,
     short_delta: 0.175,
     long_delta: 0.075,
     max_iv_pct: 60,
@@ -1331,6 +1342,7 @@ const ironCondor: StrategyDef = {
         detail: `Range ${price(rangeLow)}-${price(rangeHigh)}. Neeche legs aur credit dekhein; entry se pehle IV bhi check karein.`,
         tone: "neutral",
         readouts: [],
+        entry: true,
       };
     } else if (!adxCalm) {
       signal = {
@@ -1763,10 +1775,8 @@ const momentumOtmPro: StrategyDef = {
   accent: "#7c3aed",
   icon: Zap,
   featured: true,
-  backtestable: false,
   optionChain: { bullish: "call", bearish: "put" },
-  engineNote:
-    "Options strategy — candle backtest nahi. Live multi-timeframe score + Delta-band strike selection Option Chain panel se.",
+  engineNote: OPTIONS_ENGINE_NOTE,
   fields: [
     { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
     { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
@@ -1776,6 +1786,7 @@ const momentumOtmPro: StrategyDef = {
     { key: "swing_span", label: "Swing span", kind: "number", group: "signal", min: 1, max: 10 },
     { key: "min_score", label: "Min score (of 6)", kind: "number", group: "signal", min: 3, max: 6, onCard: true },
     ...marketFields,
+    ...optionsBacktestFields,
     { key: "delta_min", label: "Strike delta · min", kind: "number", group: "risk", min: 0.1, max: 0.6, step: 0.01 },
     { key: "delta_max", label: "Strike delta · max", kind: "number", group: "risk", min: 0.15, max: 0.7, step: 0.01 },
     { key: "sl_premium_pct", label: "SL · % premium", kind: "number", group: "risk", min: 20, max: 80 },
@@ -1794,6 +1805,7 @@ const momentumOtmPro: StrategyDef = {
     volume_lookback: 20,
     swing_span: 3,
     min_score: 5,
+    days: 14,
     delta_min: 0.3,
     delta_max: 0.4,
     sl_premium_pct: 40,
@@ -1909,10 +1921,8 @@ const trendDebitPro: StrategyDef = {
   accent: "#2563eb",
   icon: Shield,
   featured: true,
-  backtestable: false,
   optionSpread: { bullish: "call", bearish: "put" },
-  engineNote:
-    "Options debit spread — backtest nahi. Spread panel long/short legs + max profit/loss dikhata hai.",
+  engineNote: OPTIONS_ENGINE_NOTE,
   fields: [
     { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
     { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
@@ -1922,6 +1932,7 @@ const trendDebitPro: StrategyDef = {
     { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 2, max: 50 },
     { key: "min_score", label: "Min score (of 5)", kind: "number", group: "signal", min: 3, max: 5 },
     ...marketFields,
+    ...optionsBacktestFields,
     { key: "spread_width", label: "Strike width", kind: "number", group: "risk", min: 100, max: 20000, step: 100 },
     { key: "long_delta", label: "Long leg delta", kind: "number", group: "risk", min: 0.25, max: 0.7, step: 0.01 },
     { key: "sl_debit_pct", label: "SL · % of debit", kind: "number", group: "risk", min: 20, max: 90 },
@@ -1941,6 +1952,7 @@ const trendDebitPro: StrategyDef = {
     min_score: 4,
     spread_width: 2000,
     long_delta: 0.5,
+    days: 14,
     sl_debit_pct: 45,
     tp_max_profit_pct: 70,
     time_exit_hours: 2,
@@ -2045,10 +2057,8 @@ const volCrushCondor: StrategyDef = {
   accent: "#b45309",
   icon: Boxes,
   featured: true,
-  backtestable: false,
   optionCondor: true,
-  engineNote:
-    "Options iron condor — candle backtest nahi. Condor panel 4 legs + credit risk dikhata hai.",
+  engineNote: OPTIONS_ENGINE_NOTE,
   fields: [
     { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
     { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
@@ -2060,6 +2070,7 @@ const volCrushCondor: StrategyDef = {
     { key: "ema_gap_pct", label: "Max EMA gap · %", kind: "number", group: "signal", min: 0.05, max: 2, step: 0.05 },
     { key: "range_lookback", label: "Range bars", kind: "number", group: "signal", min: 10, max: 100 },
     ...marketFields,
+    ...optionsBacktestFields,
     { key: "short_delta", label: "Short wing delta", kind: "number", group: "risk", min: 0.1, max: 0.35, step: 0.01 },
     { key: "long_delta", label: "Long wing delta", kind: "number", group: "risk", min: 0.02, max: 0.2, step: 0.01 },
     { key: "max_iv_pct", label: "Max IV · %", kind: "number", group: "risk", min: 20, max: 200 },
@@ -2081,6 +2092,7 @@ const volCrushCondor: StrategyDef = {
     crush_pct: 25,
     ema_gap_pct: 0.35,
     range_lookback: 30,
+    days: 14,
     short_delta: 0.2,
     long_delta: 0.08,
     max_iv_pct: 90,
@@ -2139,6 +2151,7 @@ const volCrushCondor: StrategyDef = {
         detail: "ATR peak se neeche, range-bound. Short wings + long wings Condor panel se.",
         tone: "neutral",
         readouts: [],
+        entry: true,
       };
     } else {
       const failed = labels.filter((_, i) => !checks[i]);
