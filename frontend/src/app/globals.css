@@ -1459,6 +1459,8 @@ textarea:focus-visible {
   border: 5px solid transparent;
   border-top-color: rgba(55, 62, 76, .96);
 }
+.trade-chart-nav-btn:last-child .trade-chart-nav-tip { left: auto; right: -4px; transform: none; }
+.trade-chart-nav-btn:last-child .trade-chart-nav-tip::after { left: auto; right: 16px; transform: none; }
 .trade-chart-nav-btn:hover .trade-chart-nav-tip,
 .trade-chart-nav-btn:focus-visible .trade-chart-nav-tip { opacity: 1; }
 .trade-chart-nav-keys { display: inline-flex; align-items: center; color: #fbbf24; }
