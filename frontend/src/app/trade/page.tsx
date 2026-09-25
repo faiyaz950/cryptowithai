@@ -65,7 +65,6 @@ import {
   placeDemoOrder,
   runBacktest,
   symbolLabel,
-  venueName,
   venueShort,
   CRYPTO_INTERVALS,
   CRYPTO_SYMBOLS,
@@ -877,7 +876,7 @@ function TradeTerminal() {
                     </div>
                     <div>
                       <div className="desk-pair-name">{symbolLabel(symbol)}</div>
-                      <div className="desk-pair-tag">{DESK_CONTRACT} · {venueName(chartSource)}</div>
+                      <div className="desk-pair-tag">{DESK_CONTRACT} · {venueShort(chartSource)}</div>
                     </div>
                   </div>
 
@@ -1129,11 +1128,15 @@ function TradeTerminal() {
                     {updatedAt && (
                       <div className="px-4 py-2 text-[11px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--tr-line-soft)" }}>
                         {liveStatus === "live" ? (
-                          <span style={{ color: "var(--green)", fontWeight: 600 }}>● Live · Delta stream</span>
+                          <span style={{ color: "var(--green)", fontWeight: 600 }}>
+                            ● Live · {venueShort(chartSource)} stream
+                          </span>
                         ) : liveStatus === "connecting" ? (
                           <span style={{ color: "var(--amber)" }}>● Live feed jud raha hai…</span>
                         ) : chartSource !== "delta" ? (
-                          <span style={{ color: "var(--green)", fontWeight: 600 }}>● Live · {venueShort(chartSource)} poll</span>
+                          <span style={{ color: "var(--green)", fontWeight: 600 }}>
+                            ● Live · {venueShort(chartSource)} poll
+                          </span>
                         ) : null}
                         {(liveStatus === "live" || liveStatus === "connecting" || chartSource !== "delta") ? " · " : ""}
                         Synced {updatedAt} {DESK_TZ_LABEL} · poll {pollMs / 1000}s
