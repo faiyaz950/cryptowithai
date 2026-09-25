@@ -118,6 +118,7 @@ function StrategyView({
       <StrategyRunner
         def={def}
         initialValues={initialValues}
+        autoBacktest={searchParams.get("backtest") === "1"}
         onActiveChange={(next) => {
           setActive(next);
           if (isCustom) setCustomStrategyStatus(def.id, next ? "live" : "paused");
