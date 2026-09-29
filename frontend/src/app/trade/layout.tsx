@@ -14,7 +14,7 @@ const tradeMono = JetBrains_Mono({
   display: "swap",
 });
 
-/** Crypto terminal — Inter + JetBrains Mono (Finowings Desk). */
+/** Crypto terminal — Inter + JetBrains Mono (Mukul Crypto Club). */
 export default function TradeLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className={`${tradeSans.variable} ${tradeMono.variable} h-full`}>

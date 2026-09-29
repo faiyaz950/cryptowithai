@@ -16,8 +16,8 @@ export default function Logo({
   return (
     <div className={`flex items-center gap-2.5 ${className}`}>
       <Image
-        src="/finoailogo.png"
-        alt="Finowings AI"
+        src="/mukul/icon.png"
+        alt="Mukul Crypto Club"
         width={size}
         height={size}
         className="rounded-md object-contain flex-shrink-0"
@@ -26,7 +26,7 @@ export default function Logo({
       {showName && (
         <div className="min-w-0">
           <div className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-            Finowings AI
+            Mukul Crypto Club
           </div>
           {subtitle && (
             <div className="text-xs" style={{ color: "var(--text-muted)" }}>

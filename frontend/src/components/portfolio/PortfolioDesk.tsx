@@ -383,9 +383,9 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
             disabled={upload.status === "parsing"}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
             style={{
-              background: "linear-gradient(135deg, #1e40af, #2563eb)",
+              background: "linear-gradient(135deg, #005a8e, #19a2dd)",
               color: "#ffffff",
-              boxShadow: "0 4px 12px rgba(37, 99, 235, 0.22)",
+              boxShadow: "0 4px 12px rgba(25, 162, 221, 0.22)",
               opacity: upload.status === "parsing" ? 0.6 : 1,
             }}>
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -443,7 +443,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
               upload.status === "error"
                 ? { background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)", color: "#dc2626" }
                 : upload.status === "success"
-                ? { background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(37, 99, 235, 0.22)", color: "var(--accent)" }
+                ? { background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(25, 162, 221, 0.22)", color: "var(--accent)" }
                 : { background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-secondary)" }
             }
           >
@@ -468,14 +468,14 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
           <>
             <div className="card-elevated rounded-2xl p-8 sm:p-12 text-center">
               <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5"
-                style={{ background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(37, 99, 235, 0.22)" }}>
+                style={{ background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(25, 162, 221, 0.22)" }}>
                 <svg className="w-8 h-8" style={{ color: "var(--accent)" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>
               <h2 className="text-lg font-bold mb-2">Portfolio file se connect karein</h2>
               <p className="text-sm max-w-md mx-auto mb-6" style={{ color: "var(--text-secondary)" }}>
-                Apne broker ka holdings ya statement file upload karo — Finowings AI usse padh kar
+                Apne broker ka holdings ya statement file upload karo — Mukul AI usse padh kar
                 aapke portfolio ke har sawaal ka jawab dega.
               </p>
 
@@ -666,7 +666,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                   disabled={!askText.trim()}
                   className="px-4 py-2.5 rounded-xl text-sm font-semibold transition-all flex-shrink-0"
                   style={{
-                    background: askText.trim() ? "linear-gradient(135deg, #1e40af, #2563eb)" : "var(--bg-hover)",
+                    background: askText.trim() ? "linear-gradient(135deg, #005a8e, #19a2dd)" : "var(--bg-hover)",
                     color: askText.trim() ? "#ffffff" : "var(--text-muted)",
                   }}
                 >
@@ -678,13 +678,13 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                 <button
                   onClick={handleAnalyze}
                   className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
-                  style={{ background: "linear-gradient(135deg, #1e40af, #2563eb)", color: "#ffffff", boxShadow: "0 4px 16px rgba(37, 99, 235, 0.22)" }}
+                  style={{ background: "linear-gradient(135deg, #005a8e, #19a2dd)", color: "#ffffff", boxShadow: "0 4px 16px rgba(25, 162, 221, 0.22)" }}
                   onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 4px 24px rgba(37, 99, 235, 0.28)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(37, 99, 235, 0.22)"; }}>
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(25, 162, 221, 0.22)"; }}>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                   </svg>
-                  Full Portfolio Analysis with Finowings AI
+                  Full Portfolio Analysis with Mukul AI
                 </button>
               )}
             </section>

@@ -241,7 +241,7 @@ function ChatMessage({ message, onFollowUp }: Props) {
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <span className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>Finowings AI</span>
+          <span className="text-xs font-semibold" style={{ color: "var(--text-muted)" }}>Mukul AI</span>
           {topicCfg && message.topic && message.topic !== "general" && (
             <span
               className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium"

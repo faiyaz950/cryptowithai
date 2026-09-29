@@ -1,4 +1,4 @@
-# Finowings AI — Backend
+# Mukul AI — Backend
 
 FastAPI service powering chat, model routing and market data.
 

@@ -565,7 +565,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
 
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-sm font-medium truncate" style={{ color: "var(--text-secondary)" }}>
-              {activeConversation ? activeConversation.title : "Finowings AI"}
+              {activeConversation ? activeConversation.title : "Mukul AI"}
             </span>
             {activeTopicCfg && activeConversation?.topic && activeConversation.topic !== "general" && (
               <span
@@ -640,12 +640,12 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
               onClick={() => router.push("/login")}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-semibold transition-all duration-150"
               style={{
-                background: "linear-gradient(135deg, #1e40af, #2563eb)",
+                background: "linear-gradient(135deg, #005a8e, #19a2dd)",
                 color: "#ffffff",
-                boxShadow: "0 8px 20px rgba(37, 99, 235, 0.22)",
+                boxShadow: "0 8px 20px rgba(25, 162, 221, 0.22)",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 24px rgba(37, 99, 235, 0.28)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 8px 20px rgba(37, 99, 235, 0.22)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 8px 20px rgba(25, 162, 221, 0.22)"; }}
             >
               Login
             </button>
@@ -667,7 +667,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
               >
                 <div
                   className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                  style={{ background: "linear-gradient(135deg, #1e40af, #2563eb)", color: "#ffffff" }}
+                  style={{ background: "linear-gradient(135deg, #005a8e, #19a2dd)", color: "#ffffff" }}
                 >
                   {user.avatar}
                 </div>
@@ -693,7 +693,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
                       <div className="flex items-center gap-3">
                         <div
                           className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-                          style={{ background: "linear-gradient(135deg, #1e40af, #2563eb)", color: "#ffffff" }}
+                          style={{ background: "linear-gradient(135deg, #005a8e, #19a2dd)", color: "#ffffff" }}
                         >
                           {user.avatar}
                         </div>
@@ -707,7 +707,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium"
                           style={
                             user.plan === "pro"
-                              ? { background: "rgba(37, 99, 235, 0.1)", color: "var(--accent)", border: "1px solid rgba(37, 99, 235, 0.22)" }
+                              ? { background: "rgba(37, 99, 235, 0.1)", color: "var(--accent)", border: "1px solid rgba(25, 162, 221, 0.22)" }
                               : { background: "var(--bg-hover)", color: "var(--text-muted)" }
                           }
                         >
@@ -755,7 +755,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
                   }
                 />
                 <p className="text-center text-xs mt-3" style={{ color: "var(--text-muted)" }}>
-                  Finowings AI can make mistakes. Confirm with a SEBI-registered advisor before investing.
+                  Mukul AI can make mistakes. Confirm with a SEBI-registered advisor before investing.
                 </p>
               </div>
             </div>
@@ -827,7 +827,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
                 }
               />
               <p className="text-center text-xs mt-2" style={{ color: "var(--text-muted)" }}>
-                Finowings AI can make mistakes. Confirm with a SEBI-registered advisor before investing.
+                Mukul AI can make mistakes. Confirm with a SEBI-registered advisor before investing.
               </p>
             </div>
           </>

@@ -1,6 +1,11 @@
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import LandingPage from "@/components/mukul/LandingPage";
 
-/** App home = Crypto Trade desk. */
+/** App home = Mukul Crypto Club landing (YouTube / UTM links yahin aate hain). */
 export default function HomePage() {
-  redirect("/trade");
+  return (
+    <Suspense fallback={<div className="mukul-club" />}>
+      <LandingPage />
+    </Suspense>
+  );
 }

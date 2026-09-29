@@ -750,10 +750,10 @@ function TradeTerminal() {
         {/* ── Left sidebar ─────────────────────────────── */}
         <aside className="desk-sidebar" aria-label="Desk navigation">
           <div className="desk-brand">
-            <div className="desk-brand-mark" aria-hidden>F</div>
+            <img className="desk-brand-mark" src="/mukul/icon.png" alt="" width={34} height={34} />
             <div>
-              <div className="desk-brand-name">Finowings</div>
-              <div className="desk-brand-sub">Desk</div>
+              <div className="desk-brand-name">Mukul Crypto</div>
+              <div className="desk-brand-sub">Club Desk</div>
             </div>
           </div>
 
@@ -765,11 +765,11 @@ function TradeTerminal() {
             <div className="desk-premium-icon" aria-hidden>
               <Crown className="w-5 h-5" style={{ color: "var(--gold)" }} />
             </div>
-            <div className="desk-premium-title">Upgrade to Premium</div>
-            <p className="desk-premium-copy">Advanced signals, deeper history & priority sync.</p>
-            <button type="button" className="desk-premium-btn" onClick={askAi}>
-              Go Premium
-            </button>
+            <div className="desk-premium-title">Mukul Crypto Club</div>
+            <p className="desk-premium-copy">Market Radar, Mukul Algo, alerts, paper trading aur live room.</p>
+            <Link href="/club" className="desk-premium-btn">
+              Club kholen
+            </Link>
           </div>
         </aside>
 

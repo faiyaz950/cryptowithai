@@ -83,22 +83,29 @@ export default function LoginPage() {
       <aside className="auth-aside" aria-hidden={false}>
         <div>
           <div className="auth-brand">
-            <span className="auth-brand-mark">F</span>
+            <img className="auth-brand-mark" src="/mukul/icon.png" alt="" width={40} height={40} />
             <span>
-              <span className="auth-brand-name">Finowings</span>
-              <span className="auth-brand-sub">Desk</span>
+              <span className="auth-brand-name">Mukul Crypto Club</span>
+              <span className="auth-brand-sub">by Dr. Mukul Agrawal</span>
             </span>
           </div>
 
           <h2 className="auth-headline">
-            Apne exchange account se
+            Crypto simplified —
             <br />
-            <span className="auth-headline-accent">seedha trade karein.</span>
+            <span className="auth-headline-accent">beginners se PRO tak.</span>
           </h2>
           <p className="auth-lede">
-            Ek account banayein, Delta Exchange India ki API key jodein, aur desk ke saare tools aapke apne
-            portfolio par chalenge.
+            Ek account banayein, Delta Exchange India ki API key jodein, aur Mukul Crypto Club ke saare tools
+            aapke apne portfolio par chalenge.
           </p>
+          <figure className="auth-coach">
+            <img src="/mukul/mukul-face.webp" alt="Dr. Mukul Agrawal" width={56} height={56} />
+            <figcaption>
+              <strong>Dr. Mukul Agrawal</strong>
+              <span>23+ saal market experience · Guinness World Record holder · 50K+ students</span>
+            </figcaption>
+          </figure>
 
           <ul className="auth-features">
             {FEATURES.map((f) => {
@@ -130,14 +137,14 @@ export default function LoginPage() {
       <main className="auth-main">
         <div className="auth-card">
           <div className="auth-card-brand">
-            <span className="auth-brand-mark">F</span>
-            <span className="auth-brand-name">Finowings Desk</span>
+            <img className="auth-brand-mark" src="/mukul/icon.png" alt="" width={32} height={32} />
+            <span className="auth-brand-name">Mukul Crypto Club</span>
           </div>
 
           <h1 className="auth-title">{tab === "login" ? "Welcome back" : "Account banayein"}</h1>
           <p className="auth-subtitle">
             {tab === "login"
-              ? "Apne Finowings account mein sign in karein."
+              ? "Apne Mukul Crypto Club account mein sign in karein."
               : "Free account — exchange jodne aur apni settings save karne ke liye."}
           </p>
 

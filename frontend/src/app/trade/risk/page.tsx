@@ -43,11 +43,11 @@ function RiskView() {
               <Link href="/trade" className="trade-iconbtn" aria-label="Desk par wapas">
                 <ArrowLeft className="w-[17px] h-[17px]" />
               </Link>
-              <span className="trade-strategy-icon" style={{ background: "rgba(0, 230, 118, 0.14)", color: "var(--accent)" }}>
+              <span className="trade-strategy-icon" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
                 <ShieldCheck className="w-4 h-4" />
               </span>
               <div className="trade-brand-text min-w-0">
-                <div className="trade-brand-kicker">Finowings Desk</div>
+                <div className="trade-brand-kicker">Mukul Crypto Club</div>
                 <div className="trade-brand-line">
                   <h1 className="trade-brand-title truncate">Risk Desk</h1>
                 </div>
