@@ -526,7 +526,7 @@ function PositionsNotice({ state }: { state: PositionsState }) {
         <span className="trade-pos-notice-icon"><Plug className="w-4 h-4" /></span>
         <div className="min-w-0">
           <b>Koi exchange nahi juda</b>
-          <p>Delta Exchange India ki API key jodiye — phir aapki asli positions yahan dikhengi.</p>
+          <p>Delta, Bybit ya CoinDCX ki API key jodiye — phir aapki asli positions yahan dikhengi.</p>
           <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary trade-size-sm mt-2">
             Exchange jodein
             <ArrowRight className="w-3.5 h-3.5" />

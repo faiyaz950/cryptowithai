@@ -21,13 +21,13 @@ type Tab = "login" | "signup";
 const FEATURES = [
   {
     icon: CandlestickChart,
-    title: "Live Delta charts",
-    desc: "Har trade par banti candles, screener, backtest aur Risk Desk — ek jagah.",
+    title: "Live exchange charts",
+    desc: "Jis exchange se aap jude hain usi ka chart, screener, backtest aur Risk Desk — ek jagah.",
   },
   {
     icon: KeyRound,
     title: "Apna exchange jodein",
-    desc: "Delta Exchange India ki API key jodein; orders aur positions aapke apne account se.",
+    desc: "Delta, Bybit ya CoinDCX ki API key jodein; orders aur positions aapke apne account se.",
   },
   {
     icon: Sparkles,
@@ -96,8 +96,8 @@ export default function LoginPage() {
             <span className="auth-headline-accent">beginners se PRO tak.</span>
           </h2>
           <p className="auth-lede">
-            Ek account banayein, Delta Exchange India ki API key jodein, aur Mukul Crypto Club ke saare tools
-            aapke apne portfolio par chalenge.
+            Ek account banayein, apne exchange ki API key jodein — Delta, Bybit ya CoinDCX — aur Mukul Crypto
+            Club ke saare tools aapke apne portfolio par chalenge.
           </p>
           <figure className="auth-coach">
             <img src="/mukul/mukul-face.webp" alt="Dr. Mukul Agrawal" width={56} height={56} />

@@ -161,8 +161,8 @@ export default function ProfileDesk() {
             </span>
             <h3>Abhi koi exchange nahi juda</h3>
             <p>
-              Delta Exchange India ki API key jodiye — uske baad aapka wallet, khuli positions aur pending orders
-              yahin is page par live dikhenge.
+              Delta, Bybit ya CoinDCX ki API key jodiye — uske baad aapka wallet, khuli positions aur pending
+              orders yahin is page par live dikhenge.
             </p>
             <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary">
               Exchange jodein
