@@ -183,13 +183,38 @@ const ACHIEVEMENTS = [
   ["2022", "Doctorate in Finance"],
 ] as const;
 
+const SOCIAL = {
+  youtube: "https://www.youtube.com/@mukulagrawal",
+  instagram: "https://www.instagram.com/themukulagrawal",
+  telegram: "https://t.me/themukulagrawal",
+  whatsapp: "https://whatsapp.com/channel/0029Va9Geoy72WTt3Qnro42V",
+  x: "https://x.com/themukulagrawal",
+  linkedin: "https://www.linkedin.com/in/themukulagrawal/",
+  facebook: "https://www.facebook.com/themukulagrawal",
+  finowings: "https://www.finowings.com",
+  allLinks: "https://lnk.bio/mukulagrawal",
+} as const;
+
 const COMMUNITY = [
-  ["YouTube", "1.8M+"],
-  ["Facebook", "882K+"],
-  ["Instagram", "670K+"],
-  ["Twitter / X", "205K+"],
-  ["Telegram", "182K+"],
-  ["LinkedIn", "10K+"],
+  { name: "YouTube", count: "1.8M+", href: SOCIAL.youtube },
+  { name: "Facebook", count: "882K+", href: SOCIAL.facebook },
+  { name: "Instagram", count: "670K+", href: SOCIAL.instagram },
+  { name: "Twitter / X", count: "205K+", href: SOCIAL.x },
+  { name: "Telegram", count: "182K+", href: SOCIAL.telegram },
+  { name: "LinkedIn", count: "10K+", href: SOCIAL.linkedin },
+  { name: "WhatsApp Channel", count: "Join", href: SOCIAL.whatsapp },
+] as const;
+
+const FOLLOW_LINKS = [
+  ["YouTube", SOCIAL.youtube],
+  ["Instagram", SOCIAL.instagram],
+  ["Telegram", SOCIAL.telegram],
+  ["WhatsApp Channel", SOCIAL.whatsapp],
+  ["Twitter / X", SOCIAL.x],
+  ["LinkedIn", SOCIAL.linkedin],
+  ["Facebook", SOCIAL.facebook],
+  ["finowings.com", SOCIAL.finowings],
+  ["All links", SOCIAL.allLinks],
 ] as const;
 
 const FAQ = [
@@ -581,16 +606,21 @@ export default function LandingPage() {
             <h2 id="community-heading">3 million+ followers ke saath seekhiye</h2>
           </div>
           <ul className="mc-community">
-            {COMMUNITY.map(([name, count], i) => (
+            {COMMUNITY.map(({ name, count, href }, i) => (
               <li key={name} data-reveal style={{ "--d": i % 3 } as CSSProperties}>
-                <strong><Counter value={count} /></strong>
-                <span>{name}</span>
+                <a href={href} target="_blank" rel="noreferrer" aria-label={`Mukul Agrawal on ${name}`}>
+                  <strong>{/\d/.test(count) ? <Counter value={count} /> : count}</strong>
+                  <span>{name}</span>
+                </a>
               </li>
             ))}
           </ul>
           <div className="mc-center" data-reveal>
             <a className="mc-btn mc-btn-gold" href={MUKUL_VIDEOS_URL} target="_blank" rel="noreferrer">
               YouTube par subscribe karein
+            </a>
+            <a className="mc-btn" href={SOCIAL.allLinks} target="_blank" rel="noreferrer">
+              Saare links dekhiye
             </a>
           </div>
         </section>
@@ -637,6 +667,12 @@ export default function LandingPage() {
               <Link href="/trade">Trading Desk</Link>
               <Link href="/ai">Mukul AI</Link>
               <Link href="/profile">Profile &amp; P&amp;L</Link>
+            </div>
+            <div>
+              <h3>Follow Mukul</h3>
+              {FOLLOW_LINKS.map(([label, href]) => (
+                <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
+              ))}
             </div>
             <div>
               <h3>Contact</h3>
