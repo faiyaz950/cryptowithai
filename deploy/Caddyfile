@@ -3,6 +3,10 @@
 {$SITE_ADDRESS} {
 	encode zstd gzip
 
+	# NEXT_PUBLIC_* URLs ek hi host par baked hain, isliye www ko bare domain par bhejo.
+	@www expression `{host}.startsWith("www.")`
+	redir @www https://{labels.1}.{labels.0}{uri} permanent
+
 	# /api/mukul/* Next.js ke apne route handlers hain, backend ke nahi.
 	@backend {
 		path /health /api/*
