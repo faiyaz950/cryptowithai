@@ -1,0 +1,22 @@
+# SITE_ADDRESS=":80"            -> sirf IP par HTTP (domain milne tak)
+# SITE_ADDRESS="example.com"    -> Caddy Let's Encrypt se HTTPS khud le aata hai
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# /api/mukul/* Next.js ke apne route handlers hain, backend ke nahi.
+	@backend {
+		path /health /api/*
+		not path /api/mukul/*
+	}
+
+	handle @backend {
+		reverse_proxy backend:8000 {
+			# Chat stream (SSE) ke tokens turant browser tak pahunchen.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

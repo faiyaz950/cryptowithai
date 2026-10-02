@@ -6,6 +6,8 @@ import type { NextConfig } from "next";
 const BACKEND = process.env.BACKEND_URL || process.env.CRYPTO_API_URL || "http://127.0.0.1:8000";
 
 const nextConfig: NextConfig = {
+  // VPS par Docker image chhoti rakhne ke liye — `node server.js` se chalta hai.
+  output: "standalone",
   turbopack: {
     root: path.join(__dirname),
   },
