@@ -38,6 +38,8 @@ if [ ! -f .env ]; then
   echo "   Server par: cp .env.production.example .env && nano .env"
   exit 1
 fi
+docker network inspect edge >/dev/null 2>&1 || docker network create edge
+mkdir -p /opt/caddy-sites
 docker compose up -d --build --remove-orphans
 docker image prune -f >/dev/null
 docker compose ps

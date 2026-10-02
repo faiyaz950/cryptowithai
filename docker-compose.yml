@@ -72,8 +72,12 @@ services:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/caddy-sites:/etc/caddy/sites:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - default
+      - edge
     depends_on:
       - frontend
       - backend
@@ -82,3 +86,9 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+
+networks:
+  # Server ke doosre Compose projects isi network par Caddy tak pahunchte hain.
+  # Banta hai deploy.sh se: docker network create edge
+  edge:
+    external: true

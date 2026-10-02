@@ -24,3 +24,7 @@
 		reverse_proxy frontend:3000
 	}
 }
+
+# Isi server ke doosre projects (jaise bromade) apni site file yahan rakhte hain
+# aur shared `edge` network par apne container tak proxy karte hain.
+import /etc/caddy/sites/*.caddy
