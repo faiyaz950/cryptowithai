@@ -23,6 +23,11 @@ from .base import fnum
 
 TIMEOUT = 15
 
+# Chart har kuch second poll hota hai — reused connection har baar ka TLS
+# handshake bacha leta hai.
+_HTTP = requests.Session()
+_HTTP.mount("https://", requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=16))
+
 
 class MarketSource:
     """
@@ -86,7 +91,7 @@ def _coindcx_pairs() -> Dict[str, str]:
     if _CDX_PAIRS["map"] and (now - _CDX_PAIRS["at"]) < _CDX_PAIRS_TTL:
         return _CDX_PAIRS["map"]
     try:
-        res = requests.get(
+        res = _HTTP.get(
             "https://public.coindcx.com/market_data/v3/current_prices/futures/rt",
             timeout=TIMEOUT,
         )
@@ -131,7 +136,7 @@ class CoinDCXMarket(MarketSource):
         # Thoda extra maangte hain — exchange kabhi-kabhi kam bhejta hai.
         span = int(minutes * 60 * (limit + 5))
         try:
-            res = requests.get(
+            res = _HTTP.get(
                 "https://public.coindcx.com/market_data/candlesticks",
                 params={"pair": pair, "from": now - span, "to": now,
                         "resolution": resolution, "pcode": "f"},
@@ -157,7 +162,7 @@ class CoinDCXMarket(MarketSource):
         if not pair:
             return None
         try:
-            res = requests.get(
+            res = _HTTP.get(
                 "https://public.coindcx.com/market_data/v3/current_prices/futures/rt",
                 timeout=TIMEOUT,
             )
@@ -201,7 +206,7 @@ class BybitMarket(MarketSource):
         if not symbol or not resolution:
             return None
         try:
-            res = requests.get(
+            res = _HTTP.get(
                 "https://api.bybit.com/v5/market/kline",
                 params={"category": "linear", "symbol": symbol,
                         "interval": resolution, "limit": min(limit, 1000)},
@@ -226,7 +231,7 @@ class BybitMarket(MarketSource):
         if not symbol:
             return None
         try:
-            res = requests.get(
+            res = _HTTP.get(
                 "https://api.bybit.com/v5/market/tickers",
                 params={"category": "linear", "symbol": symbol},
                 timeout=TIMEOUT,
@@ -316,7 +321,7 @@ class DeltaMarket(MarketSource):
         if not symbol:
             return None
         try:
-            res = requests.get(
+            res = _HTTP.get(
                 f"{_DELTA_BASE}/v2/tickers/{symbol}",
                 timeout=TIMEOUT,
             )

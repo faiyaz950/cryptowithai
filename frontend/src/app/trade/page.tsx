@@ -41,16 +41,7 @@ import {
   placeByokOrder,
 } from "@/lib/accountApi";
 import AccountMenu from "@/components/trade/AccountMenu";
-import ExchangesDesk from "@/components/trade/ExchangesDesk";
 import ChartDeskTools, { type DrawTool } from "@/components/trade/ChartDeskTools";
-import BacktestPanel from "@/components/trade/BacktestPanel";
-import StrategyCards from "@/components/trade/StrategyCards";
-import Screener from "@/components/trade/Screener";
-import OptionsAnalytics from "@/components/trade/OptionsAnalytics";
-import MyStrategiesPanel from "@/components/trade/MyStrategiesPanel";
-import StrategyBuilder from "@/components/trade/StrategyBuilder";
-import WatchlistDesk from "@/components/trade/WatchlistDesk";
-import TradesDesk from "@/components/trade/TradesDesk";
 import {
   CHART_RANGES,
   barsForDays,
@@ -95,6 +86,19 @@ const PortfolioDesk = dynamic(() => import("@/components/portfolio/PortfolioDesk
   ssr: false,
   loading: () => <div className="w-full h-full shimmer rounded-xl" />,
 });
+
+// Markets ke alawa har tab apna chunk tab hi laaye jab khula jaaye — warna
+// pehle load mein recharts samet saare tabs ka JS aa jaata hai.
+const tabLoading = () => <div className="w-full min-h-[320px] shimmer rounded-xl" />;
+const ExchangesDesk = dynamic(() => import("@/components/trade/ExchangesDesk"), { loading: tabLoading });
+const BacktestPanel = dynamic(() => import("@/components/trade/BacktestPanel"), { loading: tabLoading });
+const StrategyCards = dynamic(() => import("@/components/trade/StrategyCards"), { loading: tabLoading });
+const Screener = dynamic(() => import("@/components/trade/Screener"), { loading: tabLoading });
+const OptionsAnalytics = dynamic(() => import("@/components/trade/OptionsAnalytics"), { ssr: false, loading: tabLoading });
+const MyStrategiesPanel = dynamic(() => import("@/components/trade/MyStrategiesPanel"), { loading: tabLoading });
+const StrategyBuilder = dynamic(() => import("@/components/trade/StrategyBuilder"), { loading: tabLoading });
+const WatchlistDesk = dynamic(() => import("@/components/trade/WatchlistDesk"), { loading: tabLoading });
+const TradesDesk = dynamic(() => import("@/components/trade/TradesDesk"), { loading: tabLoading });
 
 type Tab =
   | "ai"
