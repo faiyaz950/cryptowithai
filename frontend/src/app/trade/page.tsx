@@ -756,8 +756,8 @@ function TradeTerminal() {
           <div className="desk-brand">
             <img className="desk-brand-mark" src="/mukul/icon.png" alt="" width={34} height={34} />
             <div>
-              <div className="desk-brand-name">Mukul Crypto</div>
-              <div className="desk-brand-sub">Club Desk</div>
+              <div className="desk-brand-name">Cryptomantra</div>
+              <div className="desk-brand-sub">Trading Desk</div>
             </div>
           </div>
 
@@ -769,7 +769,7 @@ function TradeTerminal() {
             <div className="desk-premium-icon" aria-hidden>
               <Crown className="w-5 h-5" style={{ color: "var(--gold)" }} />
             </div>
-            <div className="desk-premium-title">Mukul Crypto Club</div>
+            <div className="desk-premium-title">Cryptomantra</div>
             <p className="desk-premium-copy">Market Radar, Mukul Algo, alerts, paper trading aur live room.</p>
             <Link href="/club" className="desk-premium-btn">
               Club kholen

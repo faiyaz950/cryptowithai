@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import JoinFlow from "@/components/mukul/JoinFlow";
 
 export const metadata: Metadata = {
-  title: "Create your trading account — Mukul Crypto Club",
+  title: "Create your trading account — Cryptomantra",
   description: "Open the exchange account from the club link, then verify with your exchange user ID.",
 };
 

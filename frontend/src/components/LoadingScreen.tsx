@@ -17,7 +17,7 @@ export default function LoadingScreen({
       </div>
 
       <h1 className="text-xl font-semibold mb-2" style={{ color: "#f1f5f9" }}>
-        Mukul Crypto Club
+        Cryptomantra
       </h1>
       <p className="text-sm text-center mb-8" style={{ color: "#94a3b8", maxWidth: "280px" }}>
         {message}

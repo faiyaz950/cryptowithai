@@ -108,7 +108,7 @@ export default function ClubApp() {
   if (!club.membership) {
     body = (
       <div className="mc-panel">
-        <h1>Mukul Crypto Club</h1>
+        <h1>Cryptomantra</h1>
         <p>Free access tab khulta hai jab exchange user ID verify ho. Trading desk pehle se khula hai.</p>
         <div className="mc-inline">
           <Link href="/club/join" className="mc-btn mc-btn-primary">Unlock Free Access</Link>
@@ -140,7 +140,7 @@ export default function ClubApp() {
           <Link href="/" className="mc-brand">
             <img className="mc-avatar" src="/mukul/mukul-face.webp" alt="" width={40} height={40} />
             <span>
-              <strong>Mukul Crypto Club</strong>
+              <strong>Cryptomantra</strong>
               <small>by Dr. Mukul Agrawal</small>
             </span>
           </Link>

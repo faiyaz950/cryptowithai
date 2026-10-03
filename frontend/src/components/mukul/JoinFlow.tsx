@@ -43,13 +43,13 @@ export default function JoinFlow() {
         <header className="mc-top">
           <Link href="/" className="mc-brand">
             <img className="mc-mark" src="/mukul/icon.png" alt="" width={36} height={36} />
-            <strong>Mukul Crypto Club</strong>
+            <strong>Cryptomantra</strong>
           </Link>
           <Link href="/trade">Trading Desk</Link>
         </header>
 
         <main className="mc-join">
-          <p className="mc-kicker">Mukul Crypto Club · Free access</p>
+          <p className="mc-kicker">Cryptomantra · Free access</p>
           <h1>Create your trading account</h1>
           <p className="mc-lede">
             Club link se exchange account kholiye — yahi aapki entry key hai. Account ban jaane ke baad wapas

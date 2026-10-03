@@ -20,7 +20,7 @@ const jakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Mukul Crypto Club — Dr. Mukul Agrawal",
+  title: "Cryptomantra — Dr. Mukul Agrawal",
   description:
     "Dr. Mukul Agrawal ka crypto club — free trading tools, Mukul Algo, market radar, paper trading, AI assistant aur live learning, ek hi jagah.",
   icons: {

@@ -62,7 +62,7 @@ async def _stream_thinking_steps(thinking_steps: list) -> AsyncIterator[str]:
 
 load_dotenv()
 
-app = FastAPI(title="Mukul Crypto Club Backend", version="2.0.0")
+app = FastAPI(title="Cryptomantra Backend", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -149,7 +149,7 @@ def get_portfolio_context(body: ChatRequest) -> Optional[str]:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "message": "Mukul Crypto Club backend chal raha hai!", "version": "2.0.0"}
+    return {"status": "ok", "message": "Cryptomantra backend chal raha hai!", "version": "2.0.0"}
 
 
 @app.get("/api/models")

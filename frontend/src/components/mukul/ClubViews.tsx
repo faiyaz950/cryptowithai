@@ -115,7 +115,7 @@ export function WelcomeView({ club, onOpen }: { club: ClubState; onOpen: (view: 
         <img src="/mukul/mukul-face.webp" alt="Dr. Mukul Agrawal" width={160} height={160} />
         <div>
           <p className="mc-kicker">Verified claim</p>
-          <h1>Welcome to Mukul Crypto Club</h1>
+          <h1>Welcome to Cryptomantra</h1>
           <p className="mc-lede">Aapka free access unlock ho gaya. Neeche se koi bhi tool kholiye — poora Trading Desk bhi saath mein hai.</p>
         </div>
       </div>

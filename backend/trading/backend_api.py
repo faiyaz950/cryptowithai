@@ -3803,7 +3803,7 @@ def index():
     aur order laga sakta tha. Asli UI alag frontend hai.
     """
     return jsonify({
-        'service': 'Mukul Crypto Club API',
+        'service': 'Cryptomantra API',
         'status': 'ok',
         'frontend': os.getenv('FRONTEND_URL', ''),
         'docs': '/api/health',

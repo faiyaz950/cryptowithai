@@ -196,7 +196,7 @@ html, body {
 }
 .pulse-green { animation: pulse-glow 2s ease-in-out infinite; }
 
-/* ═══ Loading screen — Mukul Crypto Club ════════════════════
+/* ═══ Loading screen — Cryptomantra ════════════════════
    `app/loading.tsx` aur AuthContext dono se dikhta hai, isliye
    sab kuch pure CSS hai (koi JS nahi). */
 .mc-loading {
@@ -456,7 +456,7 @@ textarea:focus-visible {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   TRADING TERMINAL — Mukul Crypto Club Desk (dark)
+   TRADING TERMINAL — Cryptomantra Desk (dark)
    Inter (UI) + JetBrains Mono (prices). Neon mint on charcoal.
    ═══════════════════════════════════════════════════════════ */
 

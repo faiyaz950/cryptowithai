@@ -123,7 +123,7 @@ export const PAPER_USD_INR = 84;
 
 export const OFFER_LABEL: Record<OfferId, string> = {
   a: "Free Mukul Algo",
-  b: "Free Mukul Crypto Club",
+  b: "Free Cryptomantra Access",
   c: "Free Mukul Live Trading Room + Algo",
 };
 

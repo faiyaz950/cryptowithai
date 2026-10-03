@@ -221,7 +221,7 @@ const FAQ = [
   ["Kya main beginner hoon to bhi join kar sakta hoon?", "Bilkul. Dr. Mukul Agrawal ka tareeka hamesha beginners se PRO tak ka raha hai. Pehle Backtest aur Risk Desk se practice kijiye — real paisa lagane se pehle."],
   ["Kya Trading Desk mere liye auto-trade karega?", "Nahi. Chart, screener aur AI sirf analysis dikhate hain. Order hamesha aap khud lagate hain, apne exchange account se."],
   ["Kaun kaun se exchange judte hain?", "Delta Exchange India, Bybit aur CoinDCX. API key encrypted store hoti hai, withdrawal permission kabhi nahi maangi jaati, aur disconnect karte hi key delete ho jaati hai."],
-  ["Kya ye investment advice hai?", "Nahi. Mukul Crypto Club ek learning platform hai. Koi bhi readout guaranteed prediction ya personal financial advice nahi hai. Crypto mein risk hota hai."],
+  ["Kya ye investment advice hai?", "Nahi. Cryptomantra ek learning platform hai. Koi bhi readout guaranteed prediction ya personal financial advice nahi hai. Crypto mein risk hota hai."],
 ] as const;
 
 /* Showcase chart poori tarah deterministic hai — server aur client dono par
@@ -363,7 +363,7 @@ function DeskShowcase() {
         <span className="mc-dot mc-dot-amber" />
         <span className="mc-dot mc-dot-green" />
         <strong>BTCUSD · 15m</strong>
-        <em>Mukul Crypto Club — Trading Desk</em>
+        <em>Cryptomantra — Trading Desk</em>
       </div>
       <div className="mc-showcase-body">
         <svg className="mc-showcase-chart" viewBox="0 0 352 150" preserveAspectRatio="none" role="presentation">
@@ -423,9 +423,9 @@ export default function LandingPage() {
         </div>
 
         <header className="mc-top mc-top-dark" data-stuck={stuck}>
-          <Link href="/" className="mc-brand" aria-label="Mukul Crypto Club home">
+          <Link href="/" className="mc-brand" aria-label="Cryptomantra home">
             <img className="mc-logo" src="/mukul/logo-MA.webp" alt="Mukul Agrawal" width={132} height={66} />
-            <span className="mc-brand-club">Crypto Club</span>
+            <span className="mc-brand-club">Cryptomantra</span>
           </Link>
           <nav className="mc-top-nav" aria-label="Club">
             <a href="#desk">Desk Features</a>
@@ -448,7 +448,7 @@ export default function LandingPage() {
                 <Sparkles aria-hidden /> Dr. Mukul Agrawal presents
               </p>
               <h1 data-rise style={{ "--d": 1 } as CSSProperties}>
-                Mukul <span>Crypto</span> Club
+                <span>Crypto</span>mantra
               </h1>
               <p className="mc-hero-sub" data-rise style={{ "--d": 2 } as CSSProperties}>
                 Trader · Investor · Bestselling Author · Guinness World Record Holder
@@ -515,7 +515,7 @@ export default function LandingPage() {
 
         <section className="mc-section mc-section-soft" id="desk" aria-labelledby="desk-heading">
           <div className="mc-section-intro" data-reveal>
-            <p className="mc-kicker">Mukul Crypto Club Trading Desk</p>
+            <p className="mc-kicker">Cryptomantra Trading Desk</p>
             <h2 id="desk-heading">Trading Desk mein kya kya hai</h2>
             <p>
               Ek professional crypto trading terminal — chart, AI, screener, risk, backtest aur strategies.
@@ -564,7 +564,7 @@ export default function LandingPage() {
                 Dr. Mukul Agrawal trader, investor, entrepreneur, bestselling author aur financial educator hain —
                 23+ saal ka market experience. YouTube par unki crypto series — Bitcoin price analysis, crypto futures
                 course, AI se crypto trading, crypto tax rules aur beginners ke liye crypto portfolio — simple Hinglish mein.
-                Mukul Crypto Club usi padhai ko live tools ke saath practice mein badalta hai.
+                Cryptomantra usi padhai ko live tools ke saath practice mein badalta hai.
               </p>
               <ul className="mc-creds">
                 <li><Award aria-hidden /><span><strong>Guinness World Record</strong> Largest Financial Investment Lesson, 2022</span></li>
@@ -682,7 +682,7 @@ export default function LandingPage() {
             </div>
           </div>
           <p className="mc-foot-legal">
-            Mukul Crypto Club ek learning platform hai. Koi bhi readout guaranteed prediction ya personal financial advice nahi hai.
+            Cryptomantra ek learning platform hai. Koi bhi readout guaranteed prediction ya personal financial advice nahi hai.
             Crypto assets high-risk hain — sirf utna lagaiye jitna kho sakte hain. © {new Date().getFullYear()} Mukul Agrawal. All rights reserved.
           </p>
         </footer>

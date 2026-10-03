@@ -30,7 +30,7 @@ export default function ProfilePage() {
                 <UserRound className="w-4 h-4" />
               </span>
               <div className="trade-brand-text min-w-0">
-                <div className="trade-brand-kicker">Mukul Crypto Club</div>
+                <div className="trade-brand-kicker">Cryptomantra</div>
                 <div className="trade-brand-line">
                   <h1 className="trade-brand-title truncate">Profile</h1>
                 </div>

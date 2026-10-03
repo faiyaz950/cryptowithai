@@ -85,7 +85,7 @@ export default function LoginPage() {
           <div className="auth-brand">
             <img className="auth-brand-mark" src="/mukul/icon.png" alt="" width={40} height={40} />
             <span>
-              <span className="auth-brand-name">Mukul Crypto Club</span>
+              <span className="auth-brand-name">Cryptomantra</span>
               <span className="auth-brand-sub">by Dr. Mukul Agrawal</span>
             </span>
           </div>
@@ -138,13 +138,13 @@ export default function LoginPage() {
         <div className="auth-card">
           <div className="auth-card-brand">
             <img className="auth-brand-mark" src="/mukul/icon.png" alt="" width={32} height={32} />
-            <span className="auth-brand-name">Mukul Crypto Club</span>
+            <span className="auth-brand-name">Cryptomantra</span>
           </div>
 
           <h1 className="auth-title">{tab === "login" ? "Welcome back" : "Account banayein"}</h1>
           <p className="auth-subtitle">
             {tab === "login"
-              ? "Apne Mukul Crypto Club account mein sign in karein."
+              ? "Apne Cryptomantra account mein sign in karein."
               : "Free account — exchange jodne aur apni settings save karne ke liye."}
           </p>
 
