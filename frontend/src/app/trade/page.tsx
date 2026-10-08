@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import dynamic from "next/dynamic";
 import type { LiveStatus } from "@/lib/deltaLive";
 import Link from "next/link";
@@ -9,7 +9,6 @@ import {
   Activity,
   Bell,
   Briefcase,
-  Crosshair,
   Crown,
   FlaskConical,
   FolderKanban,
@@ -19,7 +18,6 @@ import {
   Plug,
   Radar,
   RefreshCw,
-  Search,
   ShieldCheck,
   Sigma,
   Sparkles,
@@ -29,7 +27,6 @@ import {
   TrendingUp,
   Wand2,
   X,
-  Zap,
 } from "lucide-react";
 import TradePanel, { type LiveTradeState, type PositionsState } from "@/components/trade/TradePanel";
 import { useAuth } from "@/context/AuthContext";
@@ -41,10 +38,19 @@ import {
   placeByokOrder,
 } from "@/lib/accountApi";
 import AccountMenu from "@/components/trade/AccountMenu";
+import MarketList from "@/components/trade/MarketList";
 import ChartDeskTools, { type DrawTool } from "@/components/trade/ChartDeskTools";
 import {
-  CHART_RANGES,
-  barsForDays,
+  ChartTypeMenu,
+  IndicatorsButton,
+  IndicatorsDialog,
+  TimeframeMenu,
+  type IndicatorDialogState,
+} from "@/components/trade/ChartToolbar";
+import { CHART_TIMEFRAMES, DEFAULT_TF_FAVORITES, isChartType, tfShort, type ChartType } from "@/lib/chartTypes";
+import { DEFAULT_INDICATORS, INDICATOR_BY_ID, type ActiveIndicator } from "@/lib/chartIndicators";
+import {
+  MAX_CHART_CANDLES,
   intervalMinutes,
   candlesSpanDays,
   checkCryptoHealth,
@@ -53,17 +59,17 @@ import {
   fetchDemoOrders,
   fetchMarketInfo,
   fetchMarketSources,
+  fetchPaperAccount,
   placeDemoOrder,
   runBacktest,
   symbolLabel,
   venueShort,
-  CRYPTO_INTERVALS,
-  CRYPTO_SYMBOLS,
   DEFAULT_MARKET_SOURCES,
   type BacktestParams,
   type BacktestResult,
   type Candle,
   type DemoOrder,
+  type PaperAccount,
   type MarketInfo,
   type MarketSourceInfo,
   syncStamp,
@@ -71,6 +77,16 @@ import {
   DESK_TZ_LABEL,
   DESK_CONTRACT,
 } from "@/lib/cryptoApi";
+import {
+  fmtQuoteCompact,
+  fmtQuotePrice,
+  isSpotKey,
+  isSpotVenue,
+  orderKey,
+  pairLabel,
+  parseWatchKey,
+  splitPair,
+} from "@/lib/marketQuote";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
   ssr: false,
@@ -184,26 +200,51 @@ const LIVE_TAIL_FETCH = 300;
 /** In aakhri candles ko hi purane data mein jodte hain — inke EMA settle ho chuke hote hain. */
 const LIVE_TAIL_KEEP = 20;
 
+/** Scroll-back kitni candles ek page mein maangta hai. */
+const HISTORY_PAGE = 1000;
+/** Itne se zyada bars memory mein nahi rakhte. */
+const HISTORY_CAP = 40_000;
+
 /**
  * Poll ki taaza candles purane data ke aakhir mein jodo. Aakhri candle abhi ban
- * rahi hoti hai, isliye pichhle kuch bars bhi badal dete hain. Window ka size
- * wahi rehta hai jo user ne history mein chuna tha.
+ * rahi hoti hai, isliye pichhle kuch bars bhi badal dete hain. Peeche load ho
+ * chuki history yahan se nahi kat-ti.
  */
-function mergeLiveTail(prev: Candle[], fresh: Candle[], keep: number): Candle[] {
+/**
+ * Usi chart ka poora refresh (tab wapas aaya): taaza candles lo, par scroll-back
+ * se aayi purani history mat giraao — warna peeche dekh raha user achanak
+ * kinare par pahunch jaata. Beech mein gap ho to jodna galat hoga, tab sirf taaza.
+ */
+/** Apni state ke saath — har second sirf ghadi badle, poora trade page nahi. */
+function DeskClock() {
+  const [time, setTime] = useState("--:--:--");
+  useEffect(() => {
+    const tick = () => setTime(deskClock(new Date()));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return <span className="desk-clock">{`${time} ${DESK_TZ_LABEL}`}</span>;
+}
+
+function keepOlderHistory(prev: Candle[], fresh: Candle[]): Candle[] {
+  if (!prev.length || !fresh.length) return fresh;
+  const first = fresh[0].time;
+  if (prev[0].time >= first || prev[prev.length - 1].time < first) return fresh;
+  const older = prev.filter((c) => c.time < first);
+  const merged = older.concat(fresh);
+  return merged.length > HISTORY_CAP ? merged.slice(merged.length - HISTORY_CAP) : merged;
+}
+
+function mergeLiveTail(prev: Candle[], fresh: Candle[]): Candle[] {
   const tail = fresh.slice(-LIVE_TAIL_KEEP);
   if (!tail.length) return prev;
   const cut = tail[0].time;
   const merged = prev.filter((c) => c.time < cut).concat(tail);
-  return merged.length > keep ? merged.slice(-keep) : merged;
+  return merged.length > HISTORY_CAP ? merged.slice(-HISTORY_CAP) : merged;
 }
 
-function shortInterval(value: string): string {
-  return value.endsWith("m") ? value : value.toUpperCase();
-}
-
-function baseAsset(symbol: string): string {
-  return symbol.replace(/USDT$|USD$/i, "") || symbol;
-}
+const CHART_PREFS_KEY = "cm.chart.prefs.v1";
 
 function pairIconColor(symbol: string): string {
   const s = symbol.toUpperCase();
@@ -238,9 +279,6 @@ function TradeTerminal() {
   });
   const [builderId, setBuilderId] = useState<string | null>(() => searchParams.get("edit"));
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [search, setSearch] = useState("");
-  const [deskTime, setDeskTime] = useState("--:--:--");
-
   const goTab = useCallback((next: Tab, editId: string | null = null) => {
     setTab(next);
     setBuilderId(next === "builder" ? editId : null);
@@ -258,11 +296,13 @@ function TradeTerminal() {
    */
   const [chartSourceOverride, setChartSourceOverride] = useState<string | null>(null);
   const [marketSources, setMarketSources] = useState<MarketSourceInfo[]>(DEFAULT_MARKET_SOURCES);
-  const [historyDays, setHistoryDays] = useState(7);
-  const [showEma9, setShowEma9] = useState(true);
-  const [showEma21, setShowEma21] = useState(true);
-  const [showEma50, setShowEma50] = useState(true);
   const [showVolume, setShowVolume] = useState(true);
+  const [chartType, setChartType] = useState<ChartType>("candles");
+  const [indicators, setIndicators] = useState<ActiveIndicator[]>(DEFAULT_INDICATORS);
+  const [tfFavorites, setTfFavorites] = useState<string[]>(DEFAULT_TF_FAVORITES);
+  const [indDialog, setIndDialog] = useState<IndicatorDialogState>(null);
+  /** localStorage se prefs aa gaye — tabhi wapas likhna, warna defaults saved prefs ko mita dete. */
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [compareSymbol, setCompareSymbol] = useState<string | null>(null);
   const [compareCandles, setCompareCandles] = useState<Candle[]>([]);
   const [drawTool, setDrawTool] = useState<DrawTool>("cursor");
@@ -286,9 +326,14 @@ function TradeTerminal() {
   const candlesKeyRef = useRef("");
   /** Abhi screen par kaunsa symbol|interval|history chuna hua hai. */
   const activeKeyRef = useRef("");
+  /** Peeche aur candles nahi bachi, ya page abhi aa rahi hai. */
+  const historyDoneRef = useRef(false);
+  const historyLockRef = useRef(false);
+  const historyRetryAtRef = useRef(0);
   const [market, setMarket] = useState<MarketInfo | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [orders, setOrders] = useState<DemoOrder[]>([]);
+  const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null);
   // Positions user ke apne exchange account se aati hain, isliye teen alag
   // haal hain: login nahi, exchange nahi juda, ya juda hua (data/error).
   const [positions, setPositions] = useState<PositionsState>({ kind: "signed-out", positions: [] });
@@ -310,11 +355,73 @@ function TradeTerminal() {
     return "delta";
   }, [chartSourceOverride, liveState.exchange, marketSources]);
 
+  /**
+   * Coin chuno. Spot pair chart ko CoinDCX Spot par le jaata hai; perp chunne
+   * par spot override hat-ta hai, par user ka chuna Bybit/CoinDCX futures bana rehta hai.
+   */
+  const pickSymbol = useCallback((picked: string, venue?: string) => {
+    const parsed = venue ? { symbol: picked, venue } : parseWatchKey(picked);
+    setSymbol(parsed.symbol);
+    setChartSourceOverride((o) =>
+      isSpotVenue(parsed.venue) ? parsed.venue : isSpotVenue(o) ? null : o,
+    );
+  }, []);
+
+  const isSpot = isSpotVenue(chartSource);
+  const pair = splitPair(symbol, chartSource);
+  const pairName = pairLabel(symbol, chartSource);
+  const fmtPx = (n: number) => (isSpot ? fmtQuotePrice(n, pair.quote) : fmtUsd(n));
+
   const chartIntervals = useMemo(() => {
     const src = marketSources.find((s) => s.id === chartSource);
     const allowed = new Set(src?.intervals ?? DEFAULT_MARKET_SOURCES[0].intervals);
-    return CRYPTO_INTERVALS.filter((iv) => allowed.has(iv.value));
+    return CHART_TIMEFRAMES.filter((iv) => allowed.has(iv.value));
   }, [chartSource, marketSources]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CHART_PREFS_KEY);
+      const saved = raw ? JSON.parse(raw) : null;
+      if (saved && typeof saved === "object") {
+        if (isChartType(saved.chartType)) setChartType(saved.chartType);
+        if (Array.isArray(saved.indicators)) {
+          setIndicators(
+            saved.indicators.filter(
+              (i: ActiveIndicator) => i && typeof i.uid === "string" && INDICATOR_BY_ID.has(i.id) && typeof i.params === "object",
+            ),
+          );
+        }
+        if (Array.isArray(saved.tfFavorites)) setTfFavorites(saved.tfFavorites.filter((t: unknown) => typeof t === "string"));
+        if (typeof saved.showVolume === "boolean") setShowVolume(saved.showVolume);
+        if (typeof saved.interval === "string" && CHART_TIMEFRAMES.some((t) => t.value === saved.interval)) setInterval(saved.interval);
+      }
+    } catch {
+      /* kharab JSON — defaults hi theek */
+    }
+    setPrefsLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    try {
+      localStorage.setItem(CHART_PREFS_KEY, JSON.stringify({ chartType, indicators, tfFavorites, showVolume, interval }));
+    } catch {
+      /* storage band / full */
+    }
+  }, [prefsLoaded, chartType, indicators, tfFavorites, showVolume, interval]);
+
+  // TradingView jaisa: "/" se indicators khulte hain.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (tab !== "markets" || e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      e.preventDefault();
+      setIndDialog({ mode: "list" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab]);
 
   const pollMs = chartSource === "delta" ? MARKET_POLL_MS : MARKET_POLL_FAST_MS;
 
@@ -324,15 +431,11 @@ function TradeTerminal() {
   const [backtestDefaults, setBacktestDefaults] = useState<Partial<BacktestParams>>({});
 
   useEffect(() => {
-    const tick = () => {
-      const now = new Date();
-      setDeskTime(deskClock(now));
-      // Header ka price har tick par nahi — clock ke saath second mein ek baar.
+    // Header ka price har tick par nahi — second mein ek baar, aur sirf badla ho tab.
+    const id = window.setInterval(() => {
       const latest = liveTickRef.current;
       if (latest) setLiveTick((prev) => (prev?.close === latest.close && prev.symbol === latest.symbol ? prev : latest));
-    };
-    tick();
-    const id = window.setInterval(tick, 1000);
+    }, 1000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -345,8 +448,8 @@ function TradeTerminal() {
    * setCandles([]) hota tha — ek network hichki aur poora chart gayab.
    */
   const loadMarket = useCallback(async (mode: "full" | "poll" = "full") => {
-    const key = `${symbol}|${interval}|${historyDays}|${chartSource}`;
-    const wanted = barsForDays(historyDays, interval);
+    const key = `${symbol}|${interval}|${chartSource}`;
+    const wanted = MAX_CHART_CANDLES;
     const poll = mode === "poll";
     if (!poll) setLoading(true);
     try {
@@ -361,19 +464,25 @@ function TradeTerminal() {
       // Is beech user ne symbol/timeframe badal diya — ye jawab ab kisi kaam ka nahi.
       if (activeKeyRef.current !== key) return;
 
+      // Request ke dauraan scroll-back ne purani history jod di ho sakti hai —
+      // `prev` (request se pehle ki copy) par merge karte to wo history mit jaati
+      // aur chart ka zoom/jagah uchhal jaata.
+      const base = candlesKeyRef.current === key ? candlesRef.current : [];
       let next = candleRes.candles ?? [];
       if (tailOnly) {
-        const lastPrev = prev[prev.length - 1]?.time ?? 0;
+        const lastPrev = base[base.length - 1]?.time ?? 0;
         const gapMs = LIVE_TAIL_KEEP * intervalMinutes(interval) * 60_000;
         // Tab bahut der so raha tha (laptop sleep) — beech ki candles gayab
         // hongi, to jodne ke bajaye poori history dobara lo.
         if (!next.length || next[next.length - 1].time - lastPrev > gapMs) {
           const full = await fetchCandles({ symbol, interval, limit: wanted, exchange: chartSource });
           if (activeKeyRef.current !== key) return;
-          next = full.success ? full.candles ?? [] : prev;
+          next = full.success ? full.candles ?? [] : base;
         } else {
-          next = mergeLiveTail(prev, next, wanted);
+          next = mergeLiveTail(base, next);
         }
+      } else {
+        next = keepOlderHistory(base, next);
       }
 
       candlesRef.current = next;
@@ -394,11 +503,12 @@ function TradeTerminal() {
     } finally {
       if (!poll) setLoading(false);
     }
-  }, [symbol, interval, historyDays, chartSource]);
+  }, [symbol, interval, chartSource]);
 
   const loadBook = useCallback(async () => {
     if (!token) {
       setOrders([]);
+      setPaperAccount(null);
       setPositions({ kind: "signed-out", positions: [] });
       setLiveState({ kind: "signed-out", availableUsdt: 0 });
       return;
@@ -414,6 +524,26 @@ function TradeTerminal() {
         if (!primary) {
           return { kind: "not-connected", availableUsdt: 0 };
         }
+
+        const balanceCache = new Map<number, Promise<Awaited<ReturnType<typeof fetchExchangeBalances>>>>();
+        const balancesOf = (id: number) => {
+          if (!balanceCache.has(id)) balanceCache.set(id, fetchExchangeBalances(token, id).catch(() => []));
+          return balanceCache.get(id)!;
+        };
+
+        const dcx = accounts.find(
+          (a) => a.exchange === "coindcx" && a.is_active && a.can_trade && !a.can_withdraw,
+        );
+        let spot: LiveTradeState["spot"];
+        if (dcx) {
+          const rows = await balancesOf(dcx.id);
+          spot = {
+            accountId: dcx.id,
+            label: dcx.label || "CoinDCX",
+            balances: Object.fromEntries(rows.map((b) => [b.asset.toUpperCase(), b.available ?? b.balance ?? 0])),
+          };
+        }
+
         if (!primary.can_trade || primary.can_withdraw) {
           return {
             kind: "no-trade",
@@ -424,24 +554,20 @@ function TradeTerminal() {
             message: primary.can_withdraw
               ? "Withdrawal-enabled keys allowed nahi hain — trade-only key jodiye."
               : "Is key par trading permission nahi hai. Verify / nayi key try karein.",
+            spot,
           };
         }
-        let availableUsdt = 0;
-        try {
-          const balances = await fetchExchangeBalances(token, primary.id);
-          const usd = balances.find(
-            (b) => /^(USDT|USD|USDC)$/i.test(b.asset) || /USDT/i.test(b.asset),
-          );
-          availableUsdt = usd?.available ?? usd?.balance ?? 0;
-        } catch {
-          availableUsdt = 0;
-        }
+        const balances = await balancesOf(primary.id);
+        const usd = balances.find(
+          (b) => /^(USDT|USD|USDC)$/i.test(b.asset) || /USDT/i.test(b.asset),
+        );
         return {
           kind: "ready",
           accountId: primary.id,
           exchange: primary.exchange,
           label: primary.label || primary.exchange,
-          availableUsdt,
+          availableUsdt: usd?.available ?? usd?.balance ?? 0,
+          spot,
         };
       } catch (err) {
         if (err instanceof AccountApiError && err.status === 401) handleExpiredSession();
@@ -453,8 +579,9 @@ function TradeTerminal() {
       }
     };
 
-    const [nextOrders, nextPositions, nextLive] = await Promise.all([
+    const [nextOrders, nextPaper, nextPositions, nextLive] = await Promise.all([
       fetchDemoOrders(token).catch(() => [] as DemoOrder[]),
+      fetchPaperAccount(token).catch(() => null),
       fetchMyPositions(token)
         .then<PositionsState>((r) =>
           r.connected
@@ -472,6 +599,7 @@ function TradeTerminal() {
       loadLive(),
     ]);
     setOrders(nextOrders);
+    setPaperAccount(nextPaper);
     setPositions(nextPositions);
     setLiveState(nextLive);
   }, [token, handleExpiredSession]);
@@ -499,9 +627,56 @@ function TradeTerminal() {
   }, [chartSource]);
 
   useEffect(() => {
-    activeKeyRef.current = `${symbol}|${interval}|${historyDays}|${chartSource}`;
+    historyDoneRef.current = false;
+    historyRetryAtRef.current = 0;
+    activeKeyRef.current = `${symbol}|${interval}|${chartSource}`;
     void loadMarket("full");
-  }, [loadMarket, symbol, interval, historyDays, chartSource]);
+  }, [loadMarket, symbol, interval, chartSource]);
+
+  /**
+   * User chart ke baayein kinare pahuncha — usse pehle ka page jodo.
+   * View chart khud sambhalta hai; yahan sirf data aata hai.
+   */
+  const loadOlder = useCallback(async () => {
+    if (historyLockRef.current || historyDoneRef.current || Date.now() < historyRetryAtRef.current) return;
+    const prev = candlesRef.current;
+    const oldest = prev[0]?.time;
+    if (!oldest || prev.length < 10 || prev.length >= HISTORY_CAP) {
+      if (prev.length >= HISTORY_CAP) historyDoneRef.current = true;
+      return;
+    }
+    const key = `${symbol}|${interval}|${chartSource}`;
+    historyLockRef.current = true;
+    try {
+      const res = await fetchCandles({
+        symbol,
+        interval,
+        limit: HISTORY_PAGE,
+        exchange: chartSource,
+        end: oldest - 1,
+      });
+      if (activeKeyRef.current !== key) return;
+      const older = (res.candles ?? []).filter((c) => c.time < oldest);
+      if (older.length < 10) {
+        historyDoneRef.current = true;
+        return;
+      }
+      const byTime = new Map<number, Candle>();
+      for (const candle of older) byTime.set(candle.time, candle);
+      for (const candle of candlesRef.current) byTime.set(candle.time, candle);
+      const merged = [...byTime.values()].sort((a, b) => a.time - b.time);
+      const capped = merged.length > HISTORY_CAP ? merged.slice(merged.length - HISTORY_CAP) : merged;
+      candlesRef.current = capped;
+      candlesKeyRef.current = key;
+      setCandles(capped);
+      setCandlesKey(key);
+    } catch {
+      // Har scroll event par request na barse — thodi der baad agla scroll try karega.
+      historyRetryAtRef.current = Date.now() + 8000;
+    } finally {
+      historyLockRef.current = false;
+    }
+  }, [symbol, interval, chartSource]);
 
   useEffect(() => {
     if (!compareSymbol) {
@@ -512,7 +687,7 @@ function TradeTerminal() {
     void fetchCandles({
       symbol: compareSymbol,
       interval,
-      limit: barsForDays(historyDays, interval),
+      limit: MAX_CHART_CANDLES,
       exchange: chartSource,
     })
       .then((res) => {
@@ -525,7 +700,7 @@ function TradeTerminal() {
     return () => {
       cancelled = true;
     };
-  }, [compareSymbol, interval, historyDays, chartSource]);
+  }, [compareSymbol, interval, chartSource]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -572,11 +747,18 @@ function TradeTerminal() {
     setPlacing(true);
     try {
       if (payload.mode === "live") {
-        if (liveState.kind !== "ready" || liveState.accountId == null) {
-          throw new Error(liveState.message || "Live trade ke liye exchange jodiye");
+        const accountId = isSpotKey(payload.symbol)
+          ? liveState.spot?.accountId
+          : liveState.kind === "ready" ? liveState.accountId : undefined;
+        if (accountId == null) {
+          throw new Error(
+            isSpotKey(payload.symbol)
+              ? "Spot ka asli order CoinDCX account se lagta hai — Exchanges page par CoinDCX key jodein."
+              : liveState.message || "Live trade ke liye exchange jodiye",
+          );
         }
         const res = await placeByokOrder(token, {
-          exchange_account_id: liveState.accountId,
+          exchange_account_id: accountId,
           symbol: payload.symbol,
           side: payload.side,
           order_type: payload.order_type,
@@ -595,8 +777,8 @@ function TradeTerminal() {
           quantity: payload.quantity,
           price: payload.price,
         });
-        if (!res.success) throw new Error(res.error || "Order fail");
-        setNotice(`${payload.side.toUpperCase()} paper order record ho gaya`);
+        if (!res.success) throw new Error(res.error || "Paper order nahi laga");
+        setNotice(res.message || `${payload.side.toUpperCase()} paper order lag gaya`);
       }
       await loadBook();
     } finally {
@@ -625,8 +807,8 @@ function TradeTerminal() {
     const change = market?.change_24h;
     const last = candles.at(-1);
     const prompt = [
-      `${symbolLabel(symbol)} ${interval} chart analyze karo.`,
-      price != null ? `Current price: ${fmtUsd(price)}.` : "",
+      `${pairName} ${interval} chart analyze karo.`,
+      price != null ? `Current price: ${fmtPx(price)}.` : "",
       change != null ? `24h change: ${change.toFixed(2)}%.` : "",
       last?.ema_9 != null ? `EMA9 ${last.ema_9.toFixed(2)}, EMA21 ${last.ema_21?.toFixed(2)}, EMA50 ${last.ema_50?.toFixed(2)}.` : "",
       "Buy/sell signal, support/resistance aur risk batao.",
@@ -635,31 +817,13 @@ function TradeTerminal() {
     goTab("ai");
   };
 
-  const onSearchSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const q = search.trim().toUpperCase().replace("/", "");
-    if (!q) return;
-    const hit = CRYPTO_SYMBOLS.find(
-      (s) => s.value.includes(q) || s.label.replace("/", "").includes(q),
-    );
-    if (hit) {
-      setSymbol(hit.value);
-      goTab("markets");
-      setSearch("");
-    }
-  };
-
   const changePositive = (market?.change_24h ?? 0) >= 0;
   const changeColor = changePositive ? "var(--green)" : "var(--red)";
   const ChangeIcon = changePositive ? TrendingUp : TrendingDown;
 
-  const emaToggles = useMemo(
-    () => [
-      { id: "9", label: "EMA 9", on: showEma9, set: setShowEma9, color: "#60a5fa" },
-      { id: "21", label: "EMA 21", on: showEma21, set: setShowEma21, color: "#fbbf24" },
-      { id: "50", label: "EMA 50", on: showEma50, set: setShowEma50, color: "#c084fc" },
-    ],
-    [showEma9, showEma21, showEma50],
+  const paneCount = useMemo(
+    () => indicators.filter((i) => INDICATOR_BY_ID.get(i.id)?.pane).length,
+    [indicators],
   );
 
   /**
@@ -711,13 +875,19 @@ function TradeTerminal() {
 
   const activeNav = tab;
 
-  const renderNavItem = (item: (typeof NAV)[number], mobile = false) => {
+  const topNavRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = topNavRef.current?.querySelector<HTMLElement>('[data-active="true"]');
+    el?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }, [activeNav]);
+
+  const renderNavItem = (item: (typeof NAV)[number]) => {
     const Icon = item.icon;
 
     if (item.href) {
       return (
         <Link
-          key={`${mobile ? "m-" : ""}${item.id}`}
+          key={item.id}
           href={item.href.includes("?") ? item.href : `${item.href}?symbol=${symbol}`}
           className="desk-nav-item"
           data-active={false}
@@ -736,7 +906,7 @@ function TradeTerminal() {
 
     return (
       <button
-        key={`${mobile ? "m-" : ""}${item.id}`}
+        key={item.id}
         type="button"
         data-active={isActive}
         onClick={onClick}
@@ -751,55 +921,35 @@ function TradeTerminal() {
   return (
     <div className="trade-root">
       <div className="desk-shell">
-        {/* ── Left sidebar ─────────────────────────────── */}
-        <aside className="desk-sidebar" aria-label="Desk navigation">
-          <div className="desk-brand">
-            <img className="desk-brand-mark" src="/mukul/icon.png" alt="" width={34} height={34} />
-            <div>
-              <div className="desk-brand-name">Cryptomantra</div>
-              <div className="desk-brand-sub">Trading Desk</div>
-            </div>
-          </div>
-
-          <nav className="desk-nav">
-            {NAV.map((item) => renderNavItem(item))}
-          </nav>
-
-          <div className="desk-premium">
-            <div className="desk-premium-icon" aria-hidden>
-              <Crown className="w-5 h-5" style={{ color: "var(--gold)" }} />
-            </div>
-            <div className="desk-premium-title">Cryptomantra</div>
-            <p className="desk-premium-copy">Market Radar, Mukul Algo, alerts, paper trading aur live room.</p>
-            <Link href="/club" className="desk-premium-btn">
-              Club kholen
-            </Link>
-          </div>
-        </aside>
-
         <div className="desk-main">
-          {/* ── Top header ─────────────────────────────── */}
+          {/* ── Top header: brand · nav · status ───────── */}
           <header className="desk-header">
-            <form className="desk-search" onSubmit={onSearchSubmit}>
-              <Search className="w-4 h-4" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search Crypto, Pairs, Markets..."
-                aria-label="Search crypto pairs"
-              />
-            </form>
+            <Link href="/" className="desk-brand" aria-label="Cryptomantra home">
+              <img className="desk-brand-mark" src="/mukul/icon.png" alt="" width={32} height={32} />
+              <div className="desk-brand-text">
+                <div className="desk-brand-name">Cryptomantra</div>
+                <div className="desk-brand-sub">Trading Desk</div>
+              </div>
+            </Link>
+
+            <nav ref={topNavRef} className="desk-topnav" aria-label="Desk navigation">
+              {NAV.map((item) => renderNavItem(item))}
+            </nav>
 
             <div className="desk-header-right">
+              <Link href="/club" className="desk-club-btn" title="Market Radar, Mukul Algo, alerts, paper trading aur live room">
+                <Crown className="w-3.5 h-3.5" />
+                <span>Club</span>
+              </Link>
               <span className="desk-live" data-offline={online === false}>
                 <span className="trade-dot" aria-hidden />
                 {online === false ? "Offline" : "Live"}
               </span>
-              <span className="desk-clock">{deskTime} {DESK_TZ_LABEL}</span>
-              <button type="button" className="trade-iconbtn" aria-label="Notifications" onClick={askAi}>
+              <DeskClock />
+              <button type="button" className="trade-iconbtn desk-hide-md" aria-label="Notifications" onClick={askAi}>
                 <Bell className="w-4 h-4" />
               </button>
-              <button type="button" className="trade-iconbtn" aria-label="Theme" disabled title="Dark desk">
+              <button type="button" className="trade-iconbtn desk-hide-md" aria-label="Theme" disabled title="Dark desk">
                 <Moon className="w-4 h-4" />
               </button>
               <button type="button" className="trade-iconbtn" aria-label="Ask AI" onClick={askAi}>
@@ -808,10 +958,6 @@ function TradeTerminal() {
               <AccountMenu onOpenExchanges={() => goTab("exchanges")} />
             </div>
           </header>
-
-          <div className="desk-mobile-nav" aria-label="Mobile navigation">
-            {NAV.map((item) => renderNavItem(item, true))}
-          </div>
 
           <div className={`desk-body${tab === "ai" || tab === "portfolio" ? " desk-body-fill" : ""}`}>
             {online === false && (
@@ -858,7 +1004,7 @@ function TradeTerminal() {
             {tab === "watchlist" && (
               <WatchlistDesk
                 onPickSymbol={(picked) => {
-                  setSymbol(picked);
+                  pickSymbol(picked);
                   goTab("markets");
                 }}
               />
@@ -866,7 +1012,7 @@ function TradeTerminal() {
 
             {tab === "trades" && (
               <TradesDesk onPickSymbol={(picked) => {
-                setSymbol(picked);
+                pickSymbol(picked);
                 goTab("markets");
               }} />
             )}
@@ -876,17 +1022,17 @@ function TradeTerminal() {
                 <div className="desk-pair" aria-label="Live quote">
                   <div className="desk-pair-left">
                     <div className="desk-pair-icon" style={{ background: pairIconColor(symbol) }}>
-                      {baseAsset(symbol).slice(0, 1)}
+                      {pair.base.slice(0, 1)}
                     </div>
                     <div>
-                      <div className="desk-pair-name">{symbolLabel(symbol)}</div>
-                      <div className="desk-pair-tag">{DESK_CONTRACT} · {venueShort(chartSource)}</div>
+                      <div className="desk-pair-name">{pairName}</div>
+                      <div className="desk-pair-tag">{isSpot ? "Spot · CoinDCX" : `${DESK_CONTRACT} · ${venueShort(chartSource)}`}</div>
                     </div>
                   </div>
 
                   <div>
                     <div className="desk-pair-price">
-                      {lastPrice != null ? fmtUsd(lastPrice) : "—"}
+                      {lastPrice != null ? fmtPx(lastPrice) : "—"}
                     </div>
                     <div className="desk-pair-change mt-1.5" style={{ color: market ? changeColor : undefined }}>
                       {market && <ChangeIcon className="w-3.5 h-3.5" />}
@@ -898,27 +1044,39 @@ function TradeTerminal() {
                   <div className="desk-pair-stats">
                     <div className="desk-pair-stat">
                       <div className="desk-pair-stat-label">24h High</div>
-                      <div className="desk-pair-stat-value">{market ? fmtUsd(market.high_24h) : "—"}</div>
+                      <div className="desk-pair-stat-value">{market ? fmtPx(market.high_24h) : "—"}</div>
                     </div>
                     <div className="desk-pair-stat">
                       <div className="desk-pair-stat-label">24h Low</div>
-                      <div className="desk-pair-stat-value">{market ? fmtUsd(market.low_24h) : "—"}</div>
+                      <div className="desk-pair-stat-value">{market ? fmtPx(market.low_24h) : "—"}</div>
                     </div>
                     <div className="desk-pair-stat hidden sm:block">
                       <div className="desk-pair-stat-label">24h Volume</div>
                       <div className="desk-pair-stat-value">{market ? fmtCompact(market.volume_24h) : "—"}</div>
+                      {market?.turnover_24h ? (
+                        <div className="desk-pair-stat-sub">{isSpot ? fmtQuoteCompact(market.turnover_24h, pair.quote) : `$${fmtCompact(market.turnover_24h)}`} traded</div>
+                      ) : null}
+                    </div>
+                    <div className="desk-pair-stat hidden md:block">
+                      <div className="desk-pair-stat-label">Chart History</div>
+                      <div className="desk-pair-stat-value">
+                        {candles.length ? `${candlesSpanDays(candles).toFixed(1)}d` : "—"}
+                      </div>
+                      {candles.length ? <div className="desk-pair-stat-sub">{candles.length} bars</div> : null}
                     </div>
                   </div>
 
                   <div className="desk-pair-actions">
-                    <Link
-                      href={`/trade/risk?symbol=${symbol}`}
-                      className="trade-iconbtn"
-                      aria-label={`${symbolLabel(symbol)} ka position size nikalo`}
-                      title="Risk Desk — position size aur liquidation"
-                    >
-                      <ShieldCheck className="w-4 h-4" />
-                    </Link>
+                    {!isSpot && (
+                      <Link
+                        href={`/trade/risk?symbol=${symbol}`}
+                        className="trade-iconbtn"
+                        aria-label={`${pairName} ka position size nikalo`}
+                        title="Risk Desk — position size aur liquidation"
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                      </Link>
+                    )}
                     <button type="button" className="trade-iconbtn" aria-label="Watchlist">
                       <Star className="w-4 h-4" />
                     </button>
@@ -929,55 +1087,13 @@ function TradeTerminal() {
                 </div>
 
                 <div className="desk-markets">
-                  <div className="desk-stats-col">
-                    <div className="desk-stat-card">
-                      <div className="desk-stat-card-top">
-                        <span className="desk-stat-label">Last Price</span>
-                        <span className="desk-stat-icon"><Zap className="w-3.5 h-3.5" /></span>
-                      </div>
-                      <div className="desk-stat-value">{lastPrice != null ? fmtUsd(lastPrice) : "—"}</div>
-                    </div>
-                    <div className="desk-stat-card">
-                      <div className="desk-stat-card-top">
-                        <span className="desk-stat-label">24h Change</span>
-                        <span className="desk-stat-icon"><ChangeIcon className="w-3.5 h-3.5" /></span>
-                      </div>
-                      <div className="desk-stat-value" style={{ color: market ? changeColor : undefined }}>
-                        {market ? `${changePositive ? "+" : ""}${market.change_24h.toFixed(2)}%` : "—"}
-                      </div>
-                    </div>
-                    <div className="desk-stat-card">
-                      <div className="desk-stat-card-top">
-                        <span className="desk-stat-label">24h High / Low</span>
-                        <span className="desk-stat-icon"><Crosshair className="w-3.5 h-3.5" /></span>
-                      </div>
-                      <div className="desk-stat-value" style={{ fontSize: 13 }}>
-                        {market ? `${fmtUsd(market.high_24h)}` : "—"}
-                      </div>
-                      <div className="desk-stat-sub">{market ? `Low ${fmtUsd(market.low_24h)}` : ""}</div>
-                    </div>
-                    <div className="desk-stat-card">
-                      <div className="desk-stat-card-top">
-                        <span className="desk-stat-label">Volume</span>
-                        <span className="desk-stat-icon"><Activity className="w-3.5 h-3.5" /></span>
-                      </div>
-                      <div className="desk-stat-value">{market ? fmtCompact(market.volume_24h) : "—"}</div>
-                      <div className="desk-stat-sub">
-                        {market?.turnover_24h ? `$${fmtCompact(market.turnover_24h)} traded` : ""}
-                      </div>
-                    </div>
-                    <div className="desk-stat-card">
-                      <div className="desk-stat-card-top">
-                        <span className="desk-stat-label">Chart History</span>
-                        <span className="desk-stat-icon"><LineChart className="w-3.5 h-3.5" /></span>
-                      </div>
-                      <div className="desk-stat-value" style={{ fontSize: 13 }}>
-                        {candles.length ? `${candlesSpanDays(candles).toFixed(1)}d` : "—"}
-                      </div>
-                      <div className="desk-stat-sub">{candles.length ? `${candles.length} bars` : ""}</div>
-                    </div>
-                  </div>
-
+                  <MarketList
+                    symbol={symbol}
+                    venue={chartSource}
+                    onSelect={pickSymbol}
+                    livePrice={lastPrice}
+                    liveChange={market?.change_24h ?? null}
+                  />
                   <div className="desk-chart-col">
                   <section
                     ref={(el) => {
@@ -987,8 +1103,9 @@ function TradeTerminal() {
                   >
                     <ChartDeskTools
                       symbol={symbol}
-                      onSymbol={setSymbol}
-                      emaToggles={emaToggles}
+                      onSymbol={(s) => pickSymbol(s)}
+                      emaToggles={[]}
+                      onOpenIndicators={() => setIndDialog({ mode: "list" })}
                       showVolume={showVolume}
                       onShowVolume={setShowVolume}
                       compareSymbol={compareSymbol}
@@ -997,25 +1114,14 @@ function TradeTerminal() {
                       onDrawTool={setDrawTool}
                       onClearDrawings={() => setClearDrawingsKey((k) => k + 1)}
                       fullscreenTargetRef={chartPanelRef}
-                    />
-
-                    <div className="trade-toolbar">
-                      <select
-                        value={symbol}
-                        onChange={(e) => setSymbol(e.target.value)}
-                        aria-label="Symbol"
-                        className="trade-select trade-w-symbol trade-strong"
-                      >
-                        {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                      </select>
-
+                    >
                       <select
                         value={chartSourceOverride ?? "auto"}
                         onChange={(e) =>
                           setChartSourceOverride(e.target.value === "auto" ? null : e.target.value)
                         }
                         aria-label="Chart exchange"
-                        className="trade-select trade-size-sm"
+                        className="trade-select desk-tools-venue"
                         title="Chart kis exchange ka dikhe"
                       >
                         <option value="auto">
@@ -1026,74 +1132,34 @@ function TradeTerminal() {
                         ))}
                       </select>
 
-                      <div className="trade-seg overflow-x-auto scrollbar-hide max-w-full">
-                        {chartIntervals.map((iv) => (
-                          <button
-                            key={iv.value}
-                            type="button"
-                            data-active={interval === iv.value}
-                            onClick={() => setInterval(iv.value)}
-                            className="trade-seg-btn"
-                            title={iv.label}
-                          >
-                            {shortInterval(iv.value)}
-                          </button>
-                        ))}
+                      <div className="cm-toolbar" role="toolbar" aria-label="Chart controls">
+                        <TimeframeMenu
+                          value={interval}
+                          available={chartIntervals.map((iv) => iv.value)}
+                          favorites={tfFavorites}
+                          onChange={setInterval}
+                          onFavorites={setTfFavorites}
+                        />
+                        <span className="cm-tb-sep" />
+                        <ChartTypeMenu value={chartType} onChange={setChartType} />
+                        <span className="cm-tb-sep" />
+                        <IndicatorsButton
+                          count={indicators.length + (showVolume ? 1 : 0)}
+                          onClick={() => setIndDialog({ mode: "list" })}
+                        />
                       </div>
 
-                      <div className="trade-ema-row">
-                        {emaToggles.map((ema) => (
-                          <button
-                            key={ema.id}
-                            type="button"
-                            data-on={ema.on}
-                            onClick={() => ema.set(!ema.on)}
-                            className="trade-chip"
-                            aria-pressed={ema.on}
-                          >
-                            <span className="trade-chip-dot" style={{ background: ema.color }} />
-                            {ema.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      <select
-                        className="trade-select trade-size-sm trade-ema-select"
-                        aria-label="EMA overlays"
-                        value={`${showEma9 ? 1 : 0}${showEma21 ? 1 : 0}${showEma50 ? 1 : 0}`}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setShowEma9(v[0] === "1");
-                          setShowEma21(v[1] === "1");
-                          setShowEma50(v[2] === "1");
-                        }}
+                      <button
+                        type="button"
+                        onClick={() => void loadMarket("full")}
+                        disabled={loading}
+                        className="desk-tools-refresh"
+                        aria-label="Chart refresh"
+                        title="Refresh"
                       >
-                        <option value="111">EMA 9 · 21 · 50</option>
-                        <option value="110">EMA 9 · 21</option>
-                        <option value="100">EMA 9 only</option>
-                        <option value="010">EMA 21 only</option>
-                        <option value="001">EMA 50 only</option>
-                        <option value="000">EMAs off</option>
-                      </select>
-
-                      <div className="flex-1 min-w-[8px]" />
-
-                      <select
-                        value={historyDays}
-                        onChange={(e) => setHistoryDays(Number(e.target.value))}
-                        className="trade-select trade-w-history trade-size-sm"
-                        title="Chart history"
-                        aria-label="Chart history"
-                      >
-                        {CHART_RANGES.map((range) => (
-                          <option key={range.days} value={range.days}>{range.days}d</option>
-                        ))}
-                      </select>
-
-                      <button type="button" onClick={() => void loadMarket("full")} disabled={loading} className="trade-btn trade-btn-ghost trade-size-sm">
                         <RefreshCw className={`w-3.5 h-3.5 ${loading ? "spin-slow" : ""}`} />
                       </button>
-                    </div>
+                    </ChartDeskTools>
 
                     {error && (
                       <p className="px-4 py-2.5 text-[13px]" style={{ color: "var(--red)", borderTop: "1px solid var(--tr-line-soft)" }}>
@@ -1101,22 +1167,28 @@ function TradeTerminal() {
                       </p>
                     )}
 
-                    <div className="trade-chart-wrap">
+                    <div className="trade-chart-wrap" style={{ "--panes": Math.min(paneCount, 4) } as CSSProperties}>
                       {loading && candles.length === 0 ? (
                         <div className="w-full h-full shimmer" />
                       ) : (
                         <CandleChart
                           candles={candles}
-                          symbol={symbolLabel(symbol)}
-                          interval={shortInterval(interval)}
+                          symbol={pairName}
+                          interval={tfShort(interval)}
                           venue={venueShort(chartSource)}
-                          showEma9={showEma9}
-                          showEma21={showEma21}
-                          showEma50={showEma50}
+                          chartType={chartType}
+                          indicators={indicators}
+                          onIndicatorToggle={(uid) =>
+                            setIndicators((list) => list.map((i) => (i.uid === uid ? { ...i, hidden: !i.hidden } : i)))
+                          }
+                          onIndicatorSettings={(uid) => setIndDialog({ mode: "edit", uid })}
+                          onIndicatorRemove={(uid) => setIndicators((list) => list.filter((i) => i.uid !== uid))}
                           showVolume={showVolume}
                           compareCandles={compareCandles}
                           compareLabel={compareSymbol ? symbolLabel(compareSymbol) : undefined}
                           drawTool={drawTool}
+                          onDrawToolChange={setDrawTool}
+                          drawingsKey={pairName}
                           clearDrawingsKey={clearDrawingsKey}
                           viewKey={candlesKey}
                           live={liveFeed}
@@ -1126,9 +1198,18 @@ function TradeTerminal() {
                             if (liveFeed) liveTickRef.current = { symbol: liveFeed.symbol, close: bar.close };
                           }}
                           onLiveStatus={setLiveStatus}
+                          onReachHistory={() => void loadOlder()}
                         />
                       )}
                     </div>
+                    <IndicatorsDialog
+                      state={indDialog}
+                      onState={setIndDialog}
+                      indicators={indicators}
+                      onIndicators={setIndicators}
+                      showVolume={showVolume}
+                      onShowVolume={setShowVolume}
+                    />
                     {updatedAt && (
                       <div className="px-4 py-2 text-[11px]" style={{ color: "var(--text-muted)", borderTop: "1px solid var(--tr-line-soft)" }}>
                         {liveStatus === "live" ? (
@@ -1167,11 +1248,11 @@ function TradeTerminal() {
                       <span className="desk-range-thumb" style={{ left: `${rangePct}%` }} />
                     </div>
                     <div className="desk-range-ends">
-                      <span>{market ? fmtUsd(market.low_24h) : "—"}</span>
+                      <span>{market ? fmtPx(market.low_24h) : "—"}</span>
                       <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-                        {lastPrice != null ? fmtUsd(lastPrice) : "—"}
+                        {lastPrice != null ? fmtPx(lastPrice) : "—"}
                       </span>
-                      <span>{market ? fmtUsd(market.high_24h) : "—"}</span>
+                      <span>{market ? fmtPx(market.high_24h) : "—"}</span>
                     </div>
                   </div>
 
@@ -1201,8 +1282,14 @@ function TradeTerminal() {
                   <aside className="trade-sticky-rail">
                     <TradePanel
                       symbol={symbol}
+                      spot={
+                        isSpot
+                          ? { key: orderKey(symbol, chartSource), base: pair.base, quote: pair.quote, rules: market?.spot ?? null }
+                          : null
+                      }
                       lastPrice={lastPrice}
                       orders={orders}
+                      paperAccount={paperAccount}
                       positions={positions.positions}
                       positionsState={positions}
                       signedIn={Boolean(token)}
@@ -1219,7 +1306,7 @@ function TradeTerminal() {
               <Screener
                 defaultInterval={interval}
                 onPickSymbol={(picked) => {
-                  setSymbol(picked);
+                  pickSymbol(picked);
                   goTab("markets");
                 }}
               />

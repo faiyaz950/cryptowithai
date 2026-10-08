@@ -546,7 +546,9 @@ class DeltaExchangeClient:
             interval_minutes = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
                 '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440, '1w': 10080, '1M': 43200}
             mins = interval_minutes.get(interval, 60)
-            from_ts = to_ts - (limit * mins * 60 * 1000)
+            # 1w x 4000 candles 1950 se pehle chala jaata hai — Delta negative start
+            # par 400 deta hai. 2015 se pehle koi perp tha hi nahi.
+            from_ts = max(1_420_070_400_000, to_ts - (limit * mins * 60 * 1000))
         if start_time:
             print(f"      📅 Requesting from: {start_time} to {end_time}")
         out = self.fetch_historical_data_public(symbol, interval, from_ts, to_ts)

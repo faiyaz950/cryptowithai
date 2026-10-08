@@ -15,6 +15,7 @@ dikhana.
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -53,7 +54,9 @@ class MarketSource:
         raise NotImplementedError
 
     @classmethod
-    def candles(cls, ui_symbol: str, interval: str, limit: int) -> Optional[List[Dict[str, Any]]]:
+    def candles(
+        cls, ui_symbol: str, interval: str, limit: int, end_ms: Optional[int] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
         raise NotImplementedError
 
     @classmethod
@@ -126,13 +129,13 @@ class CoinDCXMarket(MarketSource):
         return _coindcx_pairs().get((ui_symbol or "").upper())
 
     @classmethod
-    def candles(cls, ui_symbol, interval, limit):
+    def candles(cls, ui_symbol, interval, limit, end_ms=None):
         pair = cls.to_symbol(ui_symbol)
         resolution = cls.INTERVALS.get(interval)
         if not pair or not resolution:
             return None
         minutes = cls._MINUTES.get(interval, 60)
-        now = int(time.time())
+        now = int(end_ms / 1000) if end_ms else int(time.time())
         # Thoda extra maangte hain — exchange kabhi-kabhi kam bhejta hai.
         span = int(minutes * 60 * (limit + 5))
         try:
@@ -184,6 +187,203 @@ class CoinDCXMarket(MarketSource):
         }
 
 
+# ── CoinDCX Spot ─────────────────────────────────────────
+#
+# Futures wale CoinDCX se alag: yahan INR / BTC / USDT / USDC / ETH / TRX
+# quote wale spot pairs hain. Desk ka symbol CoinDCX ka apna naam hai
+# ("BTCINR", "ETHBTC"), kyunki "BTCUSDT" jaisa naam futures aur spot dono
+# mein hai aur venue alag rakhne se hi farak pata chalta hai.
+
+_CDX_SPOT_MARKETS: Dict[str, Any] = {"at": 0.0, "rows": {}}
+_CDX_SPOT_MARKETS_TTL = 600.0
+_CDX_SPOT_TICKERS: Dict[str, Any] = {"at": 0.0, "rows": None}
+_CDX_SPOT_TICKERS_TTL = 10.0
+
+
+def coindcx_spot_markets() -> Dict[str, Dict[str, Any]]:
+    """Symbol ("BTCINR") se market details — pair, base, quote, naam."""
+    now = time.time()
+    if _CDX_SPOT_MARKETS["rows"] and (now - _CDX_SPOT_MARKETS["at"]) < _CDX_SPOT_MARKETS_TTL:
+        return _CDX_SPOT_MARKETS["rows"]
+    try:
+        res = _HTTP.get("https://api.coindcx.com/exchange/v1/markets_details", timeout=TIMEOUT)
+        res.raise_for_status()
+        rows = {}
+        for m in res.json() or []:
+            if (m or {}).get("status") != "active":
+                continue
+            # `symbol` kuch pairs par "MEW-USDT" hota hai; ticker `coindcx_name` deta hai.
+            sym = str(m.get("coindcx_name") or m.get("symbol") or "").upper()
+            if not sym or not m.get("pair"):
+                continue
+            # CoinDCX ka "base_currency" asal mein quote hai (INR/USDT…).
+            rows[sym] = {
+                "pair": m["pair"],
+                "base": str(m.get("target_currency_short_name") or "").upper(),
+                "quote": str(m.get("base_currency_short_name") or "").upper(),
+                "name": m.get("target_currency_name") or m.get("target_currency_short_name") or sym,
+                # Order ke niyam — inke bahar wala order CoinDCX reject karta hai.
+                "qty_step": fnum(m.get("step")) or 10 ** -int(m.get("target_currency_precision") or 0),
+                "qty_precision": int(m.get("target_currency_precision") or 0),
+                "price_precision": int(m.get("base_currency_precision") or 0),
+                "min_qty": fnum(m.get("min_quantity")),
+                "max_qty": fnum(m.get("max_quantity")),
+                "max_qty_market": fnum(m.get("max_quantity_market")),
+                "min_notional": fnum(m.get("min_notional")),
+                "order_types": [
+                    t.replace("_order", "") for t in (m.get("order_types") or [])
+                    if t in ("limit_order", "market_order")
+                ],
+            }
+        if rows:
+            _CDX_SPOT_MARKETS.update(at=now, rows=rows)
+    except Exception:
+        pass
+    return _CDX_SPOT_MARKETS["rows"]
+
+
+def coindcx_spot_tickers() -> Optional[List[Dict[str, Any]]]:
+    """Saare spot pairs ka 24h ticker, market details ke saath jude hue."""
+    now = time.time()
+    if _CDX_SPOT_TICKERS["rows"] is not None and (now - _CDX_SPOT_TICKERS["at"]) < _CDX_SPOT_TICKERS_TTL:
+        return _CDX_SPOT_TICKERS["rows"]
+    markets = coindcx_spot_markets()
+    try:
+        res = _HTTP.get("https://api.coindcx.com/exchange/ticker", timeout=TIMEOUT)
+        res.raise_for_status()
+        raw = res.json() or []
+    except Exception:
+        return _CDX_SPOT_TICKERS["rows"]
+    out = []
+    for t in raw:
+        sym = str((t or {}).get("market") or "").upper()
+        meta = markets.get(sym)
+        if not meta:
+            continue
+        out.append({
+            "symbol": sym,
+            "base": meta["base"],
+            "quote": meta["quote"],
+            "name": meta["name"],
+            "price": fnum(t.get("last_price")),
+            "change_24h": fnum(t.get("change_24_hour")),
+            "high_24h": fnum(t.get("high")),
+            "low_24h": fnum(t.get("low")),
+            # CoinDCX ka `volume` quote currency mein hota hai (BTCINR par rupaye).
+            "turnover_quote": fnum(t.get("volume"), 0),
+        })
+    _CDX_SPOT_TICKERS.update(at=now, rows=out)
+    return out
+
+
+SPOT_VENUE = "coindcx-spot"
+# Paper/live orders aur watchlist mein spot pair isi suffix se pehchana jaata
+# hai — "BTCUSDT" Delta perp bhi hai aur CoinDCX spot bhi.
+SPOT_SUFFIX = "@" + SPOT_VENUE
+
+
+def split_spot_key(key: str):
+    """"BTCINR@coindcx-spot" -> ("BTCINR", True); "BTCUSDT" -> ("BTCUSDT", False)."""
+    key = (key or "").strip().upper()
+    if key.endswith(SPOT_SUFFIX.upper()):
+        return key[: -len(SPOT_SUFFIX)], True
+    return key, False
+
+
+def coindcx_spot_price(symbol: str) -> Optional[float]:
+    sym = (symbol or "").upper()
+    row = next((t for t in (coindcx_spot_tickers() or []) if t["symbol"] == sym), None)
+    return (row or {}).get("price") or None
+
+
+def quote_usd_rate(quote: str) -> Optional[float]:
+    """1 unit quote currency kitne USD ka hai — spot ke P&L aur limits ek hi currency mein ginne ke liye."""
+    quote = (quote or "").upper()
+    if quote in ("USD", "USDT", "USDC"):
+        return 1.0
+    if quote == "INR":
+        usdt_inr = coindcx_spot_price("USDTINR")
+        return (1.0 / usdt_inr) if usdt_inr else None
+    return coindcx_spot_price(f"{quote}USDT")
+
+
+def spot_rules(symbol: str) -> Optional[Dict[str, Any]]:
+    """UI aur order checks ke liye ek pair ke niyam, USD rate ke saath."""
+    meta = coindcx_spot_markets().get((symbol or "").upper())
+    if not meta:
+        return None
+    return {
+        "base": meta["base"],
+        "quote": meta["quote"],
+        "quote_usd": quote_usd_rate(meta["quote"]),
+        "qty_step": meta.get("qty_step"),
+        "min_qty": meta.get("min_qty"),
+        "min_notional": meta.get("min_notional"),
+        "order_types": meta.get("order_types") or ["limit"],
+    }
+
+
+class CoinDCXSpotMarket(MarketSource):
+    id = "coindcx-spot"
+    name = "CoinDCX Spot"
+    # Spot candles API sirf yahi chaar resolutions leta hai, baaki par 422.
+    INTERVALS = {"1m": "1m", "15m": "15m", "1h": "1h", "1d": "1d"}
+    _MINUTES = {"1m": 1, "15m": 15, "1h": 60, "1d": 1440}
+
+    @classmethod
+    def to_symbol(cls, ui_symbol: str) -> Optional[str]:
+        meta = coindcx_spot_markets().get((ui_symbol or "").upper())
+        return meta["pair"] if meta else None
+
+    @classmethod
+    def candles(cls, ui_symbol, interval, limit, end_ms=None):
+        pair = cls.to_symbol(ui_symbol)
+        resolution = cls.INTERVALS.get(interval)
+        if not pair or not resolution:
+            return None
+        n = max(1, min(int(limit or 500), 1000))
+        params: Dict[str, Any] = {"pair": pair, "interval": resolution, "limit": n}
+        # Sirf endTime dene par CoinDCX use ignore karke latest bhejta hai —
+        # purani history ke liye dono sire chahiye.
+        if end_ms:
+            params["endTime"] = int(end_ms)
+            params["startTime"] = int(end_ms) - cls._MINUTES[interval] * 60_000 * (n + 1)
+        try:
+            res = _HTTP.get("https://public.coindcx.com/market_data/candles", params=params, timeout=TIMEOUT)
+            res.raise_for_status()
+            rows = res.json()
+        except Exception:
+            return None
+        if not isinstance(rows, list):
+            return None
+        out = [cls.candle(r.get("time"), r.get("open"), r.get("high"),
+                          r.get("low"), r.get("close"), r.get("volume"))
+               for r in rows if isinstance(r, dict) and r.get("time")]
+        out.sort(key=lambda c: c["time"])
+        if end_ms:
+            out = [c for c in out if c["time"] <= end_ms]
+        return out[-n:]
+
+    @classmethod
+    def ticker(cls, ui_symbol):
+        sym = (ui_symbol or "").upper()
+        row = next((t for t in (coindcx_spot_tickers() or []) if t["symbol"] == sym), None)
+        if not row or not row.get("price"):
+            return None
+        price = row["price"]
+        turnover = row.get("turnover_quote") or 0
+        return {
+            "price": price,
+            "high_24h": row.get("high_24h") or price,
+            "low_24h": row.get("low_24h") or price,
+            "change_24h": row.get("change_24h"),
+            "volume_24h": (turnover / price) if price else None,
+            "turnover_24h": turnover,
+            "mark_price": None,
+            "spot": spot_rules(sym),
+        }
+
+
 # ── Bybit ────────────────────────────────────────────────
 
 class BybitMarket(MarketSource):
@@ -191,7 +391,8 @@ class BybitMarket(MarketSource):
     name = "Bybit"
     INTERVALS = {
         "1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30",
-        "1h": "60", "4h": "240", "1d": "D",
+        "1h": "60", "2h": "120", "4h": "240", "6h": "360", "12h": "720",
+        "1d": "D", "1w": "W", "1M": "M",
     }
 
     @classmethod
@@ -200,16 +401,24 @@ class BybitMarket(MarketSource):
         return (ui_symbol or "").upper() or None
 
     @classmethod
-    def candles(cls, ui_symbol, interval, limit):
+    def candles(cls, ui_symbol, interval, limit, end_ms=None):
         symbol = cls.to_symbol(ui_symbol)
         resolution = cls.INTERVALS.get(interval)
         if not symbol or not resolution:
             return None
+        params: Dict[str, Any] = {
+            "category": "linear",
+            "symbol": symbol,
+            "interval": resolution,
+            "limit": min(limit, 1000),
+        }
+        # `end` exclusive nahi hai — is timestamp tak ki candles, nayi se purani.
+        if end_ms:
+            params["end"] = int(end_ms)
         try:
             res = _HTTP.get(
                 "https://api.bybit.com/v5/market/kline",
-                params={"category": "linear", "symbol": symbol,
-                        "interval": resolution, "limit": min(limit, 1000)},
+                params=params,
                 timeout=TIMEOUT,
             )
             res.raise_for_status()
@@ -270,8 +479,9 @@ class DeltaMarket(MarketSource):
     id = "delta"
     name = "Delta Exchange India"
     INTERVALS = {
+        # Delta ki allowed resolutions: 1m,3m,5m,15m,30m,1h,2h,4h,6h,1d,1w (8h/12h/1M nahi).
         "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
-        "1h": "1h", "4h": "4h", "1d": "1d",
+        "1h": "1h", "2h": "2h", "4h": "4h", "6h": "6h", "1d": "1d", "1w": "1w",
     }
 
     @classmethod
@@ -281,16 +491,19 @@ class DeltaMarket(MarketSource):
         return sym[:-1] if sym.endswith("USDT") else sym or None
 
     @classmethod
-    def candles(cls, ui_symbol, interval, limit):
+    def candles(cls, ui_symbol, interval, limit, end_ms=None):
         if interval not in cls.INTERVALS:
             return None
+        end_time = (
+            datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc) if end_ms else None
+        )
         try:
             # Lazy import — market layer ko trading client ke boot par depend
             # nahi karna chahiye, aur circular import bhi nahi aana chahiye.
             from fetch_trading_data import DeltaExchangeClient
 
             out = DeltaExchangeClient("", "").get_historical_data(
-                ui_symbol, interval, limit,
+                ui_symbol, interval, limit, end_time=end_time,
             )
         except Exception:
             return None
@@ -366,6 +579,7 @@ MARKET_SOURCES: Dict[str, type] = {
     DeltaMarket.id: DeltaMarket,
     CoinDCXMarket.id: CoinDCXMarket,
     BybitMarket.id: BybitMarket,
+    CoinDCXSpotMarket.id: CoinDCXSpotMarket,
 }
 
 

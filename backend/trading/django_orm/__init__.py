@@ -237,6 +237,38 @@ def fetch_recent_orders(*, limit: int = 50, user_id: Optional[int] = None) -> Li
     return out
 
 
+def fetch_user_demo_orders_oldest_first(user_id: int) -> List[Dict[str, Any]]:
+    """Paper book replay ke liye — saare orders, purane pehle."""
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    rows = DemoOrder.objects.filter(user_id=user_id).order_by("created_at", "id")
+    return [
+        {
+            "order_id": r.order_id,
+            "symbol": r.symbol,
+            "side": r.side,
+            "order_type": r.order_type,
+            "quantity": float(r.quantity),
+            "price": float(r.price) if r.price is not None else None,
+            "status": r.status,
+            "timestamp": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+def update_demo_order(order_id: str, *, user_id: int, status: str, price: Optional[float] = None) -> bool:
+    """Pending paper order ko fill/cancel/reject karna. Doosre user ka order nahi chhoota."""
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    fields: Dict[str, Any] = {"status": status}
+    if price is not None:
+        fields["price"] = Decimal(str(price))
+    return DemoOrder.objects.filter(order_id=order_id, user_id=user_id).update(**fields) > 0
+
+
 # --- Users & sessions ---
 
 

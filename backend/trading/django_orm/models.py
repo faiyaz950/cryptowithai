@@ -42,7 +42,8 @@ class DemoOrder(models.Model):
     side = models.CharField(max_length=16)
     order_type = models.CharField(max_length=16)
     quantity = models.DecimalField(max_digits=28, decimal_places=8)
-    price = models.DecimalField(max_digits=28, decimal_places=8, null=True, blank=True)
+    # Spot pairs (PEPE/USDT, ADA/BTC) ka bhaav 0.0000004 jaisa hota hai — 8 decimal par wo kat jaata.
+    price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     status = models.CharField(max_length=32)
     created_at = models.DateTimeField()
 
@@ -125,7 +126,7 @@ class ByokOrder(models.Model):
     side = models.CharField(max_length=8)
     order_type = models.CharField(max_length=16)
     quantity = models.DecimalField(max_digits=28, decimal_places=8)
-    price = models.DecimalField(max_digits=28, decimal_places=8, null=True, blank=True)
+    price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     status = models.CharField(max_length=32)
     # Order kahan se aaya: desk, tradingview, ya api. Baad mein "ye trade
     # kisne lagaya" ka jawab isi se milta hai.

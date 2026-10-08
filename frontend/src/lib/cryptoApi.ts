@@ -61,6 +61,7 @@ export type CryptoInterval = (typeof CRYPTO_INTERVALS)[number]["value"];
 const INTERVAL_MINUTES: Record<string, number> = {
   "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
   "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720, "1d": 1440,
+  "1w": 10080, "1M": 43200,
 };
 
 /**
@@ -145,7 +146,21 @@ export interface MarketInfo {
   source?: "ticker" | "candles";
   exchange?: string;
   exchange_name?: string;
+  /** Sirf CoinDCX spot par — order ke niyam. */
+  spot?: SpotRules | null;
   error?: string;
+}
+
+export interface SpotRules {
+  base: string;
+  quote: string;
+  /** 1 quote = itne USD (INR par ~0.011). */
+  quote_usd: number | null;
+  qty_step: number | null;
+  min_qty: number | null;
+  /** Quote currency mein. */
+  min_notional: number | null;
+  order_types: ("limit" | "market")[];
 }
 
 /** Chart kis exchange se aa sakta hai — backend `/api/market/sources` se. */
@@ -159,7 +174,7 @@ export const DEFAULT_MARKET_SOURCES: MarketSourceInfo[] = [
   {
     id: "delta",
     name: "Delta Exchange India",
-    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "1d", "1w"],
   },
   {
     id: "coindcx",
@@ -169,12 +184,18 @@ export const DEFAULT_MARKET_SOURCES: MarketSourceInfo[] = [
   {
     id: "bybit",
     name: "Bybit",
-    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"],
+  },
+  {
+    id: "coindcx-spot",
+    name: "CoinDCX Spot",
+    intervals: ["1m", "15m", "1h", "1d"],
   },
 ];
 
 export function venueShort(exchangeId: string | null | undefined): string {
   const id = (exchangeId || "delta").toLowerCase();
+  if (id === "coindcx-spot") return "CoinDCX Spot";
   if (id === "coindcx") return "CoinDCX";
   if (id === "bybit") return "Bybit";
   if (id === "delta") return "Delta";
@@ -305,6 +326,8 @@ export async function fetchCandles(params: {
   emaPeriods?: number[];
   /** Chart ka source — connected exchange. Default delta. */
   exchange?: string;
+  /** Is time (ms) se pehle ki candles. Scroll-back history ke liye. */
+  end?: number;
 }): Promise<CandlesResponse> {
   const q = new URLSearchParams({
     symbol: params.symbol,
@@ -314,6 +337,7 @@ export async function fetchCandles(params: {
     include_rsi: "true",
     exchange: params.exchange || "delta",
   });
+  if (params.end) q.set("end", String(params.end));
   return cryptoFetch<CandlesResponse>(`/candles?${q}`);
 }
 
@@ -376,7 +400,7 @@ export async function placeDemoOrder(
     quantity: number;
     price?: number | null;
   },
-): Promise<{ success: boolean; order_id?: string; error?: string }> {
+): Promise<{ success: boolean; order_id?: string; message?: string; error?: string }> {
   return cryptoFetch("/place-order", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -389,6 +413,68 @@ export async function fetchDemoOrders(token: string): Promise<DemoOrder[]> {
     headers: { Authorization: `Bearer ${token}` },
   });
   return data.data ?? [];
+}
+
+/** Paper positions exchange positions jaisi hi shape mein aati hain, taaki UI ek hi rahe. */
+export interface PaperPosition {
+  symbol: string;
+  /** "coindcx-spot" par entry/mark pair ki currency mein; P&L aur margin hamesha USD. */
+  venue?: string;
+  quote?: string;
+  side: "long" | "short";
+  size: number;
+  entry_price: number;
+  mark_price: number | null;
+  move_pct: number | null;
+  unrealized_pnl: number | null;
+  realized_pnl: number;
+  realized_funding: number;
+  margin: number;
+  /** Size × mark (mark na mile to entry). */
+  notional: number;
+  liquidation_price: number | null;
+  opened_at: string | null;
+}
+
+export interface PaperStats {
+  closed_trades: number;
+  wins: number;
+  losses: number;
+  breakeven: number;
+  /** Sirf jeet/haar wale trades par — barabar wale ginti mein nahi. */
+  win_rate: number | null;
+  best_trade: number | null;
+  worst_trade: number | null;
+  filled_orders: number;
+}
+
+export interface PaperAccount {
+  start_balance: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  equity: number;
+  return_pct: number;
+  used_margin: number;
+  available: number;
+  positions: PaperPosition[];
+  stats: PaperStats;
+  /** order_id → us fill se band hue hisse ka realized P&L. */
+  closes: Record<string, number>;
+}
+
+export async function fetchPaperAccount(token: string): Promise<PaperAccount> {
+  const data = await cryptoFetch<{ success: boolean; data: PaperAccount }>("/paper/account", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return data.data;
+}
+
+export async function cancelPaperOrder(token: string, orderId: string): Promise<void> {
+  await cryptoFetch("/paper/orders/cancel", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ order_id: orderId }),
+  });
 }
 
 
@@ -720,6 +806,80 @@ export async function fetchFunding(symbols?: string[]): Promise<FundingResponse>
   return cryptoFetch<FundingResponse>(`/funding${qs ? `?${qs}` : ""}`);
 }
 
+export interface MarketTicker {
+  /** App ka key, jaise "BTCUSDT" — chart/candles isi se chalte hain. */
+  symbol: string;
+  base: string;
+  name: string;
+  price: number | null;
+  mark_price: number | null;
+  change_24h: number | null;
+  high_24h: number | null;
+  low_24h: number | null;
+  volume_24h: number;
+  turnover_usd: number;
+  oi_value_usd: number;
+  funding_rate: number | null;
+}
+
+/**
+ * Delta ke saare USD perpetuals. Purane backend par ye route nahi hai, to
+ * funding endpoint se desk ke majors par fallback hota hai.
+ */
+export async function fetchMarketTickers(): Promise<MarketTicker[]> {
+  try {
+    const res = await cryptoFetch<{ success: boolean; tickers?: MarketTicker[]; error?: string }>("/market/tickers");
+    if (res.success && res.tickers?.length) return res.tickers;
+    throw new Error(res.error || "tickers empty");
+  } catch {
+    const res = await fetchFunding(CRYPTO_SYMBOLS.map((s) => s.value));
+    if (!res.success) throw new Error(res.error || "Market data nahi mila");
+    return res.rates
+      .map((r) => {
+        const base = fundingBase(r.symbol);
+        return {
+          symbol: `${base}USDT`,
+          base,
+          name: base,
+          price: r.mark_price,
+          mark_price: r.mark_price,
+          change_24h: r.change_24h,
+          high_24h: null,
+          low_24h: null,
+          volume_24h: 0,
+          turnover_usd: r.turnover_usd,
+          oi_value_usd: r.oi_value_usd,
+          funding_rate: r.funding_rate,
+        };
+      })
+      .sort((a, b) => b.turnover_usd - a.turnover_usd);
+  }
+}
+
+export interface SpotTicker {
+  /** CoinDCX ka naam, jaise "BTCINR" / "ETHBTC" — chart isi se chalta hai. */
+  symbol: string;
+  base: string;
+  quote: string;
+  name: string;
+  price: number | null;
+  change_24h: number | null;
+  high_24h: number | null;
+  low_24h: number | null;
+  /** 24h turnover quote currency mein (BTCINR par rupaye). */
+  turnover_quote: number;
+}
+
+/** CoinDCX ke saare spot pairs. Purane backend par khaali list. */
+export async function fetchSpotTickers(): Promise<SpotTicker[]> {
+  try {
+    const res = await cryptoFetch<{ success: boolean; tickers?: SpotTicker[] }>("/market/spot-tickers");
+    return res.success ? res.tickers ?? [] : [];
+  } catch {
+    return [];
+  }
+}
+
 function fundingBase(symbol: string): string {
   return symbol.toUpperCase().replace(/USDT$|USD$/, "");
 }
@@ -776,7 +936,16 @@ export function syncStamp(at: Date = new Date()): string {
   return deskClock(at);
 }
 
-export function symbolLabel(symbol: string): string {
+/** CoinDCX spot ke quote — lambe suffix pehle, warna "USDT" ko "…T" + "USD" samajh liya jaata. */
+export const SPOT_QUOTES = ["USDT", "USDC", "INR", "BTC", "ETH", "TRX"] as const;
 
+export function symbolLabel(symbol: string): string {
+  // Spot order/watchlist key: "THETAINR@coindcx-spot" -> "THETA/INR".
+  const at = symbol.indexOf("@");
+  if (at >= 0) {
+    const sym = symbol.slice(0, at).toUpperCase();
+    const q = SPOT_QUOTES.find((x) => sym.endsWith(x) && sym.length > x.length);
+    return q ? `${sym.slice(0, -q.length)}/${q}` : sym;
+  }
   return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace(/USDT?$/, "/USD");
 }

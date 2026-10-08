@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   AlertCircle,
   ArrowRight,
+  FlaskConical,
   Inbox,
   ListOrdered,
   Loader2,
@@ -27,8 +28,10 @@ import {
   type ExchangePosition,
 } from "@/lib/accountApi";
 import { symbolLabel } from "@/lib/cryptoApi";
+import PaperDesk from "@/components/trade/PaperDesk";
 
 type DeskTab = "open" | "history" | "positions";
+type Source = "paper" | "exchange";
 
 const OPEN_STATES = new Set([
   "pending",
@@ -45,6 +48,25 @@ interface Props {
 }
 
 export default function TradesDesk({ onPickSymbol }: Props) {
+  const [source, setSource] = useState<Source>("paper");
+  return (
+    <div className="space-y-3">
+      <div className="trade-seg pp-source" role="tablist" aria-label="Trades source">
+        <button type="button" role="tab" aria-selected={source === "paper"} data-active={source === "paper"} onClick={() => setSource("paper")} className="trade-seg-btn">
+          <FlaskConical className="w-3.5 h-3.5" />
+          Paper trading
+        </button>
+        <button type="button" role="tab" aria-selected={source === "exchange"} data-active={source === "exchange"} onClick={() => setSource("exchange")} className="trade-seg-btn">
+          <Plug className="w-3.5 h-3.5" />
+          Exchange
+        </button>
+      </div>
+      {source === "paper" ? <PaperDesk onPickSymbol={onPickSymbol} /> : <ExchangeTrades onPickSymbol={onPickSymbol} />}
+    </div>
+  );
+}
+
+function ExchangeTrades({ onPickSymbol }: Props) {
   const { token, handleExpiredSession } = useAuth();
   const [tab, setTab] = useState<DeskTab>("open");
   const [loading, setLoading] = useState(false);

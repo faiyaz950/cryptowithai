@@ -295,8 +295,8 @@ export default function ExchangesDesk() {
 
   return (
     <div className="ex-page">
-      <header className="trade-page-head">
-        <div>
+      <header className="trade-page-head ex-head">
+        <div className="ex-head-copy">
           <div className="trade-page-kicker">Exchanges</div>
           <h2 className="trade-page-title">
             {user ? `${connectedCount} connected` : "Apna exchange jodein"}
@@ -321,24 +321,24 @@ export default function ExchangesDesk() {
 
       <div className="ex-trust">
         <div className="ex-trust-item">
-          <Lock className="w-4 h-4" />
+          <span className="ex-trust-ico"><Lock aria-hidden /></span>
           <span>
             <b>Encrypted storage</b>
-            Key aur secret server par encrypt hokar save hote hain
+            <small>Key aur secret server par encrypt hokar save hote hain</small>
           </span>
         </div>
         <div className="ex-trust-item">
-          <ShieldOff className="w-4 h-4" />
+          <span className="ex-trust-ico"><ShieldOff aria-hidden /></span>
           <span>
             <b>Withdrawal kabhi nahi</b>
-            Sirf Read + Trading permission chahiye
+            <small>Sirf Read + Trading permission chahiye</small>
           </span>
         </div>
         <div className="ex-trust-item">
-          <Trash2 className="w-4 h-4" />
+          <span className="ex-trust-ico"><Trash2 aria-hidden /></span>
           <span>
             <b>Disconnect = delete</b>
-            Hatate hi keys permanently mit jaati hain
+            <small>Hatate hi keys permanently mit jaati hain</small>
           </span>
         </div>
       </div>
@@ -546,11 +546,36 @@ function ConnectedCard({
     }
   };
 
+  const balanceBody = !balance || balance.status === "loading" ? (
+    <div className="ex-balance-skeleton shimmer" />
+  ) : balance.status === "error" ? (
+    <p className="ex-balance-note">
+      {/* Key hi kharab ho to wahi error neeche box mein pehle se hai — do baar mat dikhao. */}
+      {balance.message === (issue?.message ?? account.last_error)
+        ? "Key theek hone par balance yahan dikhega."
+        : balance.message}
+    </p>
+  ) : balance.data.length === 0 ? (
+    <p className="ex-balance-note">Wallet khaali hai</p>
+  ) : (
+    <div className="ex-balance-list">
+      {balance.data.slice(0, 4).map((b) => (
+        <div key={b.asset} className="ex-balance">
+          <span className="ex-balance-asset">{b.asset}</span>
+          <span className="ex-balance-value tnum">{fmtBalance(b.balance, b.asset)}</span>
+          {b.available !== b.balance && (
+            <span className="ex-balance-avail tnum">{fmtBalance(b.available, b.asset)} available</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <article className="ex-card" data-healthy={healthy}>
       <div className="ex-card-head">
         <ExchangeMark entry={entry} size={44} />
-        <div className="min-w-0 flex-1">
+        <div className="ex-card-id">
           <div className="ex-card-title">
             <h4>{entry.name}</h4>
             <span className={`ex-status ${healthy ? "ex-status-ok" : "ex-status-warn"}`}>
@@ -562,71 +587,21 @@ function ConnectedCard({
             {account.label} · key <span className="tnum">{account.key_hint}</span>
           </p>
         </div>
-      </div>
-
-      <dl className="ex-facts">
-        <div>
-          <dt>Trading</dt>
-          <dd style={{ color: account.can_trade ? "var(--green)" : "var(--text-muted)" }}>
-            {account.can_trade ? "Enabled" : "Off"}
-          </dd>
-        </div>
-        <div>
-          <dt>Withdrawal</dt>
-          <dd>Exchange par OFF rakhein</dd>
-        </div>
-        <div>
-          <dt>Last verified</dt>
-          <dd>{timeAgo(account.last_verified_at)}</dd>
-        </div>
-        <div>
-          <dt>Connected</dt>
-          <dd>{account.created_at ? new Date(account.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}</dd>
-        </div>
-      </dl>
-
-      <div className="ex-balances">
-        <div className="ex-balances-head">
-          <Wallet className="w-3.5 h-3.5" />
-          <span>Wallet</span>
-          <button type="button" className="ex-link" onClick={onReloadBalance} disabled={balance?.status === "loading"}>
-            <RefreshCw className={`w-3 h-3 ${balance?.status === "loading" ? "spin-slow" : ""}`} />
-            Refresh
-          </button>
-        </div>
-        {!balance || balance.status === "loading" ? (
-          <div className="ex-balance-skeleton shimmer" />
-        ) : balance.status === "error" ? (
-          <p className="ex-balance-note">
-            {/* Key hi kharab ho to wahi error neeche box mein pehle se hai — do baar mat dikhao. */}
-            {balance.message === (issue?.message ?? account.last_error)
-              ? "Key theek hone par balance yahan dikhega."
-              : balance.message}
-          </p>
-        ) : balance.data.length === 0 ? (
-          <p className="ex-balance-note">Wallet khaali hai</p>
-        ) : (
-          <div className="ex-balance-list">
-            {balance.data.slice(0, 4).map((b) => (
-              <div key={b.asset} className="ex-balance">
-                <span className="ex-balance-asset">{b.asset}</span>
-                <span className="ex-balance-value tnum">{fmtBalance(b.balance, b.asset)}</span>
-                {b.available !== b.balance && (
-                  <span className="ex-balance-avail tnum">{fmtBalance(b.available, b.asset)} available</span>
-                )}
-              </div>
-            ))}
+        {!confirming && (
+          <div className="ex-card-actions">
+            <button type="button" className="trade-btn trade-btn-ghost trade-size-sm" onClick={reverify} disabled={busy !== null}>
+              {busy === "verify" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+              {busy === "verify" ? "Verify ho raha hai…" : "Re-verify"}
+            </button>
+            <button type="button" className="trade-btn trade-btn-ghost trade-size-sm ex-danger-ghost" onClick={() => setConfirming(true)} disabled={busy !== null}>
+              <Trash2 className="w-3.5 h-3.5" />
+              Disconnect
+            </button>
           </div>
         )}
       </div>
 
-      <TradingControls account={account} token={token} onApiError={onApiError} />
-
-      {(issue || account.last_error) && (
-        <IssueBox message={issue?.message ?? account.last_error} clientIp={issue?.clientIp} />
-      )}
-
-      {confirming ? (
+      {confirming && (
         <div className="ex-confirm">
           <p>
             <b>Disconnect karein?</b> Encrypted key aur secret server se permanently delete honge. Dobara jodne ke liye
@@ -642,17 +617,45 @@ function ConnectedCard({
             </button>
           </div>
         </div>
-      ) : (
-        <div className="ex-card-actions">
-          <button type="button" className="trade-btn trade-btn-ghost trade-size-sm" onClick={reverify} disabled={busy !== null}>
-            {busy === "verify" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-            {busy === "verify" ? "Verify ho raha hai…" : "Re-verify"}
-          </button>
-          <button type="button" className="trade-btn trade-btn-ghost trade-size-sm ex-danger-ghost" onClick={() => setConfirming(true)} disabled={busy !== null}>
-            <Trash2 className="w-3.5 h-3.5" />
-            Disconnect
-          </button>
+      )}
+
+      <dl className="ex-facts">
+        <div>
+          <dt>Trading</dt>
+          <dd data-on={account.can_trade ? "true" : "false"}>{account.can_trade ? "Enabled" : "Off"}</dd>
         </div>
+        <div>
+          <dt>Withdrawal</dt>
+          <dd title="Exchange par withdrawal permission OFF rakhein">Off</dd>
+        </div>
+        <div>
+          <dt>Last verified</dt>
+          <dd>{timeAgo(account.last_verified_at)}</dd>
+        </div>
+        <div>
+          <dt>Connected</dt>
+          <dd>{account.created_at ? new Date(account.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}</dd>
+        </div>
+      </dl>
+
+      <div className="ex-card-split">
+        <div className="ex-balances">
+          <div className="ex-balances-head">
+            <Wallet className="w-3.5 h-3.5" />
+            <span>Wallet</span>
+            <button type="button" className="ex-link" onClick={onReloadBalance} disabled={balance?.status === "loading"}>
+              <RefreshCw className={`w-3 h-3 ${balance?.status === "loading" ? "spin-slow" : ""}`} />
+              Refresh
+            </button>
+          </div>
+          <div className="ex-balances-body">{balanceBody}</div>
+        </div>
+
+        <TradingControls account={account} token={token} onApiError={onApiError} />
+      </div>
+
+      {(issue || account.last_error) && (
+        <IssueBox message={issue?.message ?? account.last_error} clientIp={issue?.clientIp} />
       )}
     </article>
   );
@@ -1173,13 +1176,13 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
       ) : (
         <>
           {setup.mode === "paper" && (
-            <p className="ex-auto-note">
+            <p className="ex-auto-note ex-auto-callout">
               Abhi <b>paper mode</b> hai: signal aayega, saare check honge aur order history mein record ho jayega —
               par exchange par kuch nahi bheja jayega. Isse poora setup bina paise ke test kar sakte hain.
             </p>
           )}
 
-          <ol className="ex-guide">
+          <ol className="ex-guide ex-guide-grid">
             <li>
               <span className="ex-guide-num">1</span>
               <div>

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
+  ArrowUpRight,
   BarChart3,
   CandlestickChart,
   CirclePlus,
@@ -9,17 +10,37 @@ import {
   Expand,
   Gauge,
   Minus,
+  MousePointer2,
   MoveDiagonal,
+  Paintbrush,
   Pencil,
+  RectangleHorizontal,
+  Rows3,
+  SeparatorVertical,
   Shrink,
   Sigma,
-  TrendingUp,
+  Type,
+  Waypoints,
   X,
 } from "lucide-react";
 import { CRYPTO_SYMBOLS, symbolLabel } from "@/lib/cryptoApi";
+import type { DrawTool } from "@/lib/chartDrawings";
 
 export type ChartDeskTool = "markets" | "chart" | "indicators" | "drawing" | "compare" | "fullscreen";
-export type DrawTool = "cursor" | "hline" | "trend";
+export type { DrawTool };
+
+const DRAW_TOOLS: { id: DrawTool; label: string; icon: typeof BarChart3 }[] = [
+  { id: "cursor", label: "Cursor", icon: MousePointer2 },
+  { id: "trend", label: "Trend", icon: MoveDiagonal },
+  { id: "ray", label: "Ray", icon: ArrowUpRight },
+  { id: "hline", label: "H-Line", icon: Minus },
+  { id: "vline", label: "V-Line", icon: SeparatorVertical },
+  { id: "rect", label: "Box", icon: RectangleHorizontal },
+  { id: "fib", label: "Fib", icon: Rows3 },
+  { id: "fibext", label: "Fib Ext", icon: Waypoints },
+  { id: "brush", label: "Brush", icon: Paintbrush },
+  { id: "text", label: "Text", icon: Type },
+];
 
 interface EmaToggle {
   id: string;
@@ -41,6 +62,10 @@ interface Props {
   onDrawTool: (tool: DrawTool) => void;
   onClearDrawings: () => void;
   fullscreenTargetRef: RefObject<HTMLElement | null>;
+  /** Diya ho to "Indicators" chhota panel nahi, poora indicators dialog kholta hai. */
+  onOpenIndicators?: () => void;
+  /** Tool tabs ke baad isi row mein dikhte hain (symbol, timeframe waghaira). */
+  children?: ReactNode;
 }
 
 const TOOLS: { id: ChartDeskTool; label: string; icon: typeof BarChart3 }[] = [
@@ -64,6 +89,8 @@ export default function ChartDeskTools({
   onDrawTool,
   onClearDrawings,
   fullscreenTargetRef,
+  onOpenIndicators,
+  children,
 }: Props) {
   const [active, setActive] = useState<ChartDeskTool>("chart");
   const [open, setOpen] = useState<Exclude<ChartDeskTool, "chart" | "fullscreen"> | null>(null);
@@ -79,7 +106,14 @@ export default function ChartDeskTools({
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(null);
+      const target = e.target as Element | null;
+      if (rootRef.current?.contains(target)) return;
+      // Drawing panel chart par draw karte waqt khula rahe — warna har tool ke liye dobara kholna padta.
+      if (target?.closest?.(".trade-chart-wrap")) {
+        setOpen((prev) => (prev === "drawing" ? prev : null));
+        return;
+      }
+      setOpen(null);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -114,6 +148,11 @@ export default function ChartDeskTools({
       void toggleFullscreen();
       return;
     }
+    if (id === "indicators" && onOpenIndicators) {
+      setOpen(null);
+      onOpenIndicators();
+      return;
+    }
     if (id === "chart") {
       setActive("chart");
       setOpen(null);
@@ -122,13 +161,13 @@ export default function ChartDeskTools({
     }
     setActive(id);
     setOpen((prev) => (prev === id ? null : id));
-    if (id === "drawing") onDrawTool(drawTool === "cursor" ? "hline" : drawTool);
   };
 
   return (
     <div className="desk-tools" ref={rootRef}>
-      <div className="desk-tools-bar" role="toolbar" aria-label="Chart tools">
-        {TOOLS.map((t) => {
+      <div className="desk-tools-bar" data-extra={children ? "true" : undefined}>
+        <div className="desk-tools-tabs" role="toolbar" aria-label="Chart tools">
+        {TOOLS.filter((t) => !(children && (t.id === "markets" || (t.id === "indicators" && onOpenIndicators)))).map((t) => {
           const Icon = t.id === "fullscreen" && isFs ? Shrink : t.icon;
           const isActive =
             t.id === "fullscreen" ? isFs :
@@ -141,12 +180,16 @@ export default function ChartDeskTools({
               data-active={isActive}
               onClick={() => onTool(t.id)}
               aria-pressed={isActive}
+              aria-label={t.id === "fullscreen" && isFs ? "Exit fullscreen" : t.label}
+              title={t.id === "fullscreen" && isFs ? "Exit fullscreen" : t.label}
             >
               <Icon className="w-3.5 h-3.5" />
               <span>{t.id === "fullscreen" && isFs ? "Exit" : t.label}</span>
             </button>
           );
         })}
+        </div>
+        {children && <div className="desk-tools-extra">{children}</div>}
       </div>
 
       {open === "markets" && (
@@ -238,25 +281,32 @@ export default function ChartDeskTools({
             </button>
           </div>
           <div className="desk-draw-grid">
-            <button type="button" data-active={drawTool === "cursor"} onClick={() => onDrawTool("cursor")} className="desk-draw-tool">
-              <TrendingUp className="w-4 h-4" />
-              Cursor
-            </button>
-            <button type="button" data-active={drawTool === "hline"} onClick={() => onDrawTool("hline")} className="desk-draw-tool">
-              <Minus className="w-4 h-4" />
-              H-Line
-            </button>
-            <button type="button" data-active={drawTool === "trend"} onClick={() => onDrawTool("trend")} className="desk-draw-tool">
-              <MoveDiagonal className="w-4 h-4" />
-              Trend
-            </button>
-            <button type="button" onClick={onClearDrawings} className="desk-draw-tool">
+            {DRAW_TOOLS.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                data-active={drawTool === id}
+                aria-pressed={drawTool === id}
+                onClick={() => onDrawTool(id)}
+                className="desk-draw-tool"
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm("Is coin ki saari drawings hata dein?")) onClearDrawings();
+              }}
+              className="desk-draw-tool"
+            >
               <Eraser className="w-4 h-4" />
               Clear
             </button>
           </div>
-          <p className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
-            H-Line: chart pe click. Trend: do points click karo.
+          <p className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            {"Drawing par click karke chuno, kheench kar move karo, sire ke gol point se size badlo. Del = hatao, Esc = band. Har coin ki drawings alag save hoti hain."}
           </p>
         </div>
       )}

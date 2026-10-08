@@ -22,8 +22,8 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
     symbol: defaults.symbol ?? "BTCUSDT",
     timeframe: defaults.timeframe ?? "5m",
     days: defaults.days ?? 30,
-    sl_points: defaults.sl_points ?? 400,
-    target_points: defaults.target_points ?? 800,
+    sl_points: defaults.sl_points ?? 0,
+    target_points: defaults.target_points ?? 0,
     lots: defaults.lots ?? 1,
     ema9: defaults.ema9 ?? 9,
     ema21: defaults.ema21 ?? 21,
@@ -57,13 +57,15 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
     const def = STRATEGIES.find((d) => d.id === id);
     if (!def || def.backtestable === false || optionsKind(def)) return;
     setStrategyId(id);
-    // Us strategy ke apne parameters le aao, par market/window jaisa hai waisa rakho.
+    // Us strategy ke apne parameters le aao, par market/window aur SL/target jaisa hai waisa rakho.
     setParams((prev) => ({
       ...def.toBacktest(def.defaults),
       symbol: prev.symbol,
       timeframe: prev.timeframe,
       days: prev.days,
       lots: prev.lots,
+      sl_points: prev.sl_points,
+      target_points: prev.target_points,
     }));
   };
 
@@ -142,13 +144,16 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="trade-label" htmlFor="bt-sl">Stop loss · pts</label>
-                <input id="bt-sl" type="number" value={params.sl_points} onChange={(e) => set("sl_points", Number(e.target.value))} className="trade-input" />
+                <input id="bt-sl" type="number" min={0} value={params.sl_points} onChange={(e) => set("sl_points", Math.max(0, Number(e.target.value) || 0))} className="trade-input" />
               </div>
               <div>
                 <label className="trade-label" htmlFor="bt-target">Target · pts</label>
-                <input id="bt-target" type="number" value={params.target_points} onChange={(e) => set("target_points", Number(e.target.value))} className="trade-input" />
+                <input id="bt-target" type="number" min={0} value={params.target_points} onChange={(e) => set("target_points", Math.max(0, Number(e.target.value) || 0))} className="trade-input" />
               </div>
             </div>
+            <p className="text-[11.5px] mt-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+              0 = off. {isRange ? "Tab trade din ki aakhri candle par band hoti hai." : "Tab trade ulta crossover aane par band hoti hai."}
+            </p>
             {!isRange && (
               <label className="trade-checkrow mt-1">
                 <input type="checkbox" className="trade-check" checked={params.use_no_entry_window} onChange={(e) => set("use_no_entry_window", e.target.checked)} />

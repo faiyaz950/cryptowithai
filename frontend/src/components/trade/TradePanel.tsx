@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, ArrowRight, Inbox, LogIn, Plug, Wallet, Zap } from "lucide-react";
-import type { DemoOrder } from "@/lib/cryptoApi";
+import type { DemoOrder, PaperAccount, SpotRules } from "@/lib/cryptoApi";
 import { CRYPTO_SYMBOLS, symbolLabel } from "@/lib/cryptoApi";
+import { fmtQuotePrice } from "@/lib/marketQuote";
 import type { ExchangePosition } from "@/lib/accountApi";
 
 /**
@@ -29,12 +30,34 @@ export type LiveTradeState = {
   /** Available USDT (or USD) for % sizing. */
   availableUsdt: number;
   message?: string;
+  /**
+   * Spot ka asli order CoinDCX account se hi jaata hai — primary account
+   * Delta ho tab bhi. Na juda ho to undefined.
+   */
+  spot?: {
+    accountId: number;
+    label: string;
+    /** Asset → available (INR, BTC, THETA…). */
+    balances: Record<string, number>;
+  };
+};
+
+/** Spot pair chuna ho to ticket isi se chalta hai. */
+export type SpotTicket = {
+  /** "THETAINR@coindcx-spot" */
+  key: string;
+  base: string;
+  quote: string;
+  rules: SpotRules | null;
 };
 
 interface Props {
   symbol: string;
+  /** CoinDCX spot pair chuna ho to; perps par null. */
+  spot?: SpotTicket | null;
   lastPrice?: number;
   orders: DemoOrder[];
+  paperAccount: PaperAccount | null;
   positions: ExchangePosition[];
   positionsState: PositionsState;
   /** Paper order ke liye login zaroori hai — ticket isi se batata hai. */
@@ -61,11 +84,21 @@ function baseAsset(symbol: string): string {
   return symbol.replace(/USDT$|USD$/i, "") || symbol;
 }
 
+/** Step ke neeche round — upar round karne par balance se zyada ka order ban jaata. */
+function floorToStep(qty: number, step: number | null | undefined): string {
+  if (!step || step <= 0) return qty >= 1 ? qty.toFixed(3) : qty.toFixed(6);
+  const decimals = Math.max(0, Math.round(-Math.log10(step)));
+  const floored = Math.floor(qty / step + 1e-9) * step;
+  return floored.toFixed(decimals);
+}
+
 export default function TradePanel({
   symbol,
+  spot = null,
   lastPrice,
   orders,
-  positions,
+  paperAccount,
+  positions: exchangePositions,
   positionsState,
   signedIn,
   placing,
@@ -76,19 +109,26 @@ export default function TradePanel({
   const [mode, setMode] = useState<OrderMode>("paper");
   const [tradeSymbol, setTradeSymbol] = useState(symbol);
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [orderType, setOrderType] = useState<"market" | "limit">("market");
+  const [orderTypePick, setOrderType] = useState<"market" | "limit">("market");
   const [quantity, setQuantity] = useState("0.001");
   const [price, setPrice] = useState("");
   const [qtyPct, setQtyPct] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [book, setBook] = useState<"open" | "history">("open");
 
+  const spotKey = spot?.key ?? null;
   useEffect(() => {
-    setTradeSymbol(symbol);
-  }, [symbol]);
+    setTradeSymbol(spotKey ?? symbol);
+  }, [symbol, spotKey]);
 
-  const liveReady = liveState.kind === "ready";
-  const effectiveMode: OrderMode = mode === "live" && liveReady ? "live" : mode === "live" ? "live" : "paper";
+  const allowedTypes: ("market" | "limit")[] = spot?.rules?.order_types?.length
+    ? spot.rules.order_types
+    : ["market", "limit"];
+  const orderType = allowedTypes.includes(orderTypePick) ? orderTypePick : allowedTypes[0];
+  const unit = spot ? spot.base : baseAsset(tradeSymbol);
+
+  const liveReady = spot ? Boolean(liveState.spot) : liveState.kind === "ready";
+  const effectiveMode: OrderMode = mode === "live" ? "live" : "paper";
 
   const openOrders = useMemo(
     () => orders.filter((o) => OPEN_STATUSES.includes(String(o.status || "").toLowerCase())),
@@ -100,14 +140,38 @@ export default function TradePanel({
   );
 
   const balanceForPct =
-    effectiveMode === "live" && liveReady ? Math.max(0, liveState.availableUsdt) : DEMO_BALANCE_USDT;
+    effectiveMode === "live" && liveReady
+      ? Math.max(0, liveState.availableUsdt)
+      : paperAccount?.available ?? DEMO_BALANCE_USDT;
+  const showPaperBook = mode === "paper" && signedIn;
+  const paperPnl = paperAccount ? paperAccount.equity - paperAccount.start_balance : 0;
+  const positions = showPaperBook ? paperAccount?.positions ?? [] : exchangePositions;
 
   const effectivePrice = orderType === "limit" ? Number(price || lastPrice || 0) : Number(lastPrice || 0);
   const orderValue = Number(quantity || 0) * effectivePrice;
 
+  /** Spot: kharidne ke liye quote (INR) mein paisa, bechne ke liye paas ke coins. */
+  const spotHeld = spot
+    ? effectiveMode === "live"
+      ? liveState.spot?.balances[spot.base] ?? 0
+      : paperAccount?.positions.find((p) => p.symbol === spot.key)?.size ?? 0
+    : 0;
+  const spotBudgetQuote = spot
+    ? effectiveMode === "live"
+      ? liveState.spot?.balances[spot.quote] ?? 0
+      : spot.rules?.quote_usd
+        ? (paperAccount?.available ?? DEMO_BALANCE_USDT) / spot.rules.quote_usd
+        : 0
+    : 0;
+
   const applyPct = (pct: number) => {
     setQtyPct(pct);
     const px = orderType === "limit" ? Number(price || lastPrice || 0) : Number(lastPrice || 0);
+    if (spot) {
+      const qty = side === "sell" ? spotHeld * (pct / 100) : px > 0 ? (spotBudgetQuote * (pct / 100)) / px : 0;
+      setQuantity(floorToStep(qty, spot.rules?.qty_step));
+      return;
+    }
     if (!px || px <= 0) return;
     const qty = (balanceForPct * (pct / 100)) / px;
     setQuantity(qty >= 1 ? qty.toFixed(3) : qty.toFixed(6));
@@ -150,12 +214,16 @@ export default function TradePanel({
     mode === "live" && !liveReady
       ? liveState.kind === "signed-out"
         ? "signed-out"
-        : liveState.kind === "not-connected"
-          ? "not-connected"
-          : liveState.kind === "no-trade"
-            ? "no-trade"
-            : "blocked"
+        : spot
+          ? "spot-needs-coindcx"
+          : liveState.kind === "not-connected"
+            ? "not-connected"
+            : liveState.kind === "no-trade"
+              ? "no-trade"
+              : "blocked"
       : null;
+
+  const fmtQuote = (n: number) => (spot ? fmtQuotePrice(n, spot.quote) : `$${n.toFixed(2)}`);
 
   return (
     <div className="space-y-4">
@@ -195,29 +263,48 @@ export default function TradePanel({
 
             <div className="trade-seg trade-seg-full">
               <button type="button" data-active={side === "buy"} data-tone="buy" onClick={() => setSide("buy")} className="trade-seg-btn">
-                Buy / Long
+                {spot ? "Buy" : "Buy / Long"}
               </button>
               <button type="button" data-active={side === "sell"} data-tone="sell" onClick={() => setSide("sell")} className="trade-seg-btn">
-                Sell / Short
+                {spot ? "Sell" : "Sell / Short"}
               </button>
             </div>
 
             <div>
               <label className="trade-label" htmlFor="ticket-symbol">Symbol</label>
-              <select
-                id="ticket-symbol"
-                value={tradeSymbol}
-                onChange={(e) => setTradeSymbol(e.target.value)}
-                className="trade-select font-semibold"
-              >
-                {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
+              {spot ? (
+                <div id="ticket-symbol" className="trade-input font-semibold flex items-center justify-between">
+                  <span>{spot.base}/{spot.quote}</span>
+                  <span className="text-[10px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                    Spot · CoinDCX
+                  </span>
+                </div>
+              ) : (
+                <select
+                  id="ticket-symbol"
+                  value={tradeSymbol}
+                  onChange={(e) => setTradeSymbol(e.target.value)}
+                  className="trade-select font-semibold"
+                >
+                  {!CRYPTO_SYMBOLS.some((s) => s.value === tradeSymbol) && (
+                    <option value={tradeSymbol}>{symbolLabel(tradeSymbol)}</option>
+                  )}
+                  {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              )}
             </div>
 
             <div>
               <span className="trade-label">Order type</span>
               <div className="trade-seg trade-seg-full">
-                <button type="button" data-active={orderType === "market"} onClick={() => setOrderType("market")} className="trade-seg-btn">
+                <button
+                  type="button"
+                  data-active={orderType === "market"}
+                  onClick={() => setOrderType("market")}
+                  className="trade-seg-btn"
+                  disabled={!allowedTypes.includes("market")}
+                  title={allowedTypes.includes("market") ? undefined : "CoinDCX is pair par market order nahi leta"}
+                >
                   Market
                 </button>
                 <button type="button" data-active={orderType === "limit"} onClick={() => setOrderType("limit")} className="trade-seg-btn">
@@ -228,19 +315,39 @@ export default function TradePanel({
 
             <div>
               <label className="trade-label" htmlFor="ticket-qty">
-                Quantity · {baseAsset(tradeSymbol)}
-                {mode === "live" && liveReady && (
+                Quantity · {unit}
+                {spot ? (
                   <span className="normal-case font-medium" style={{ color: "var(--text-muted)" }}>
                     {" "}
-                    · avail ${liveState.availableUsdt.toFixed(2)}
+                    ·{" "}
+                    {side === "sell"
+                      ? `${effectiveMode === "live" ? "" : "paper "}hold ${spotHeld} ${spot.base}`
+                      : effectiveMode === "live"
+                        ? liveReady ? `avail ${fmtQuote(spotBudgetQuote)}` : ""
+                        : paperAccount ? `paper avail $${paperAccount.available.toFixed(2)}` : ""}
                   </span>
+                ) : (
+                  <>
+                    {mode === "live" && liveReady && (
+                      <span className="normal-case font-medium" style={{ color: "var(--text-muted)" }}>
+                        {" "}
+                        · avail ${liveState.availableUsdt.toFixed(2)}
+                      </span>
+                    )}
+                    {showPaperBook && paperAccount && (
+                      <span className="normal-case font-medium" style={{ color: "var(--text-muted)" }}>
+                        {" "}
+                        · paper avail ${paperAccount.available.toFixed(2)}
+                      </span>
+                    )}
+                  </>
                 )}
               </label>
               <input
                 id="ticket-qty"
                 type="number"
-                min="0.001"
-                step="0.001"
+                min={spot?.rules?.min_qty ?? 0.001}
+                step={spot?.rules?.qty_step ?? 0.001}
                 value={quantity}
                 onChange={(e) => {
                   setQuantity(e.target.value);
@@ -260,12 +367,19 @@ export default function TradePanel({
                   </button>
                 ))}
               </div>
+              {spot?.rules && (spot.rules.min_qty || spot.rules.min_notional) ? (
+                <p className="mt-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  {spot.rules.min_qty ? `Min ${spot.rules.min_qty} ${spot.base}` : ""}
+                  {spot.rules.min_qty && spot.rules.min_notional ? " · " : ""}
+                  {spot.rules.min_notional ? `kam se kam ${fmtQuote(spot.rules.min_notional)} ka order` : ""}
+                </p>
+              ) : null}
             </div>
 
             <div>
               <div className="flex items-center justify-between">
                 <label className="trade-label" htmlFor="ticket-price">
-                  {orderType === "limit" ? "Limit price · USDT" : "Price · USDT"}
+                  {orderType === "limit" ? "Limit price" : "Price"} · {spot ? spot.quote : "USDT"}
                 </label>
                 {lastPrice != null && (
                   <button
@@ -281,8 +395,8 @@ export default function TradePanel({
               <input
                 id="ticket-price"
                 type="number"
-                min="0.01"
-                step="0.01"
+                min="0"
+                step={spot ? "any" : "0.01"}
                 value={orderType === "market" ? (lastPrice != null ? String(lastPrice) : "") : price}
                 placeholder={lastPrice ? String(lastPrice) : "Price"}
                 onChange={(e) => setPrice(e.target.value)}
@@ -298,10 +412,17 @@ export default function TradePanel({
               <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
                 Order value
               </span>
-              <span className="text-[14px] font-bold tnum">
-                {orderValue > 0
-                  ? orderValue.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })
-                  : "—"}
+              <span className="text-[14px] font-bold tnum text-right">
+                {orderValue <= 0
+                  ? "—"
+                  : spot
+                    ? fmtQuotePrice(orderValue, spot.quote)
+                    : orderValue.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })}
+                {spot && orderValue > 0 && spot.rules?.quote_usd && !/^USD/.test(spot.quote) ? (
+                  <span className="block text-[11px] font-medium" style={{ color: "var(--text-muted)" }}>
+                    ≈ ${(orderValue * spot.rules.quote_usd).toFixed(2)}
+                  </span>
+                ) : null}
               </span>
             </div>
 
@@ -317,6 +438,19 @@ export default function TradePanel({
                 <LogIn className="w-4 h-4" />
                 Live trade ke liye sign in
               </Link>
+            )}
+            {liveBlockedReason === "spot-needs-coindcx" && (
+              <div className="trade-pos-notice">
+                <span className="trade-pos-notice-icon"><Plug className="w-4 h-4" /></span>
+                <div className="min-w-0">
+                  <b>CoinDCX account chahiye</b>
+                  <p>Spot pair ka asli order aapke CoinDCX account se lagta hai. Trade-only API key jodiye.</p>
+                  <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary trade-size-sm mt-2">
+                    CoinDCX jodein
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              </div>
             )}
             {liveBlockedReason === "not-connected" && (
               <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-lg trade-btn-primary w-full">
@@ -355,20 +489,33 @@ export default function TradePanel({
                 <Zap className="w-4 h-4" />
                 {placing
                   ? "Placing…"
-                  : `${mode === "live" ? "Live " : ""}${side === "buy" ? "Buy" : "Sell"} ${baseAsset(tradeSymbol)}`}
+                  : `${mode === "live" ? "Live " : ""}${side === "buy" ? "Buy" : "Sell"} ${unit}`}
               </button>
             )}
 
             <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              {mode === "live" ? (
+              {spot ? (
+                mode === "live" ? (
+                  <>
+                    Ye <b>live spot order</b> hai
+                    {` — aapke CoinDCX account (${liveState.spot?.label || "CoinDCX"}) par asli ${spot.quote} se lagega. Spot par short nahi hota; bechne ke liye coin paas hona chahiye.`}
+                  </>
+                ) : (
+                  <>
+                    Ye <b>paper order</b> hai
+                    {` — CoinDCX ke abhi ke bhaav par fill hota hai. ${spot.quote} pair ka P&L abhi ke rate se USD paper balance mein judta hai. Spot par short nahi hota.`}
+                  </>
+                )
+              ) : mode === "live" ? (
                 <>
                   Ye <b>live order</b> hai — aapke jude hue exchange ({liveState.label || "Delta"}) par
                   asli funds se place hoga. Confirm karke hi bhejein.
                 </>
               ) : (
                 <>
-                  Ye <b>paper order</b> hai — exchange par nahi jaata, sirf aapke account mein record hota hai.
-                  Neeche positions aapke jude hue exchange se aati hain.
+                  Ye <b>paper order</b> hai — exchange par nahi jaata. Market order abhi ke Delta bhaav par
+                  fill hota hai, limit order bhaav cross hone par. ${DEMO_BALANCE_USDT.toLocaleString("en-US")} virtual
+                  balance se shuru, neeche paper positions aur P&amp;L dikhte hain.
                 </>
               )}
             </p>
@@ -406,11 +553,35 @@ export default function TradePanel({
 
       <div className="trade-panel">
         <div className="trade-panel-head">
-          <span className="trade-panel-title">Open positions</span>
+          <span className="trade-panel-title">{showPaperBook ? "Paper positions" : "Open positions"}</span>
           <span className="trade-badge trade-badge-neutral tnum">{positions.length}</span>
         </div>
         <div className="p-3">
-          {positions.length === 0 && positionsState.kind !== "ready" ? (
+          {showPaperBook && paperAccount && (
+            <div className="pp-mini mb-3">
+              <div>
+                <span className="pp-label">Equity</span>
+                <b className="tnum">${paperAccount.equity.toFixed(2)}</b>
+              </div>
+              <div>
+                <span className="pp-label">P&amp;L</span>
+                <b className="tnum" data-tone={paperPnl > 0.005 ? "up" : paperPnl < -0.005 ? "down" : "flat"}>
+                  {paperPnl >= 0 ? "+" : "-"}${Math.abs(paperPnl).toFixed(2)}
+                </b>
+              </div>
+              <div>
+                <span className="pp-label">Available</span>
+                <b className="tnum">${paperAccount.available.toFixed(2)}</b>
+              </div>
+            </div>
+          )}
+          {showPaperBook && (
+            <Link href="/trade?tab=trades" className="pp-mini-link mb-2">
+              Poora paper account, history aur stats dekhein
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          )}
+          {!showPaperBook && positions.length === 0 && positionsState.kind !== "ready" ? (
             <PositionsNotice state={positionsState} />
           ) : positions.length === 0 ? (
             <div className="trade-empty">
@@ -427,21 +598,43 @@ export default function TradePanel({
                   <div key={`${p.symbol}-${p.side}-${i}`} className="trade-row trade-row-stack gap-1.5">
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-2 text-[13px] font-bold">
-                        {p.symbol || "—"}
+                        {p.symbol ? symbolLabel(p.symbol) : "—"}
                         <span
                           className={`trade-badge ${p.side === "long" ? "trade-badge-green" : "trade-badge-red"}`}
                         >
-                          {p.side === "long" ? "Long" : "Short"}
+                          {"venue" in p && p.venue === "coindcx-spot" ? "Spot" : p.side === "long" ? "Long" : "Short"}
                         </span>
                       </span>
-                      {value === null ? (
-                        <span className="trade-badge trade-badge-neutral">—</span>
-                      ) : (
-                        <span className={`trade-badge ${up ? "trade-badge-green" : "trade-badge-red"} tnum`}>
-                          {up ? "+" : ""}
-                          {hasPnl ? value.toFixed(2) : `${value.toFixed(2)}%`}
-                        </span>
-                      )}
+                      <span className="flex items-center gap-1.5">
+                        {value === null ? (
+                          <span className="trade-badge trade-badge-neutral">—</span>
+                        ) : (
+                          <span className={`trade-badge ${up ? "trade-badge-green" : "trade-badge-red"} tnum`}>
+                            {up ? "+" : ""}
+                            {hasPnl ? value.toFixed(2) : `${value.toFixed(2)}%`}
+                            {showPaperBook && hasPnl && p.move_pct != null && ` (${p.move_pct >= 0 ? "+" : ""}${p.move_pct.toFixed(2)}%)`}
+                          </span>
+                        )}
+                        {showPaperBook && (
+                          <button
+                            type="button"
+                            className="trade-btn trade-size-sm"
+                            disabled={placing}
+                            onClick={() =>
+                              void onPlace({
+                                mode: "paper",
+                                symbol: p.symbol,
+                                side: p.side === "long" ? "sell" : "buy",
+                                order_type: "market",
+                                quantity: p.size,
+                              }).catch((err) => setError(err instanceof Error ? err.message : "Position band nahi hui"))
+                            }
+                            aria-label={`${p.symbol} paper position close karein`}
+                          >
+                            Close
+                          </button>
+                        )}
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
                       <span>Size <b style={{ color: "var(--text-secondary)" }}>{p.size}</b></span>

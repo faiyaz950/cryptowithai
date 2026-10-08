@@ -13,7 +13,16 @@ from datetime import datetime, timedelta, timezone
 import time
 from fetch_trading_data import BASE_URL, CryptoAPIClient, to_delta_symbol
 from exchanges import SUPPORTED_EXCHANGES, catalogue, exchange_name, get_adapter, message_for
-from exchanges.market import get_market_source, market_catalogue
+from exchanges.market import (
+    SPOT_SUFFIX,
+    coindcx_spot_markets,
+    coindcx_spot_price,
+    coindcx_spot_tickers,
+    get_market_source,
+    market_catalogue,
+    quote_usd_rate,
+    split_spot_key,
+)
 from options_backtest import create_options_backtest_blueprint
 import os
 import base64
@@ -34,6 +43,8 @@ from django_orm import (
     database_backend,
     save_demo_order_entry,
     fetch_recent_orders,
+    fetch_user_demo_orders_oldest_first,
+    update_demo_order,
     create_user_account,
     get_user_account_by_username,
     get_user_account_by_email,
@@ -680,8 +691,13 @@ def get_candles():
     try:
         symbol = request.args.get('symbol', 'BTCUSDT')
         interval = request.args.get('interval', '1h')
-        limit = int(request.args.get('limit', 100))
+        limit = max(2, min(int(request.args.get('limit', 100)), 5000))
         exchange = (request.args.get('exchange') or 'delta').strip().lower()
+        end_raw = (request.args.get('end') or '').strip()
+        try:
+            end_ms = int(end_raw) if end_raw else None
+        except ValueError:
+            end_ms = None
 
         ema_periods_str = request.args.get('ema_periods', '9,21,50')
         ema_periods = [int(p.strip()) for p in ema_periods_str.split(',') if p.strip()]
@@ -704,7 +720,19 @@ def get_candles():
                 'intervals': src.intervals(),
             }), 400
 
-        rows = src.candles(symbol, interval, limit)
+        rows = src.candles(symbol, interval, limit, end_ms=end_ms)
+        if end_ms and not rows:
+            # History ka shuru aa gaya — error nahi, khaali page; chart paging rok deta hai.
+            return jsonify({
+                'success': True,
+                'symbol': symbol,
+                'interval': interval,
+                'exchange': src.id,
+                'exchange_name': src.name,
+                'candles': [],
+                'ema_periods': ema_periods,
+                'total_candles': 0,
+            })
         if rows is None:
             return jsonify({
                 'error': f'{src.name} se data nahi mila. Symbol ya network check karein.',
@@ -1495,6 +1523,69 @@ def funding_rates():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+_TICKERS_CACHE = {'at': 0.0, 'rows': None}
+_TICKERS_TTL = 10
+_TICKERS_LOCK = threading.Lock()
+
+
+@app.route('/api/market/tickers', methods=['GET'])
+def market_tickers():
+    """
+    Delta ke saare USD perpetuals ka ticker — markets list ke liye. Har tab har
+    15s poll karta hai, isliye ek chhota shared cache Delta par load rokta hai.
+    """
+    try:
+        with _TICKERS_LOCK:
+            fresh = _TICKERS_CACHE['rows'] is not None and time.time() - _TICKERS_CACHE['at'] < _TICKERS_TTL
+            if not fresh:
+                res = requests.get(
+                    f"{BASE_URL}/v2/tickers",
+                    params={'contract_types': 'perpetual_futures'},
+                    timeout=20,
+                )
+                res.raise_for_status()
+                rows = []
+                for r in res.json().get('result') or []:
+                    symbol = str(r.get('symbol') or '')
+                    if not symbol.endswith('USD'):
+                        continue
+                    name = str(r.get('description') or '').replace(' Perpetual', '').strip()
+                    rows.append({
+                        'symbol': f"{symbol}T",
+                        'base': str(r.get('underlying_asset_symbol') or symbol[:-3]),
+                        'name': name or symbol[:-3],
+                        'price': _fnum(r.get('close')) or _fnum(r.get('mark_price')),
+                        'mark_price': _fnum(r.get('mark_price')),
+                        'change_24h': _fnum(r.get('mark_change_24h')),
+                        'high_24h': _fnum(r.get('high')),
+                        'low_24h': _fnum(r.get('low')),
+                        'volume_24h': _fnum(r.get('volume'), 0),
+                        'turnover_usd': _fnum(r.get('turnover_usd'), 0),
+                        'oi_value_usd': _fnum(r.get('oi_value_usd'), 0),
+                        'funding_rate': _fnum(r.get('funding_rate')),
+                    })
+                rows.sort(key=lambda x: x['turnover_usd'] or 0, reverse=True)
+                _TICKERS_CACHE['rows'] = rows
+                _TICKERS_CACHE['at'] = time.time()
+            rows = _TICKERS_CACHE['rows']
+        return jsonify({'success': True, 'count': len(rows), 'tickers': rows})
+    except Exception as e:
+        print(f"❌ Tickers error: {e}")
+        stale = _TICKERS_CACHE['rows']
+        if stale is not None:
+            return jsonify({'success': True, 'count': len(stale), 'tickers': stale, 'stale': True})
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/market/spot-tickers', methods=['GET'])
+def market_spot_tickers():
+    """CoinDCX ke saare spot pairs — INR, BTC, USDT, USDC, ETH, TRX quote wale."""
+    rows = coindcx_spot_tickers()
+    if rows is None:
+        return jsonify({'success': False, 'error': 'CoinDCX spot data nahi mila'}), 502
+    return jsonify({'success': True, 'count': len(rows), 'tickers': rows})
+
+
 def _market_info_from_candles(symbol, exchange='delta'):
     """
     Ticker na mile to fallback — poore 24 ghante ki candles se stats banao.
@@ -1569,6 +1660,7 @@ def get_market_info():
                 'turnover_24h': t.get('turnover_24h'),
                 'mark_price': t.get('mark_price'),
                 'change_24h': t.get('change_24h') or 0.0,
+                'spot': t.get('spot'),
             })
         print(f"⚠️ Market info: {src.name}/{symbol} ka ticker adhoora aaya, candles par ja rahe hain")
     except Exception as e:
@@ -2649,10 +2741,26 @@ def prepare_order(*, account, payload, require_live_toggle=True):
     if order_type == 'limit' and not price:
         raise OrderRejected('Limit order ke liye price chahiye.')
 
+    is_spot = split_spot_key(symbol)[1]
+    if is_spot and account['exchange'] != 'coindcx':
+        raise OrderRejected(
+            'Spot pair ka asli order sirf CoinDCX account se lagta hai. Exchanges page par CoinDCX key jodein.',
+            reason='spot_needs_coindcx',
+        )
+    if not is_spot and account['exchange'] == 'coindcx':
+        raise OrderRejected(
+            'CoinDCX par is desk se abhi sirf spot order lagta hai. Left list se INR/USDT spot pair chunein.',
+            reason='coindcx_spot_only',
+        )
+
     adapter = get_adapter(account['exchange'], decrypt_secret(account['api_key_encrypted']),
                           decrypt_secret(account['secret_key_encrypted']))
     if adapter is None:
         raise OrderRejected(message_for('adapter_missing', exchange=exchange_name(account['exchange'])))
+
+    if is_spot:
+        return _prepare_spot_order(adapter, account, _spot_key(symbol), side, order_type,
+                                   size, price, payload.get('client_order_id'))
 
     info = adapter.contract_info(symbol)
     if not info:
@@ -2718,6 +2826,60 @@ def prepare_order(*, account, payload, require_live_toggle=True):
         'base_unit': info.get('unit') or '',
         'reference_price': reference,
         'notional': round(notional, 2),
+        'cap': cap,
+    }
+
+
+def _prepare_spot_order(adapter, account, symbol, side, order_type, qty, price, client_order_id):
+    """
+    Spot order ka hisaab. Yahan contract nahi hote — quantity seedha coins
+    mein hai, aur order value pair ki currency (INR/BTC) mein. Limit USD mein
+    hai, isliye value ko USD mein badal kar milaate hain; warna $500 ki limit
+    INR pair par ₹500 ban jaati.
+    """
+    info = adapter.contract_info(symbol)
+    meta = (info or {}).get('meta')
+    if not meta:
+        raise OrderRejected(f'{symbol} CoinDCX spot par nahi mila.', reason='contract_unknown')
+    pair = f"{meta['base']}/{meta['quote']}"
+
+    reference = price if order_type == 'limit' else adapter.mark_price(symbol)
+    if not reference:
+        raise OrderRejected(f'{pair} ka abhi ka bhaav nahi mila, isliye order check nahi kar sakte.',
+                            reason='no_price')
+    problem = _spot_order_problem(meta, side, order_type, qty, reference)
+    if problem:
+        raise OrderRejected(problem, reason='spot_rules')
+
+    notional = qty * reference
+    rate = quote_usd_rate(meta['quote'])
+    if not rate:
+        raise OrderRejected(f'{meta["quote"]} ka USD rate nahi mila — order ki limit check nahi ho sakti.',
+                            reason='no_price')
+    notional_usd = notional * rate
+    account_cap = _fnum(account.get('max_order_notional'), 0.0) or DEFAULT_MAX_ORDER_NOTIONAL
+    cap = min(account_cap, HARD_MAX_ORDER_NOTIONAL)
+    if notional_usd > cap:
+        raise OrderRejected(
+            f'Ye order lagbhag ${notional_usd:,.2f} ({notional:,.4f} {meta["quote"]}) ka hai, aur is '
+            f'account ki limit ${cap:,.2f} hai. Limit Exchanges page par badal sakte hain.',
+            reason='notional_cap',
+        )
+    return {
+        'adapter': adapter,
+        'symbol': symbol,
+        'side': side,
+        'order_type': order_type,
+        'contracts': qty,
+        'price': price,
+        'reduce_only': False,
+        'client_order_id': client_order_id,
+        'base_quantity': qty,
+        'base_unit': meta['base'],
+        'quote': meta['quote'],
+        'reference_price': reference,
+        'notional': round(notional, 8),
+        'notional_usd': round(notional_usd, 2),
         'cap': cap,
     }
 
@@ -3186,67 +3348,361 @@ def byok_cancel_order():
 
 # Delta error code -> (reason slug, user-facing message template).
 # Ye sab "keys setup/usable nahi hain" wale cases hain — inka matlab "no open positions" NAHI hai.
+# Paper account: har user isi virtual USD se shuru karta hai, leverage 1x.
+PAPER_START_USD = 10_000.0
+_PAPER_PRICE_TTL = 5.0
+_paper_prices = {}
+_paper_prices_lock = threading.Lock()
+
+
+def _spot_meta(key):
+    """Spot key ("BTCINR@coindcx-spot") ho to CoinDCX market details, warna None."""
+    sym, spot = split_spot_key(key)
+    return coindcx_spot_markets().get(sym) if spot else None
+
+
+def _spot_key(key):
+    """Spot key ko ek hi roop mein — case alag hone se do positions na ban jayein."""
+    sym, spot = split_spot_key(key)
+    return f"{sym}{SPOT_SUFFIX}" if spot else sym
+
+
+_paper_fx_last = {}
+
+
+def _paper_fx(symbol):
+    """
+    Is symbol ki 1 unit quote kitne USD ki — Delta perps par 1.
+
+    Paper account ek hi USD balance hai, isliye INR/BTC wale spot pair ka
+    paisa abhi ke rate se USD mein ginte hain. Rate na mile to pichhla rate.
+    """
+    meta = _spot_meta(symbol)
+    if meta is None:
+        return 1.0
+    quote = meta['quote']
+    rate = quote_usd_rate(quote)
+    if rate:
+        _paper_fx_last[quote] = rate
+    return rate or _paper_fx_last.get(quote)
+
+
+def _spot_order_problem(meta, side, order_type, qty, price):
+    """CoinDCX ke niyam — paper aur live dono par same, taaki paper jo kare wahi live kare."""
+    pair = f"{meta['base']}/{meta['quote']}"
+    allowed = meta.get('order_types') or ['limit']
+    if order_type not in allowed:
+        return f'{pair} par CoinDCX sirf {" / ".join(allowed)} order leta hai.'
+    step = meta.get('qty_step') or 0
+    if step and abs(round(qty / step) * step - qty) > step * 1e-6:
+        return f'{pair} par quantity {step:g} {meta["base"]} ke multiple mein honi chahiye.'
+    if meta.get('min_qty') and qty < meta['min_qty'] - 1e-12:
+        return f'{pair} par kam se kam {meta["min_qty"]:g} {meta["base"]} ka order lagta hai.'
+    max_qty = meta.get('max_qty_market') if order_type == 'market' else meta.get('max_qty')
+    if max_qty and qty > max_qty + 1e-12:
+        return f'{pair} par ek order mein zyada se zyada {max_qty:g} {meta["base"]} lagta hai.'
+    pp = meta.get('price_precision')
+    if order_type == 'limit' and price and pp is not None and abs(round(price, pp) - price) > 1e-12:
+        return f'{pair} par price {pp} decimal tak hi ho sakta hai.'
+    if meta.get('min_notional') and price and qty * price < meta['min_notional'] - 1e-12:
+        return f'{pair} par order kam se kam {meta["min_notional"]:g} {meta["quote"]} ka hona chahiye.'
+    return None
+
+
+def _paper_price(symbol):
+    """Paper fill aur mark isi bhaav par — perps ke liye Delta, spot ke liye CoinDCX."""
+    now = time.time()
+    with _paper_prices_lock:
+        hit = _paper_prices.get(symbol)
+        if hit and now - hit[1] < _PAPER_PRICE_TTL:
+            return hit[0]
+    price = None
+    sym, spot = split_spot_key(symbol)
+    try:
+        if spot:
+            price = coindcx_spot_price(sym)
+        else:
+            src = get_market_source('delta')
+            t = src.ticker(symbol) if src else None
+            price = _fnum((t or {}).get('price')) or _fnum((t or {}).get('mark_price'))
+    except Exception:
+        price = None
+    if price:
+        with _paper_prices_lock:
+            _paper_prices[symbol] = (price, now)
+    return price or None
+
+
+def _paper_prices_for(symbols):
+    symbols = sorted(set(symbols))
+    if not symbols:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(symbols))) as pool:
+        return dict(zip(symbols, pool.map(_paper_price, symbols)))
+
+
+def _paper_book(orders):
+    """
+    Filled paper orders ko replay karke har symbol ki net position.
+
+    Ek symbol par ek hi position hoti hai (netting). Ulti side ka order pehle
+    position ghataata hai, bacha hua hissa nayi ulti position kholta hai.
+    Jin purane orders ka fill price save nahi hua, unka hisaab nahi ban sakta.
+    """
+    book, realized, _ = _paper_replay(orders)
+    return book, realized
+
+
+def _paper_replay(orders):
+    """`_paper_book` ka poora roop — saath mein har closing fill ka realized P&L."""
+    book = {}
+    realized = 0.0
+    closes = {}
+    fx = {}
+    for o in orders:
+        if o.get('status') != 'filled' or not o.get('price'):
+            continue
+        qty = float(o['quantity'])
+        px = float(o['price'])
+        sign = 1 if o['side'] == 'buy' else -1
+        pos = book.setdefault(o['symbol'], {'qty': 0.0, 'entry': 0.0, 'opened_at': o.get('timestamp')})
+        q = pos['qty']
+        if q == 0 or (q > 0) == (sign > 0):
+            if q == 0:
+                pos['opened_at'] = o.get('timestamp')
+            new_q = q + sign * qty
+            pos['entry'] = (abs(q) * pos['entry'] + qty * px) / abs(new_q)
+            pos['qty'] = new_q
+            continue
+        closing = min(qty, abs(q))
+        if o['symbol'] not in fx:
+            fx[o['symbol']] = _paper_fx(o['symbol']) or 0.0
+        # Quote currency (INR/BTC) se USD — paper balance USD mein hai.
+        pnl = closing * (px - pos['entry']) * (1 if q > 0 else -1) * fx[o['symbol']] + 0.0
+        realized += pnl
+        if o.get('order_id'):
+            closes[o['order_id']] = round(pnl, 4)
+        q += sign * closing
+        rest = qty - closing
+        if abs(q) < 1e-12:
+            q = 0.0
+            pos['entry'] = 0.0
+        if rest > 1e-12:
+            q = sign * rest
+            pos['entry'] = px
+            pos['opened_at'] = o.get('timestamp')
+        pos['qty'] = q
+    return {s: p for s, p in book.items() if p['qty'] != 0}, realized, closes
+
+
+def _paper_account(orders, marks):
+    positions, realized, closes = _paper_replay(orders)
+    rows = []
+    unrealized = 0.0
+    used = 0.0
+    for symbol, p in positions.items():
+        q, entry = p['qty'], p['entry']
+        mark = marks.get(symbol)
+        meta = _spot_meta(symbol)
+        fx = _paper_fx(symbol) or 0.0
+        # `+ 0.0` taaki flat P&L "-0.00" na dikhe. P&L aur margin USD mein,
+        # entry/mark pair ki apni currency (INR/BTC) mein.
+        upnl = q * (mark - entry) * fx + 0.0 if mark and fx else None
+        if upnl is not None:
+            unrealized += upnl
+        used += abs(q) * entry * fx
+        rows.append({
+            'symbol': symbol,
+            'venue': 'coindcx-spot' if meta else 'delta',
+            'quote': meta['quote'] if meta else 'USD',
+            'side': 'long' if q > 0 else 'short',
+            'size': round(abs(q), 10),
+            'entry_price': round(entry, 10),
+            'mark_price': mark,
+            'move_pct': ((mark - entry) / entry * 100 * (1 if q > 0 else -1) + 0.0) if mark and entry else None,
+            'unrealized_pnl': round(upnl, 4) if upnl is not None else None,
+            'realized_pnl': 0.0,
+            'realized_funding': 0.0,
+            'margin': round(abs(q) * entry * fx, 4),
+            'notional': round(abs(q) * (mark or entry) * fx, 4),
+            'liquidation_price': None,
+            'opened_at': p.get('opened_at'),
+        })
+    cash = PAPER_START_USD + realized
+    equity = cash + unrealized
+    results = list(closes.values())
+    wins = [r for r in results if r > 0]
+    losses = [r for r in results if r < 0]
+    return {
+        'start_balance': PAPER_START_USD,
+        'realized_pnl': round(realized, 4),
+        'unrealized_pnl': round(unrealized, 4),
+        'equity': round(equity, 4),
+        'return_pct': round((equity - PAPER_START_USD) / PAPER_START_USD * 100 + 0.0, 4),
+        'used_margin': round(used, 4),
+        'available': round(max(0.0, equity - used), 4),
+        'positions': rows,
+        'stats': {
+            'closed_trades': len(results),
+            'wins': len(wins),
+            'losses': len(losses),
+            'breakeven': len(results) - len(wins) - len(losses),
+            'win_rate': round(len(wins) / (len(wins) + len(losses)) * 100, 2) if wins or losses else None,
+            'best_trade': max(results) if results else None,
+            'worst_trade': min(results) if results else None,
+            'filled_orders': sum(1 for o in orders if o.get('status') == 'filled' and o.get('price')),
+        },
+        # order_id -> us fill se band hue hisse ka realized P&L
+        'closes': closes,
+    }
+
+
+def _paper_exposure_added(orders, symbol, side, qty):
+    """Is order se position kitni badhegi — ghataane wala hissa free hai."""
+    positions, _ = _paper_book(orders)
+    q = positions.get(symbol, {}).get('qty', 0.0)
+    if q == 0 or (q > 0) == (side == 'buy'):
+        return qty
+    return max(0.0, qty - abs(q))
+
+
+def _paper_fill_check(orders, symbol, side, qty, price):
+    """None = fill ho sakta hai, warna wajah."""
+    meta = _spot_meta(symbol)
+    if meta is not None and side == 'sell':
+        # Spot par short nahi hota — jitna coin paas hai utna hi bikta hai.
+        positions, _ = _paper_book(orders)
+        held = max(0.0, positions.get(symbol, {}).get('qty', 0.0))
+        if qty > held + 1e-12:
+            return (f'Spot par sirf utna bech sakte hain jitna paas hai — '
+                    f'aapke paas {held:g} {meta["base"]} hai.')
+        return None
+    added = _paper_exposure_added(orders, symbol, side, qty)
+    if added <= 0:
+        return None
+    fx = _paper_fx(symbol)
+    if not fx:
+        return f'{meta["quote"] if meta else "USD"} ka USD rate nahi mila — thodi der baad try karein.'
+    marks = _paper_prices_for({o['symbol'] for o in orders if o.get('status') == 'filled'} | {symbol})
+    available = _paper_account(orders, marks)['available']
+    needed = added * price * fx
+    if needed > available + 1e-9:
+        return (f'Paper balance kam hai: is order ko ~${needed:,.2f} chahiye, '
+                f'available ${available:,.2f} hai.')
+    return None
+
+
+def _settle_paper_limits(user_id):
+    """
+    Pending paper limit orders ko abhi ke bhaav se milao.
+
+    Matching engine background mein nahi chalta — jab bhi user orders/account
+    dekhta hai tab check hota hai. Isliye sirf abhi ka bhaav dekha jaata hai,
+    beech ki wick nahi.
+    """
+    orders = fetch_user_demo_orders_oldest_first(user_id)
+    pending = [o for o in orders if o['status'] == 'pending' and o.get('price')]
+    if not pending:
+        return orders
+    marks = _paper_prices_for(o['symbol'] for o in pending)
+    changed = False
+    for o in pending:
+        mark = marks.get(o['symbol'])
+        if not mark:
+            continue
+        limit = float(o['price'])
+        crossed = mark <= limit if o['side'] == 'buy' else mark >= limit
+        if not crossed:
+            continue
+        settled = [x for x in orders if x['status'] == 'filled']
+        reason = _paper_fill_check(settled, o['symbol'], o['side'], float(o['quantity']), limit)
+        update_demo_order(o['order_id'], user_id=user_id, status='rejected' if reason else 'filled')
+        o['status'] = 'rejected' if reason else 'filled'
+        changed = True
+    return fetch_user_demo_orders_oldest_first(user_id) if changed else orders
+
+
 @app.route('/api/place-order', methods=['POST'])
 @require_auth
 def place_order():
     """
-    Paper (demo) order — ye exchange par nahi jaata, sirf record banta hai.
-
-    Auth zaroori hai kyunki order us user ke naam se save hota hai; pehle ye
-    khula tha aur sab orders ek hi common list mein chale jaate the.
+    Paper order — exchange par nahi jaata. Market order abhi ke Delta bhaav
+    par fill hota hai, limit order tab jab bhaav limit cross kare. Position
+    aur P&L isi fill price se bante hain.
     """
     try:
-        data = request.get_json()
-        symbol = data.get('symbol', '')
-        side = data.get('side', 'buy')
-        order_type = data.get('order_type', 'market')
-        quantity = float(data.get('quantity', 0))
-        price = data.get('price', None)
-        
+        data = request.get_json(silent=True) or {}
+        symbol = str(data.get('symbol') or '').strip().upper()
+        side = str(data.get('side') or 'buy').strip().lower()
+        order_type = str(data.get('order_type') or 'market').strip().lower()
+        quantity = _fnum(data.get('quantity'), 0.0)
+        limit_price = _fnum(data.get('price'), 0.0) or None
+
         if not symbol or quantity <= 0:
+            return jsonify({'success': False, 'error': 'Symbol aur quantity required hain'}), 400
+        if side not in ('buy', 'sell'):
+            return jsonify({'success': False, 'error': "side 'buy' ya 'sell' hona chahiye"}), 400
+        if order_type not in ('market', 'limit'):
+            return jsonify({'success': False, 'error': "order_type 'market' ya 'limit' hona chahiye"}), 400
+        if order_type == 'limit' and not limit_price:
+            return jsonify({'success': False, 'error': 'Limit order ke liye price chahiye'}), 400
+
+        symbol = _spot_key(symbol)
+        meta = _spot_meta(symbol)
+        if split_spot_key(symbol)[1] and meta is None:
+            return jsonify({'success': False, 'error': f'{symbol} CoinDCX spot par nahi mila.'}), 400
+        label = f"{meta['base']}/{meta['quote']}" if meta else symbol
+
+        mark = _paper_price(symbol)
+        if not mark:
             return jsonify({
                 'success': False,
-                'error': 'Symbol aur quantity required hain'
-            }), 400
-        
-        if order_type == 'limit' and (not price or price <= 0):
-            return jsonify({
-                'success': False,
-                'error': 'Price required for limit orders'
-            }), 400
-        
-        # Demo mode: Simulate order placement
-        order_id = f"ORD_{int(time.time() * 1000)}"
-        
+                'error': f'{label} ka abhi ka bhaav nahi mila — thodi der baad try karein.',
+            }), 503
+        if meta:
+            problem = _spot_order_problem(meta, side, order_type, quantity, limit_price or mark)
+            if problem:
+                return jsonify({'success': False, 'error': problem, 'reason': 'spot_rules'}), 400
+
+        marketable = order_type == 'market' or (
+            limit_price >= mark if side == 'buy' else limit_price <= mark
+        )
+        fill_price = mark if marketable else None
+
+        orders = _settle_paper_limits(g.user['id'])
+        if marketable or (meta and side == 'sell'):
+            settled = [o for o in orders if o['status'] == 'filled']
+            reason = _paper_fill_check(settled, symbol, side, quantity, fill_price)
+            if reason:
+                return jsonify({'success': False, 'error': reason, 'reason': 'paper_balance'}), 400
+
         order_entry = {
-            'order_id': order_id,
+            'order_id': f"ORD_{int(time.time() * 1000)}_{secrets.token_hex(3)}",
             'symbol': symbol,
             'side': side,
             'order_type': order_type,
             'quantity': quantity,
-            'price': price,
-            'status': 'filled' if order_type == 'market' else 'pending',
-            'timestamp': datetime.now().isoformat()
+            'price': fill_price if marketable else limit_price,
+            'status': 'filled' if marketable else 'pending',
+            'timestamp': datetime.now().isoformat(),
         }
-
         save_demo_order_entry(order_entry, user_id=g.user['id'])
-        
-        print(f"✅ Order placed: {side} {quantity} {symbol} @ {price or 'Market'}")
-        
+
+        message = (
+            f"Paper {side.upper()} {quantity:g} {label} @ {fill_price:,.4f} fill ho gaya"
+            if marketable
+            else f"Paper limit order lag gaya — bhaav {limit_price:,.4f} cross karte hi fill hoga"
+        )
         return jsonify({
             'success': True,
-            'message': 'Paper order record ho gaya (exchange par nahi bheja gaya)',
+            'message': message,
             'mode': 'paper',
-            'order_id': order_id,
-            'data': order_entry
+            'order_id': order_entry['order_id'],
+            'data': order_entry,
         })
-        
     except Exception as e:
-        print(f"❌ Order error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        print(f"❌ Paper order error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/orders', methods=['GET'])
@@ -3254,16 +3710,43 @@ def place_order():
 def get_orders():
     """Sirf isi user ke paper orders."""
     try:
+        _settle_paper_limits(g.user['id'])
         orders = fetch_recent_orders(limit=50, user_id=g.user['id'])
-        return jsonify({
-            'success': True,
-            'data': orders
-        })
+        return jsonify({'success': True, 'data': orders})
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/paper/account', methods=['GET'])
+@require_auth
+def paper_account():
+    """Paper balance, equity, P&L aur open positions."""
+    try:
+        orders = _settle_paper_limits(g.user['id'])
+        filled = [o for o in orders if o['status'] == 'filled']
+        marks = _paper_prices_for({o['symbol'] for o in filled})
+        return jsonify({'success': True, 'data': _paper_account(filled, marks)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/paper/orders/cancel', methods=['POST'])
+@require_auth
+def paper_cancel_order():
+    try:
+        order_id = str((request.get_json(silent=True) or {}).get('order_id') or '').strip()
+        if not order_id:
+            return jsonify({'success': False, 'error': 'order_id chahiye'}), 400
+        orders = _settle_paper_limits(g.user['id'])
+        hit = next((o for o in orders if o['order_id'] == order_id), None)
+        if not hit:
+            return jsonify({'success': False, 'error': 'Order nahi mila'}), 404
+        if hit['status'] != 'pending':
+            return jsonify({'success': False, 'error': f"Order {hit['status']} hai, cancel nahi ho sakta"}), 400
+        update_demo_order(order_id, user_id=g.user['id'], status='cancelled')
+        return jsonify({'success': True, 'message': 'Paper order cancel ho gaya'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/backtest', methods=['GET'])
@@ -3272,8 +3755,10 @@ def backtest_strategy():
     try:
         strategy_name = (request.args.get('strategy') or 'ema-crossover').strip().lower()
         symbol = request.args.get('symbol', 'BTCUSDT')
-        sl_points = float(request.args.get('sl_points', 400))
-        target_points = float(request.args.get('target_points', 800))
+        # 0 = band. Tab trade opposite signal (EMA) ya din ke end (range) par
+        # band hoti hai — entry price par SL/target lagakar turant exit nahi.
+        sl_points = float(request.args.get('sl_points', 0))
+        target_points = float(request.args.get('target_points', 0))
         lots = max(0.01, float(request.args.get('lots', 1)))  # Position size (lots); default 1
         ema9 = int(request.args.get('ema9', 9))
         ema21 = int(request.args.get('ema21', 21))
@@ -3305,6 +3790,13 @@ def backtest_strategy():
                 'success': False,
                 'error': 'Days must be 700 or less'
             }), 400
+        if sl_points < 0 or target_points < 0:
+            return jsonify({
+                'success': False,
+                'error': 'Stop loss aur target 0 ya usse zyada hone chahiye (0 = band).'
+            }), 400
+        sl_on = sl_points > 0
+        target_on = target_points > 0
         
         print(f"📊 Starting professional backtest for {symbol}")
         print(f"   Strategy: {strategy_name}")
@@ -3474,6 +3966,34 @@ def backtest_strategy():
                 else:
                     losing_trades += 1
 
+        def _open_position(side, entry_price, entry_time):
+            sign = 1 if side == 'buy' else -1
+            return {
+                'side': side,
+                'entry_price': entry_price,
+                'entry_time': entry_time,
+                'sl': entry_price - sign * sl_points if sl_on else None,
+                'target': entry_price + sign * target_points if target_on else None,
+            }
+
+        def _check_exit(pos, candle):
+            """SL/target hit hua to trade likho aur True do. Jo band hai (None) wo check nahi hota."""
+            if pos['side'] == 'buy':
+                if pos['sl'] is not None and candle['low'] <= pos['sl']:
+                    _append_trade(pos, candle['time'], pos['sl'], 'SL_HIT')
+                    return True
+                if pos['target'] is not None and candle['high'] >= pos['target']:
+                    _append_trade(pos, candle['time'], pos['target'], 'TARGET_HIT')
+                    return True
+            else:
+                if pos['sl'] is not None and candle['high'] >= pos['sl']:
+                    _append_trade(pos, candle['time'], pos['sl'], 'SL_HIT')
+                    return True
+                if pos['target'] is not None and candle['low'] <= pos['target']:
+                    _append_trade(pos, candle['time'], pos['target'], 'TARGET_HIT')
+                    return True
+            return False
+
         if strategy_name == "ema-crossover":
             for i in range(1, len(all_candles)):
                 current = all_candles[i]
@@ -3509,21 +4029,17 @@ def backtest_strategy():
                 ema9_below_both_prev = prev_ema9 < prev_ema21 and prev_ema9 < prev_ema50
 
                 # Check existing position for SL/Target
-                if position:
-                    if position['side'] == 'buy':
-                        if current['low'] <= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['high'] >= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
-                    elif position['side'] == 'sell':
-                        if current['high'] >= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['low'] <= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
+                if position and _check_exit(position, current):
+                    position = None
+
+                # SL ya target band ho to trade kabhi band hi na ho — isliye
+                # ulta crossover hi exit hai (aur wahi candle nayi entry bhi de sakti hai).
+                if position and not (sl_on and target_on):
+                    crossed_down = not ema9_below_both_prev and ema9_below_both_now
+                    crossed_up = not ema9_above_both_prev and ema9_above_both_now
+                    if (position['side'] == 'buy' and crossed_down) or (position['side'] == 'sell' and crossed_up):
+                        _append_trade(position, current['time'], current_price, 'SIGNAL_EXIT')
+                        position = None
 
                 # Check for new signals
                 if not position:
@@ -3541,14 +4057,7 @@ def backtest_strategy():
                                     rsi_filter_pass = False
 
                         if rsi_filter_pass:
-                            entry_price = current_price
-                            position = {
-                                'side': 'buy',
-                                'entry_price': entry_price,
-                                'entry_time': current['time'],
-                                'sl': entry_price - sl_points,
-                                'target': entry_price + target_points
-                            }
+                            position = _open_position('buy', current_price, current['time'])
                             total_trades += 1
 
                     elif not ema9_below_both_prev and ema9_below_both_now:
@@ -3562,14 +4071,7 @@ def backtest_strategy():
                                     rsi_filter_pass = False
 
                         if rsi_filter_pass:
-                            entry_price = current_price
-                            position = {
-                                'side': 'sell',
-                                'entry_price': entry_price,
-                                'entry_time': current['time'],
-                                'sl': entry_price + sl_points,
-                                'target': entry_price - target_points
-                            }
+                            position = _open_position('sell', current_price, current['time'])
                             total_trades += 1
         else:
             # Range Breakout implementation
@@ -3590,13 +4092,8 @@ def backtest_strategy():
                     'success': False,
                     'error': 'range_start must be earlier than range_end (same day, IST).'
                 }), 400
-            if sl_points <= 0 or target_points <= 0:
-                return jsonify({
-                    'success': False,
-                    'error': 'sl_points and target_points must be greater than 0 (range breakout).'
-                }), 400
-
             current_day = None
+            prev_candle = None
             range_high = None
             range_low = None
             range_finalized = False
@@ -3612,6 +4109,10 @@ def backtest_strategy():
                 minutes_local = ts_local.hour * 60 + ts_local.minute
 
                 if current_day != day_key:
+                    # Intraday setup: SL/target band ho to trade din ki aakhri candle par band.
+                    if position and prev_candle and not (sl_on and target_on):
+                        _append_trade(position, prev_candle['time'], prev_candle['close'], 'DAY_END')
+                        position = None
                     current_day = day_key
                     range_high = None
                     range_low = None
@@ -3620,6 +4121,8 @@ def backtest_strategy():
                     breakout_short = None
                     traded_long = False
                     traded_short = False
+
+                prev_candle = current
 
                 # Build the range inside the time window (inclusive start, exclusive end)
                 if start_min <= minutes_local < end_min:
@@ -3634,21 +4137,8 @@ def backtest_strategy():
                     range_finalized = True
 
                 # Manage open position exits first
-                if position:
-                    if position['side'] == 'buy':
-                        if current['low'] <= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['high'] >= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
-                    else:
-                        if current['high'] >= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['low'] <= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
+                if position and _check_exit(position, current):
+                    position = None
 
                 if not range_finalized or position:
                     continue
@@ -3668,28 +4158,14 @@ def backtest_strategy():
 
                 if breakout_long and not position:
                     if (not traded_long) and (current['time'] > breakout_long['time']) and current['high'] > breakout_long['high'] and float(current_rsi) > rsi_overbought:
-                        entry_price = float(breakout_long['high'])
-                        position = {
-                            'side': 'buy',
-                            'entry_price': entry_price,
-                            'entry_time': current['time'],
-                            'sl': entry_price - sl_points,
-                            'target': entry_price + target_points
-                        }
+                        position = _open_position('buy', float(breakout_long['high']), current['time'])
                         total_trades += 1
                         traded_long = True
                         breakout_long = None
 
                 if breakout_short and not position:
                     if (not traded_short) and (current['time'] > breakout_short['time']) and current['low'] < breakout_short['low'] and float(current_rsi) < rsi_oversold:
-                        entry_price = float(breakout_short['low'])
-                        position = {
-                            'side': 'sell',
-                            'entry_price': entry_price,
-                            'entry_time': current['time'],
-                            'sl': entry_price + sl_points,
-                            'target': entry_price - target_points
-                        }
+                        position = _open_position('sell', float(breakout_short['low']), current['time'])
                         total_trades += 1
                         traded_short = True
                         breakout_short = None

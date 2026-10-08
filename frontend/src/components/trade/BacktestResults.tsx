@@ -125,7 +125,9 @@ export default function BacktestResults({ running, result, fallbackSymbol, fallb
             )}
           </>
         ) : (
-          <span className="tnum">SL {result.sl_points} · Target {result.target_points}</span>
+          <span className="tnum">
+            SL {result.sl_points ? result.sl_points : "off"} · Target {result.target_points ? result.target_points : "off"}
+          </span>
         )}
       </div>
 

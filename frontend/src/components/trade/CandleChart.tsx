@@ -6,17 +6,30 @@ import {
   ColorType,
   CrosshairMode,
   LineStyle,
+  LineType,
   TickMarkType,
   type IChartApi,
-  type IPriceLine,
   type ISeriesApi,
-  type MouseEventParams,
+  type SeriesType,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
+import { Eye, EyeOff, Pencil, Settings2, Trash2, X } from "lucide-react";
 import { DESK_TZ, DESK_TZ_LABEL, DESK_VENUE_SHORT, type Candle } from "@/lib/cryptoApi";
 import { subscribeLiveCandles, type LiveBar, type LiveStatus } from "@/lib/deltaLive";
-import type { DrawTool } from "@/components/trade/ChartDeskTools";
+import { DRAW_COLORS, DRAW_WIDTHS, DrawingsPrimitive, useChartDrawings, type DrawTool } from "@/lib/chartDrawings";
+import type { ChartType } from "@/lib/chartTypes";
+import {
+  INDICATOR_BY_ID,
+  barMinutesOf,
+  computeIndicator,
+  indicatorTitle,
+  outputColor,
+  type ActiveIndicator,
+  type IndicatorDef,
+  type IndicatorOutput,
+  type Num,
+} from "@/lib/chartIndicators";
 
 /** Delta timestamps UTC hote hain; axis/tooltip desk ke timezone mein dikhao. */
 const CHART_TZ = DESK_TZ;
@@ -83,6 +96,10 @@ interface Props {
   compareCandles?: Candle[];
   compareLabel?: string;
   drawTool?: DrawTool;
+  /** Ek drawing poori hone par chart tool wapas cursor par kar deta hai. */
+  onDrawToolChange?: (tool: DrawTool) => void;
+  /** Drawings isi naam se save hoti hain (har coin ki alag). Na ho to drawing band. */
+  drawingsKey?: string;
   clearDrawingsKey?: number;
   /**
    * Kis dataset ki candles hain (symbol + timeframe + history). Ye badle tabhi
@@ -98,6 +115,21 @@ interface Props {
   live?: { symbol: string; interval: string };
   onLiveBar?: (bar: LiveBar) => void;
   onLiveStatus?: (status: LiveStatus) => void;
+  /**
+   * User baayein kinare ke paas hai — parent purani candles jod de.
+   * Chart view khud shift karta hai, isliye data aane par jump nahi hota.
+   */
+  onReachHistory?: () => void;
+  /** Candles, bars, line, area… Default candles. */
+  chartType?: ChartType;
+  /**
+   * Browser mein compute hone wale indicators. Diye hon to server ki EMA
+   * lines (`showEma*` / `overlays`) draw nahi hoti.
+   */
+  indicators?: ActiveIndicator[];
+  onIndicatorToggle?: (uid: string) => void;
+  onIndicatorSettings?: (uid: string) => void;
+  onIndicatorRemove?: (uid: string) => void;
 }
 
 interface Readout {
@@ -108,6 +140,18 @@ interface Readout {
   change: number;
 }
 
+const DRAW_HINTS: Record<Exclude<DrawTool, "cursor">, string> = {
+  trend: "Trend line: kheencho, ya do jagah click karo · Esc = band",
+  ray: "Ray: shuru ka point, phir disha — aage tak badhti hai · Esc = band",
+  hline: "Horizontal line: price par click karo",
+  vline: "Vertical line: time par click karo",
+  rect: "Rectangle: ek kone se doosre kone tak kheencho",
+  fib: "Fib retracement: swing ke ek sire se doosre tak kheencho",
+  fibext: "Fib extension: A se B tak kheencho (move), phir C (pullback) par click karo",
+  brush: "Brush: daba kar chalao · Esc = band",
+  text: "Text: jahan likhna hai wahan click karo",
+};
+
 const UP = "#00e676";
 const DOWN = "#ff5252";
 
@@ -115,20 +159,299 @@ const EMA_KEY = /^ema_(\d+)$/;
 
 type EmaState = Map<string, { barTime: number; prev: number; lastClose: number }>;
 
+type Ohlc = { time: number; open: number; high: number; low: number; close: number; volume?: number };
+
+/** Main series ka live state — Heikin Ashi ko pichhli HA candle chahiye, volume candles ko average. */
+interface MainState {
+  type: ChartType;
+  haPrev: { open: number; close: number } | null;
+  haLast: { open: number; close: number } | null;
+  lastTime: number | null;
+  avgVol: number;
+}
+
+interface MainRefs {
+  series: ISeriesApi<SeriesType>;
+  /** HLC area ki high/low lines. */
+  extras: ISeriesApi<"Line">[];
+  state: MainState;
+}
+
+function rgba(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+function heikin(k: Ohlc, prev: { open: number; close: number } | null) {
+  const close = (k.open + k.high + k.low + k.close) / 4;
+  const open = prev ? (prev.open + prev.close) / 2 : (k.open + k.close) / 2;
+  return { open, high: Math.max(k.high, open, close), low: Math.min(k.low, open, close), close };
+}
+
+/** Ek candle ko chart type ke data point mein badlo. Heikin Ashi ka state caller sambhalta hai. */
+function mainPoint(type: ChartType, k: Ohlc, st: MainState) {
+  const time = toUnix(k.time);
+  const up = k.close >= k.open;
+  switch (type) {
+    case "heikin":
+      return { time, ...heikin(k, st.haPrev) };
+    case "volume": {
+      const a = st.avgVol > 0 ? Math.min(1, Math.max(0.25, 0.2 + 0.45 * ((k.volume ?? 0) / st.avgVol))) : 1;
+      const col = rgba(up ? UP : DOWN, a);
+      return { time, open: k.open, high: k.high, low: k.low, close: k.close, color: col, borderColor: col, wickColor: col };
+    }
+    case "highlow": {
+      const col = up ? UP : DOWN;
+      return { time, open: k.high, high: k.high, low: k.low, close: k.low, color: rgba(col, 0.55), borderColor: col, wickColor: col };
+    }
+    case "columns":
+      return { time, value: k.close, color: rgba(up ? UP : DOWN, 0.6) };
+    case "candles":
+    case "hollow":
+    case "bars":
+    case "hlc":
+      return { time, open: k.open, high: k.high, low: k.low, close: k.close };
+    default:
+      return { time, value: k.close };
+  }
+}
+
+function setMainData(main: MainRefs, bars: Ohlc[]) {
+  const st = main.state;
+  st.haPrev = null;
+  st.haLast = null;
+  const recent = bars.slice(-50);
+  st.avgVol = recent.length ? recent.reduce((s, b) => s + (b.volume ?? 0), 0) / recent.length : 0;
+  const points = bars.map((b) => {
+    if (st.type === "heikin") st.haPrev = st.haLast;
+    const p = mainPoint(st.type, b, st);
+    if (st.type === "heikin") st.haLast = { open: (p as { open: number }).open, close: (p as { close: number }).close };
+    return p;
+  });
+  st.lastTime = bars.length ? bars[bars.length - 1].time : null;
+  // setData generic series par union type nahi leta.
+  (main.series as ISeriesApi<"Line">).setData(points as never);
+  const [hi, lo] = main.extras;
+  if (hi && lo) {
+    hi.setData(bars.map((b) => ({ time: toUnix(b.time), value: b.high })));
+    lo.setData(bars.map((b) => ({ time: toUnix(b.time), value: b.low })));
+  }
+}
+
+function updateMain(main: MainRefs, bar: Ohlc) {
+  const st = main.state;
+  if (st.type === "heikin" && (st.lastTime == null || bar.time > st.lastTime)) st.haPrev = st.haLast;
+  st.lastTime = st.lastTime == null ? bar.time : Math.max(st.lastTime, bar.time);
+  const p = mainPoint(st.type, bar, st);
+  if (st.type === "heikin") st.haLast = { open: (p as { open: number }).open, close: (p as { close: number }).close };
+  (main.series as ISeriesApi<"Line">).update(p as never);
+  const [hi, lo] = main.extras;
+  if (hi && lo) {
+    hi.update({ time: toUnix(bar.time), value: bar.high });
+    lo.update({ time: toUnix(bar.time), value: bar.low });
+  }
+}
+
+const MAIN_COMMON = {
+  priceLineColor: "#94a3b8",
+  priceLineStyle: LineStyle.Dotted,
+  priceLineWidth: 1 as const,
+};
+const LINE_BLUE = "#19a2dd";
+
+function createMain(chart: IChartApi, type: ChartType, closesInView: () => { lo: number; hi: number } | null): MainRefs {
+  const state: MainState = { type, haPrev: null, haLast: null, lastTime: null, avgVol: 0 };
+  const candleColors = { upColor: UP, downColor: DOWN, borderUpColor: UP, borderDownColor: DOWN, wickUpColor: UP, wickDownColor: DOWN };
+  let series: ISeriesApi<SeriesType>;
+  const extras: ISeriesApi<"Line">[] = [];
+  switch (type) {
+    case "hollow":
+      series = chart.addCandlestickSeries({ ...MAIN_COMMON, ...candleColors, upColor: "rgba(0, 0, 0, 0)" });
+      break;
+    case "highlow":
+      series = chart.addCandlestickSeries({ ...MAIN_COMMON, ...candleColors, wickVisible: false });
+      break;
+    case "bars":
+      series = chart.addBarSeries({ ...MAIN_COMMON, upColor: UP, downColor: DOWN, thinBars: false });
+      break;
+    case "hlc":
+      series = chart.addBarSeries({ ...MAIN_COMMON, upColor: UP, downColor: DOWN, thinBars: false, openVisible: false });
+      break;
+    case "line":
+      series = chart.addLineSeries({ ...MAIN_COMMON, color: LINE_BLUE, lineWidth: 2 });
+      break;
+    case "linemarkers":
+      series = chart.addLineSeries({ ...MAIN_COMMON, color: LINE_BLUE, lineWidth: 2, pointMarkersVisible: true, pointMarkersRadius: 2.5 });
+      break;
+    case "step":
+      series = chart.addLineSeries({ ...MAIN_COMMON, color: LINE_BLUE, lineWidth: 2, lineType: LineType.WithSteps });
+      break;
+    case "area":
+      series = chart.addAreaSeries({
+        ...MAIN_COMMON,
+        lineColor: LINE_BLUE,
+        topColor: "rgba(25, 162, 221, 0.38)",
+        bottomColor: "rgba(25, 162, 221, 0.02)",
+        lineWidth: 2,
+      });
+      break;
+    case "hlcarea":
+      extras.push(
+        chart.addLineSeries({ color: rgba(UP, 0.8), lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }),
+        chart.addLineSeries({ color: rgba(DOWN, 0.8), lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }),
+      );
+      series = chart.addAreaSeries({
+        ...MAIN_COMMON,
+        lineColor: "#cbd5e1",
+        topColor: "rgba(148, 163, 184, 0.22)",
+        bottomColor: "rgba(148, 163, 184, 0.02)",
+        lineWidth: 2,
+      });
+      break;
+    case "baseline":
+      series = chart.addBaselineSeries({
+        ...MAIN_COMMON,
+        baseValue: { type: "price", price: 0 },
+        topLineColor: UP,
+        topFillColor1: "rgba(0, 230, 118, 0.28)",
+        topFillColor2: "rgba(0, 230, 118, 0.04)",
+        bottomLineColor: DOWN,
+        bottomFillColor1: "rgba(255, 82, 82, 0.04)",
+        bottomFillColor2: "rgba(255, 82, 82, 0.28)",
+        lineWidth: 2,
+      });
+      break;
+    case "columns":
+      // Histogram 0 se khada hota hai — scale sirf dikh rahe closes par, warna
+      // poori price range 0 tak khinch jaati.
+      series = chart.addHistogramSeries({
+        ...MAIN_COMMON,
+        autoscaleInfoProvider: () => {
+          const r = closesInView();
+          if (!r) return null;
+          const pad = (r.hi - r.lo) * 0.06 || r.hi * 0.01;
+          return { priceRange: { minValue: r.lo - pad, maxValue: r.hi + pad } };
+        },
+      });
+      break;
+    case "candles":
+    case "heikin":
+    case "volume":
+    default:
+      series = chart.addCandlestickSeries({ ...MAIN_COMMON, ...candleColors });
+      break;
+  }
+  return { series, extras, state };
+}
+
+function removeMain(chart: IChartApi, main: MainRefs | null) {
+  if (!main) return;
+  for (const s of [main.series, ...main.extras]) {
+    try {
+      chart.removeSeries(s);
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+function histColor(o: IndicatorOutput, v: number, prev: Num): string {
+  const good = o.histMode === "rise" ? prev == null || v >= prev : v >= 0;
+  return good ? "rgba(34, 197, 94, 0.7)" : "rgba(239, 68, 68, 0.7)";
+}
+
+function indicatorPoints(o: IndicatorOutput, values: Num[], candles: Candle[]) {
+  return candles.map((c, i) => {
+    const time = toUnix(c.time);
+    const v = values[i];
+    if (v == null || !Number.isFinite(v)) return { time };
+    return o.type === "histogram" ? { time, value: v, color: histColor(o, v, values[i - 1] ?? null) } : { time, value: v };
+  });
+}
+
+function createIndicatorSeries(chart: IChartApi, def: IndicatorDef, uid: string, colors: string[]) {
+  const scaleId = def.pane ? `pane-${uid}` : "right";
+  const bounds = def.bounds;
+  const autoscale = bounds ? { autoscaleInfoProvider: () => ({ priceRange: { minValue: bounds[0], maxValue: bounds[1] } }) } : {};
+  const series: ISeriesApi<"Line" | "Histogram">[] = def.outputs.map((o, i) =>
+    o.type === "histogram"
+      ? chart.addHistogramSeries({
+          priceScaleId: scaleId,
+          color: colors[i],
+          lastValueVisible: false,
+          priceLineVisible: false,
+          ...autoscale,
+        })
+      : chart.addLineSeries({
+          priceScaleId: scaleId,
+          color: colors[i],
+          lineWidth: o.width ?? 1,
+          lineStyle: o.dashed ? LineStyle.Dashed : LineStyle.Solid,
+          lineVisible: o.type !== "dots",
+          pointMarkersVisible: o.type === "dots",
+          pointMarkersRadius: 1.6,
+          lastValueVisible: false,
+          priceLineVisible: false,
+          crosshairMarkerVisible: o.type !== "dots",
+          ...autoscale,
+        }),
+  );
+  if (series[0]) {
+    for (const level of def.levels ?? []) {
+      series[0].createPriceLine({
+        price: level,
+        color: "rgba(148, 163, 184, 0.4)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: false,
+        title: "",
+      });
+    }
+  }
+  return series;
+}
+
+function fmtInd(v: Num | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+  if (a >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (a >= 1) return v.toFixed(2);
+  return v.toFixed(4);
+}
+
+interface IndEntry {
+  sig: string;
+  series: ISeriesApi<"Line" | "Histogram">[];
+  /** Kis candles array + params par aakhri baar poora setData hua. */
+  dataFor: { candles: Candle[] | null; params: string; len: number; first: number | null };
+}
+
+/**
+ * Price ke neeche indicator panes. Lightweight-charts v4 mein asli panes nahi,
+ * isliye har pane apne price scale par hai aur scaleMargins se apni patti mein.
+ */
+function paneLayout(paneCount: number) {
+  const mainFrac = paneCount ? Math.max(0.4, 1 - paneCount * 0.2) : 1;
+  const paneH = paneCount ? (1 - mainFrac) / paneCount : 0;
+  return { mainFrac, paneH };
+}
+
 /**
  * Ek live candle chart par lagao. `update()` aakhri candle badalta hai ya nayi
  * jodta hai, aur setData() ki tarah zoom/scroll nahi chhedta.
  */
 function paintLiveBar(
   bar: LiveBar,
-  candle: ISeriesApi<"Candlestick">,
+  main: MainRefs,
   volume: ISeriesApi<"Histogram"> | null,
   lines: Map<string, ISeriesApi<"Line">>,
   emaState: EmaState,
   showVolume: boolean,
 ) {
   const time = toUnix(bar.time);
-  candle.update({ time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+  updateMain(main, bar);
   if (showVolume && volume) {
     volume.update({
       time,
@@ -151,8 +474,41 @@ function paintLiveBar(
   }
 }
 
+/** Ek baar mein itni candles tak hi tail update; zyada badli to poora setData. */
+const TAIL_MAX = 30;
+
+/**
+ * Naya data purane ka hi aage badha roop hai (shuru same, beech same, bas aakhir
+ * mein candles badli/judi)? To `next` ka wo index jahan se update karna hai, warna -1.
+ * `prev` mein aakhri live candle bhi ho sakti hai jo poll mein abhi nahi aayi.
+ */
+function tailStart(prev: Ohlc[], next: Ohlc[]): number {
+  if (prev.length < 2 || !next.length || prev[0].time !== next[0].time) return -1;
+  const lastPrev = prev[prev.length - 1].time;
+  let lo = 0;
+  let hi = next.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (next[mid].time < lastPrev) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo !== prev.length - 1 || next.length - lo > TAIL_MAX) return -1;
+  if (lo > 0 && next[lo - 1].time !== prev[lo - 1].time) return -1;
+  return lo;
+}
+
 function toUnix(timeMs: number): UTCTimestamp {
   return Math.floor(timeMs / 1000) as UTCTimestamp;
+}
+
+/**
+ * Overlay field (EMA, RSI, …). `null` ko `Number(null) === 0` mat banao —
+ * warna chhoti history (1D + 7d) par EMA price 0 par draw hoti hai aur
+ * scale 0 se poori price tak khul jaati hai.
+ */
+function finiteField(row: object, key: string): number | null {
+  const raw = (row as Record<string, unknown>)[key];
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
 function fmt(n: number): string {
@@ -169,10 +525,21 @@ function pctSeries(candles: Candle[]): { time: UTCTimestamp; value: number }[] {
   }));
 }
 
-function resetChartView(chart: IChartApi | null) {
-  if (!chart) return;
+/** Reset / naya symbol: poori history fit karne se candles resha ho jaati hain.
+ *  Aakhri ~150 bars, readable spacing, price usi window pe scale. */
+const RESET_BARS = 150;
+
+function showLatest(chart: IChartApi, count: number) {
   chart.priceScale("right").applyOptions({ autoScale: true });
-  chart.timeScale().fitContent();
+  const ts = chart.timeScale();
+  ts.applyOptions({ barSpacing: 8, rightOffset: 4 });
+  if (count <= 1) {
+    ts.fitContent();
+    return;
+  }
+  const span = Math.min(RESET_BARS, count);
+  const to = count - 1 + 4;
+  ts.setVisibleLogicalRange({ from: to - span, to });
 }
 
 function ChartNavButton({
@@ -221,11 +588,19 @@ export default function CandleChart({
   compareCandles,
   compareLabel,
   drawTool = "cursor",
+  onDrawToolChange,
+  drawingsKey,
   clearDrawingsKey = 0,
   viewKey,
   live,
   onLiveBar,
   onLiveStatus,
+  onReachHistory,
+  chartType = "candles",
+  indicators,
+  onIndicatorToggle,
+  onIndicatorSettings,
+  onIndicatorRemove,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -248,20 +623,57 @@ export default function CandleChart({
   const showVolumeRef = useRef(showVolume);
   const onLiveBarRef = useRef(onLiveBar);
   const onLiveStatusRef = useRef(onLiveStatus);
+  const onReachHistoryRef = useRef(onReachHistory);
+  /** Pehli candle ka time (ms) — history judi/hati to view langar se bachao. */
+  const firstBarTimeRef = useRef<number | null>(null);
+  /** Pichhli baar data kis symbol/lines/type ke saath laga — wahi ho to sirf tail update. */
+  const dataSigRef = useRef("");
+  /** Data lag raha hai — is beech ki range-events history load trigger na karein. */
+  const applyingRef = useRef(false);
+  /** Crosshair kis candle par hai — wahi candle ho to React re-render nahi. */
+  const hoverIdxRef = useRef<number | undefined>(undefined);
   const [liveView, setLiveView] = useState<{ key: string; bar: LiveBar } | null>(null);
-  const candleSeries = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  /** Indicators ke liye live candle — har tick nahi, ~1s mein ek baar (poori history par compute hota hai). */
+  const [indLive, setIndLive] = useState<{ key: string; bar: LiveBar } | null>(null);
+  const mainRef = useRef<MainRefs | null>(null);
+  /** Chart par jo OHLC hai (valid, sorted) — crosshair readout aur columns ke autoscale ke liye. */
+  const mainBarsRef = useRef<Ohlc[]>([]);
+  const barIndexRef = useRef(new Map<number, number>());
+  const chartTypeRef = useRef(chartType);
+  const indSeries = useRef(new Map<string, IndEntry>());
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [axisH, setAxisH] = useState(28);
   const volumeSeries = useRef<ISeriesApi<"Histogram"> | null>(null);
   const compareSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const lineSeries = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
-  const priceLines = useRef<IPriceLine[]>([]);
-  const trendSeries = useRef<ISeriesApi<"Line">[]>([]);
-  const trendDraft = useRef<{ time: UTCTimestamp; price: number } | null>(null);
-  const drawToolRef = useRef(drawTool);
   const [readout, setReadout] = useState<Readout | null>(null);
+  const [drawPrim] = useState(() => new DrawingsPrimitive(mainBarsRef));
+  const drawings = useChartDrawings({
+    primitive: drawPrim,
+    hostRef: wrapRef,
+    tool: drawTool,
+    onToolChange: onDrawToolChange,
+    storageKey: drawingsKey ?? null,
+    clearKey: clearDrawingsKey,
+  });
+  const hasIndicatorsRef = useRef(false);
 
-  drawToolRef.current = drawTool;
+  /** Live candle ko readout/autoscale wale arrays mein bhi rakho. */
+  const trackLiveBar = (bar: LiveBar) => {
+    const arr = mainBarsRef.current;
+    const t = toUnix(bar.time) as number;
+    const o: Ohlc = { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume };
+    const idx = barIndexRef.current.get(t);
+    if (idx != null) {
+      arr[idx] = o;
+    } else if (!arr.length || bar.time > arr[arr.length - 1].time) {
+      barIndexRef.current.set(t, arr.length);
+      arr.push(o);
+    }
+  };
 
   const lines = useMemo<ChartLine[]>(() => {
+    if (indicators) return [];
     if (overlays) return overlays;
     return [
       { key: "ema_9", color: "#60a5fa", on: showEma9 },
@@ -270,7 +682,7 @@ export default function CandleChart({
     ]
       .filter((l) => l.on)
       .map(({ key, color }) => ({ key, color }));
-  }, [overlays, showEma9, showEma21, showEma50]);
+  }, [indicators, overlays, showEma9, showEma21, showEma50]);
 
   const lineSig = lines.map((l) => `${l.key}:${l.color}`).join("|");
 
@@ -278,6 +690,7 @@ export default function CandleChart({
     const el = wrapRef.current;
     if (!el) return;
     const series = lineSeries.current;
+    const indEntries = indSeries.current;
 
     const chart = createChart(el, {
       width: el.clientWidth,
@@ -321,18 +734,6 @@ export default function CandleChart({
       handleScale: { mouseWheel: true, pinch: true },
     });
 
-    candleSeries.current = chart.addCandlestickSeries({
-      upColor: UP,
-      downColor: DOWN,
-      borderUpColor: UP,
-      borderDownColor: DOWN,
-      wickUpColor: UP,
-      wickDownColor: DOWN,
-      priceLineColor: "#94a3b8",
-      priceLineStyle: LineStyle.Dotted,
-      priceLineWidth: 1,
-    });
-
     volumeSeries.current = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
@@ -359,12 +760,16 @@ export default function CandleChart({
     });
 
     chartRef.current = chart;
-
     chart.subscribeCrosshairMove((param) => {
-      if (!candleSeries.current) return;
-      const bar = param.seriesData?.get(candleSeries.current) as
-        | { open: number; high: number; low: number; close: number }
-        | undefined;
+      // Readout asal OHLC se — Heikin Ashi / line par series ka data asli candle nahi hota.
+      const t = typeof param.time === "number" ? param.time : null;
+      const idx = t == null ? undefined : barIndexRef.current.get(t);
+      // Mouse ek hi candle ke andar hil raha hai — legend wahi rehta hai. Live
+      // candle (aakhri) har baar padho, uske numbers tick ke saath badalte hain.
+      if (idx === hoverIdxRef.current && (idx == null || idx < mainBarsRef.current.length - 1)) return;
+      hoverIdxRef.current = idx;
+      const bar = idx == null ? undefined : mainBarsRef.current[idx];
+      setHoverTime(bar ? t : null);
       if (!bar || bar.open == null) {
         setReadout(null);
         return;
@@ -378,51 +783,12 @@ export default function CandleChart({
       });
     });
 
-    const onClick = (param: MouseEventParams) => {
-      const tool = drawToolRef.current;
-      if (tool === "cursor" || !param.point || !candleSeries.current || !chartRef.current) return;
-      const price = candleSeries.current.coordinateToPrice(param.point.y);
-      if (price == null || !Number.isFinite(price)) return;
-
-      if (tool === "hline") {
-        const line = candleSeries.current.createPriceLine({
-          price,
-          color: "#00e676",
-          lineWidth: 1,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: "H",
-        });
-        priceLines.current.push(line);
-        return;
-      }
-
-      if (tool === "trend") {
-        if (!param.time) return;
-        const time = (typeof param.time === "number" ? param.time : toUnix(timeToDate(param.time).getTime())) as UTCTimestamp;
-        const draft = trendDraft.current;
-        if (!draft) {
-          trendDraft.current = { time, price };
-          return;
-        }
-        const series = chartRef.current.addLineSeries({
-          color: "#f472b6",
-          lineWidth: 2,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          crosshairMarkerVisible: false,
-        });
-        const a = draft.time <= time ? draft : { time, price };
-        const b = draft.time <= time ? { time, price } : draft;
-        series.setData([
-          { time: a.time, value: a.price },
-          { time: b.time, value: b.price },
-        ]);
-        trendSeries.current.push(series);
-        trendDraft.current = null;
-      }
+    const onRange = () => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      if (!range || barCountRef.current < 10 || applyingRef.current) return;
+      if (range.from < 48) onReachHistoryRef.current?.();
     };
-    chart.subscribeClick(onClick);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
 
     const observer = new ResizeObserver(() => {
       if (!wrapRef.current || !chartRef.current) return;
@@ -430,62 +796,63 @@ export default function CandleChart({
         width: wrapRef.current.clientWidth,
         height: wrapRef.current.clientHeight,
       });
+      const h = chartRef.current.timeScale().height();
+      if (h > 0) setAxisH(h);
     });
     observer.observe(el);
 
     return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       observer.disconnect();
       chart.remove();
       chartRef.current = null;
-      candleSeries.current = null;
+      mainRef.current = null;
+      indEntries.clear();
       volumeSeries.current = null;
       compareSeries.current = null;
       series.clear();
-      priceLines.current = [];
-      trendSeries.current = [];
-      trendDraft.current = null;
     };
   }, []);
 
-  useEffect(() => {
-    if (!candleSeries.current) return;
-    for (const line of priceLines.current) {
-      try {
-        candleSeries.current.removePriceLine(line);
-      } catch {
-        /* already gone */
-      }
-    }
-    priceLines.current = [];
-    const chart = chartRef.current;
-    if (chart) {
-      for (const s of trendSeries.current) {
-        try {
-          chart.removeSeries(s);
-        } catch {
-          /* already gone */
-        }
-      }
-    }
-    trendSeries.current = [];
-    trendDraft.current = null;
-  }, [clearDrawingsKey]);
-
+  /*
+   * Main series chart type ke hisaab se. Type badle to purani hata kar nayi —
+   * data niche wala effect daalta hai (chartType uski deps mein hai), aur
+   * H-lines nayi series par dobara lagti hain.
+   */
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    chart.applyOptions({
+    chartTypeRef.current = chartType;
+    removeMain(chart, mainRef.current);
+    const main = createMain(chart, chartType, () => {
+      const bars = mainBarsRef.current;
+      const r = chart.timeScale().getVisibleLogicalRange();
+      if (!r || !bars.length) return null;
+      const a = Math.max(0, Math.floor(r.from));
+      const b = Math.min(bars.length - 1, Math.ceil(r.to));
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = a; i <= b; i++) {
+        lo = Math.min(lo, bars[i].close);
+        hi = Math.max(hi, bars[i].close);
+      }
+      return Number.isFinite(lo) ? { lo, hi } : null;
+    });
+    mainRef.current = main;
+    main.series.attachPrimitive(drawPrim);
+    // Nayi series data ke bina hai — data effect ko dobara poora setData karna hai.
+    lastCandlesRef.current = null;
+  }, [chartType, drawPrim]);
+
+  useEffect(() => {
+    // Drawing ke beech chart khiske nahi; crosshair Normal hi, taaki point
+    // wahin bane jahan crosshair dikh raha hai.
+    chartRef.current?.applyOptions({
       handleScroll: {
         mouseWheel: drawTool === "cursor",
         pressedMouseMove: drawTool === "cursor",
       },
-      crosshair: {
-        mode: drawTool === "cursor" ? CrosshairMode.Normal : CrosshairMode.Magnet,
-      },
     });
-    if (wrapRef.current) {
-      wrapRef.current.style.cursor = drawTool === "cursor" ? "default" : "crosshair";
-    }
   }, [drawTool]);
 
   useEffect(() => {
@@ -518,7 +885,8 @@ export default function CandleChart({
   }, [lines, lineSig]);
 
   useEffect(() => {
-    if (!candleSeries.current || !candles.length) return;
+    const main = mainRef.current;
+    if (!main || !candles.length) return;
 
     const timeScale = chartRef.current?.timeScale();
     const key = viewKey ?? `${symbol ?? ""}|${interval ?? ""}`;
@@ -538,55 +906,100 @@ export default function CandleChart({
     const prevBarCount = barCountRef.current;
     const followingLive = prevLogical == null || prevLogical.to >= prevBarCount - 2;
 
-    const valid = candles.filter((c) => c.open && c.high && c.low && c.close);
+    const valid = candles
+      .filter((c) => c.open && c.high && c.low && c.close)
+      .sort((a, b) => a.time - b.time);
 
-    const bars = valid
-      .map((c) => ({
-        time: toUnix(c.time),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }))
-      .sort((a, b) => (a.time as number) - (b.time as number));
+    const ohlc: Ohlc[] = valid.map((c) => ({
+      time: c.time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume,
+    }));
 
-    candleSeries.current.setData(bars);
+    // Purani view ka "langar": left kinare wali candle ka time. Data aage-peeche
+    // khiske (history judi / hati) to bhi wahi candle wahin rahe — zoom same.
+    const prevBars = mainBarsRef.current;
+    const anchorIdx = prevLogical && prevBars.length
+      ? Math.min(prevBars.length - 1, Math.max(0, Math.round(prevLogical.from)))
+      : -1;
+    const anchorTime = anchorIdx >= 0 ? prevBars[anchorIdx].time : null;
 
-    if (showVolume) {
-      volumeSeries.current?.setData(
-        valid
-          .map((c) => ({
+    const sig = `${key}|${lineSig}|${showVolume}|${chartType}`;
+    const tailFrom = !isNewView && dataSigRef.current === sig ? tailStart(prevBars, ohlc) : -1;
+    dataSigRef.current = sig;
+    applyingRef.current = true;
+
+    if (tailFrom >= 0) {
+      // Poll: sirf aakhri kuch candles badli. update() zoom/scroll ko haath nahi
+      // lagata aur hazaron candles dobara draw nahi karta — chart jhatka nahi khata.
+      const volume = showVolume ? volumeSeries.current : null;
+      for (let i = tailFrom; i < ohlc.length; i++) {
+        const bar = ohlc[i];
+        if (main.state.lastTime != null && bar.time < main.state.lastTime) continue;
+        const time = toUnix(bar.time);
+        updateMain(main, bar);
+        volume?.update({
+          time,
+          value: bar.volume ?? 0,
+          color: bar.close >= bar.open ? "rgba(0, 230, 118, 0.32)" : "rgba(255, 82, 82, 0.28)",
+        });
+        for (const [lineKey, series] of lineSeries.current) {
+          const value = finiteField(valid[i], lineKey);
+          if (value != null) series.update({ time, value });
+        }
+      }
+    } else {
+      setMainData(main, ohlc);
+      if (showVolume) {
+        volumeSeries.current?.setData(
+          valid.map((c) => ({
             time: toUnix(c.time),
             value: c.volume ?? 0,
             color: c.close >= c.open ? "rgba(0, 230, 118, 0.32)" : "rgba(255, 82, 82, 0.28)",
-          }))
-          .sort((a, b) => (a.time as number) - (b.time as number)),
-      );
-      volumeSeries.current?.applyOptions({ visible: true });
-    } else {
-      volumeSeries.current?.setData([]);
-      volumeSeries.current?.applyOptions({ visible: false });
+          })),
+        );
+        volumeSeries.current?.applyOptions({ visible: true });
+      } else {
+        volumeSeries.current?.setData([]);
+        volumeSeries.current?.applyOptions({ visible: false });
+      }
+      for (const [lineKey, series] of lineSeries.current) {
+        series.setData(
+          valid.flatMap((c) => {
+            const value = finiteField(c, lineKey);
+            return value == null ? [] : [{ time: toUnix(c.time), value }];
+          }),
+        );
+      }
     }
 
-    for (const [key, series] of lineSeries.current) {
-      series.setData(
-        candles
-          .map((c) => ({ time: toUnix(c.time), value: Number((c as unknown as Record<string, unknown>)[key]) }))
-          .filter((point) => Number.isFinite(point.value))
-          .sort((a, b) => (a.time as number) - (b.time as number)),
-      );
+    mainBarsRef.current = ohlc;
+    barIndexRef.current = new Map(ohlc.map((b, i) => [toUnix(b.time) as number, i]));
+    hoverIdxRef.current = undefined;
+    if (main.state.type === "baseline" && ohlc.length && tailFrom < 0) {
+      // Base wahan jahan reset view shuru hota hai — upar hara, neeche laal.
+      const ref = ohlc[Math.max(0, ohlc.length - RESET_BARS)].close;
+      main.series.applyOptions({ baseValue: { type: "price", price: ref } });
     }
-    barCountRef.current = bars.length;
+
+    const firstTime = ohlc.length ? ohlc[0].time : null;
+    const prevFirst = firstBarTimeRef.current;
+    const historyShifted = prevFirst != null && firstTime != null && firstTime !== prevFirst;
+    firstBarTimeRef.current = firstTime;
+    barCountRef.current = ohlc.length;
 
     // Live feed ke liye base: har EMA line ka "aakhri se pehle wali candle" ka value.
-    const sorted = [...candles].sort((a, b) => a.time - b.time);
+    const sorted = valid;
     const lastBar = sorted[sorted.length - 1];
     const beforeLast = sorted[sorted.length - 2];
     emaStateRef.current.clear();
     if (lastBar && beforeLast) {
       for (const key of lineSeries.current.keys()) {
-        const prev = Number((beforeLast as unknown as Record<string, unknown>)[key]);
-        if (EMA_KEY.test(key) && Number.isFinite(prev)) {
+        const prev = finiteField(beforeLast, key);
+        if (prev != null && EMA_KEY.test(key)) {
           emaStateRef.current.set(key, { barTime: lastBar.time, prev, lastClose: lastBar.close });
         }
       }
@@ -597,8 +1010,9 @@ export default function CandleChart({
     // peeche na jaaye, isliye taaza live candle dobara lagao.
     const liveBar = liveBarRef.current;
     if (liveBar && lastBar && liveBar.time >= lastBar.time) {
-      paintLiveBar(liveBar, candleSeries.current, volumeSeries.current, lineSeries.current, emaStateRef.current, showVolume);
-      if (liveBar.time > lastBar.time) barCountRef.current = bars.length + 1;
+      paintLiveBar(liveBar, main, volumeSeries.current, lineSeries.current, emaStateRef.current, showVolume);
+      trackLiveBar(liveBar);
+      if (liveBar.time > lastBar.time) barCountRef.current = ohlc.length + 1;
       lastBarTimeRef.current = liveBar.time;
     }
 
@@ -608,7 +1022,8 @@ export default function CandleChart({
      * wapas poora zoom-out ho jaata — scroll karke purani candle dekh raha ho
      * to wo bhi seedha aakhri candle par kood jaata.
      *
-     * Ab: naya dataset (symbol/timeframe badla) -> fit. Wahi dataset refresh
+     * Ab: naya dataset (symbol/timeframe badla) -> aakhri ~150 candles,
+     * readable zoom. Wahi dataset refresh
      * hua aur user aakhri candle dekh raha tha -> jitna zoom aur aakhri candle
      * ke right mein jitni khaali jagah thi, wahi rakho; nayi candle aaye to view
      * ek candle aage chale. User pichhe history dekh raha tha -> wahi jagah.
@@ -616,10 +1031,26 @@ export default function CandleChart({
      * Live edge par pehle scrollToRealTime() tha. Wo right ki khaali jagah hata
      * kar aakhri candle ko edge se chipka deta tha, to har 10s ke poll par chart
      * thoda khisak jaata tha — "jaisa chhoda tha waisa" nahi rehta tha.
+     *
+     * Tail update (poll) par view ko chhoona hi nahi — update() khud sahi rakhta hai.
      */
-    if (isNewView) {
+    const chart = chartRef.current;
+    const keepAnchor = () => {
+      const idx = anchorTime == null ? undefined : barIndexRef.current.get(toUnix(anchorTime));
+      if (prevLogical && idx != null) {
+        const shift = idx - anchorIdx;
+        timeScale?.setVisibleLogicalRange({ from: prevLogical.from + shift, to: prevLogical.to + shift });
+      } else if (prevTimeRange) {
+        timeScale?.setVisibleRange(prevTimeRange);
+      }
+    };
+    if (isNewView && chart) {
       viewKeyRef.current = key;
-      timeScale?.fitContent();
+      showLatest(chart, barCountRef.current);
+    } else if (tailFrom >= 0) {
+      /* view jaisa tha waisa */
+    } else if (historyShifted && prevLogical) {
+      keepAnchor();
     } else if (followingLive && prevLogical) {
       const width = prevLogical.to - prevLogical.from;
       const rightGap = prevLogical.to - (prevBarCount - 1);
@@ -627,16 +1058,26 @@ export default function CandleChart({
       timeScale?.setVisibleLogicalRange({ from: to - width, to });
     } else if (followingLive) {
       timeScale?.scrollToRealTime();
-    } else if (prevTimeRange) {
-      timeScale?.setVisibleRange(prevTimeRange);
+    } else {
+      keepAnchor();
     }
-  }, [candles, lineSig, showVolume, viewKey, symbol, interval]);
+    // History-load ki range-events data lagne ke beech aati hain (purani index par) —
+    // unhe agla page maangne ka signal na samjho; view set hone ke baad hi suno.
+    const release = requestAnimationFrame(() => {
+      applyingRef.current = false;
+    });
+    const h = chart?.timeScale().height();
+    if (h && h > 0) setAxisH(h);
+    return () => cancelAnimationFrame(release);
+  }, [candles, lineSig, showVolume, viewKey, symbol, interval, chartType]);
 
   // Callbacks aur toggles ref mein — inke badalne par socket dobara nahi kholna.
   useEffect(() => {
     onLiveBarRef.current = onLiveBar;
     onLiveStatusRef.current = onLiveStatus;
+    onReachHistoryRef.current = onReachHistory;
     showVolumeRef.current = showVolume;
+    hasIndicatorsRef.current = Boolean(indicators?.length);
   });
 
   const liveSymbol = live?.symbol;
@@ -648,16 +1089,19 @@ export default function CandleChart({
     liveBarRef.current = null;
     let pending: LiveBar | null = null;
 
+    let indPending: LiveBar | null = null;
     const onBar = (bar: LiveBar) => {
-      const candle = candleSeries.current;
+      const main = mainRef.current;
       const lastTime = lastBarTimeRef.current;
       // History abhi aayi nahi, ya ye tick chart ki aakhri candle se purana hai.
-      if (!candle || lastTime == null || bar.time < lastTime) return;
+      if (!main || lastTime == null || bar.time < lastTime) return;
       if (bar.time > lastTime) barCountRef.current += 1;
       liveBarRef.current = bar;
-      paintLiveBar(bar, candle, volumeSeries.current, lineSeries.current, emaStateRef.current, showVolumeRef.current);
+      paintLiveBar(bar, main, volumeSeries.current, lineSeries.current, emaStateRef.current, showVolumeRef.current);
+      trackLiveBar(bar);
       lastBarTimeRef.current = bar.time;
       pending = bar;
+      indPending = bar;
       onLiveBarRef.current?.(bar);
     };
 
@@ -685,11 +1129,18 @@ export default function CandleChart({
       pending = null;
       setLiveView({ key, bar });
     }, 250);
+    const indFlush = window.setInterval(() => {
+      if (!indPending || !hasIndicatorsRef.current) return;
+      const bar = indPending;
+      indPending = null;
+      setIndLive({ key, bar });
+    }, 1000);
 
     if (!document.hidden) start();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.clearInterval(flush);
+      window.clearInterval(indFlush);
       document.removeEventListener("visibilitychange", onVisibility);
       stop();
     };
@@ -713,6 +1164,195 @@ export default function CandleChart({
   }, [compareCandles, compareLabel]);
 
   const liveKey = liveSymbol && liveInterval ? `${liveSymbol}|${liveInterval}` : null;
+
+  // ── Indicators ─────────────────────────────────────────
+
+  const sortedCandles = useMemo(
+    () => candles.filter((c) => c.open && c.high && c.low && c.close).sort((a, b) => a.time - b.time),
+    [candles],
+  );
+
+  const indLiveBar = indLive && indLive.key === liveKey ? indLive.bar : null;
+  const indCandles = useMemo(() => {
+    const lastC = sortedCandles[sortedCandles.length - 1];
+    if (!indLiveBar || !lastC || indLiveBar.time < lastC.time) return sortedCandles;
+    const bar: Candle = {
+      time: indLiveBar.time,
+      open: indLiveBar.open,
+      high: indLiveBar.high,
+      low: indLiveBar.low,
+      close: indLiveBar.close,
+      volume: indLiveBar.volume,
+    };
+    return indLiveBar.time === lastC.time ? [...sortedCandles.slice(0, -1), bar] : [...sortedCandles, bar];
+  }, [sortedCandles, indLiveBar]);
+
+  const indData = useMemo(() => {
+    if (!indicators?.length) return [];
+    const ctx = { barMinutes: barMinutesOf(indCandles) };
+    return indicators.map((ind) => ({ ind, values: computeIndicator(ind, indCandles, ctx) }));
+  }, [indicators, indCandles]);
+
+  const paneUids = useMemo(
+    () => (indicators ?? []).filter((i) => INDICATOR_BY_ID.get(i.id)?.pane).map((i) => i.uid),
+    [indicators],
+  );
+  const paneSig = paneUids.join("|");
+  const { mainFrac, paneH } = paneLayout(paneUids.length);
+
+  // Series banao / hatao. Data neeche wala effect daalta hai.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const list = indicators ?? [];
+    const keep = new Set<string>();
+    for (const ind of list) {
+      const def = INDICATOR_BY_ID.get(ind.id);
+      if (!def) continue;
+      keep.add(ind.uid);
+      const colors = def.outputs.map((_, i) => outputColor(ind, i, list));
+      // chartType sig mein: main series dobara bane to indicators uske upar dobara bane.
+      const sig = `${chartType}|${def.id}|${colors.join(",")}`;
+      let entry = indSeries.current.get(ind.uid);
+      if (entry && entry.sig !== sig) {
+        for (const s of entry.series) {
+          try {
+            chart.removeSeries(s);
+          } catch {
+            /* already gone */
+          }
+        }
+        indSeries.current.delete(ind.uid);
+        entry = undefined;
+      }
+      if (!entry) {
+        entry = { sig, series: createIndicatorSeries(chart, def, ind.uid, colors), dataFor: { candles: null, params: "", len: 0, first: null } };
+        indSeries.current.set(ind.uid, entry);
+      }
+      for (const s of entry.series) s.applyOptions({ visible: !ind.hidden });
+    }
+    for (const [uid, entry] of indSeries.current) {
+      if (keep.has(uid)) continue;
+      for (const s of entry.series) {
+        try {
+          chart.removeSeries(s);
+        } catch {
+          /* already gone */
+        }
+      }
+      indSeries.current.delete(uid);
+    }
+  }, [indicators, chartType]);
+
+  useEffect(() => {
+    for (const { ind, values } of indData) {
+      const entry = indSeries.current.get(ind.uid);
+      const def = INDICATOR_BY_ID.get(ind.id);
+      if (!entry || !def || !values.length) continue;
+      const params = JSON.stringify(ind.params);
+      const prev = entry.dataFor;
+      const first = indCandles[0]?.time ?? null;
+      const grow = indCandles.length - prev.len;
+      // Live candle badli (candles same), ya poll ne aakhir mein kuch candles
+      // jodi — dono mein sirf aakhri points update; poori history ka setData nahi.
+      const tail =
+        prev.params === params &&
+        prev.len > 0 &&
+        prev.first === first &&
+        (prev.candles === sortedCandles || (grow >= 0 && grow <= TAIL_MAX));
+      if (!tail) {
+        def.outputs.forEach((o, i) => {
+          entry.series[i]?.setData(indicatorPoints(o, values[i] ?? [], indCandles) as never);
+        });
+        entry.dataFor = { candles: sortedCandles, params, len: indCandles.length, first };
+        continue;
+      }
+      const from = prev.candles === sortedCandles ? indCandles.length - 1 : Math.max(0, prev.len - 1);
+      for (let j = from; j < indCandles.length; j++) {
+        const time = toUnix(indCandles[j].time);
+        def.outputs.forEach((o, i) => {
+          const v = values[i]?.[j];
+          const s = entry.series[i];
+          if (!s) return;
+          try {
+            if (v == null || !Number.isFinite(v)) s.update({ time } as never);
+            else s.update((o.type === "histogram" ? { time, value: v, color: histColor(o, v, values[i]?.[j - 1] ?? null) } : { time, value: v }) as never);
+          } catch {
+            /* series mein aakhri time isse naya — agla poll theek kar dega */
+          }
+        });
+      }
+      entry.dataFor = { candles: sortedCandles, params, len: indCandles.length, first };
+    }
+  }, [indData, indCandles, sortedCandles, chartType]);
+
+  // Panes ki jagah: price upar, volume uske neeche, phir har pane apni patti mein.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const below = 1 - mainFrac;
+    chart.priceScale("right").applyOptions({
+      scaleMargins: { top: 0.06, bottom: below + mainFrac * (showVolume ? 0.18 : 0.04) },
+    });
+    chart.priceScale("volume").applyOptions({ scaleMargins: { top: mainFrac * 0.78, bottom: below } });
+    chart.priceScale("compare").applyOptions({ scaleMargins: { top: 0.1, bottom: below + mainFrac * 0.3 } });
+    paneUids.forEach((uid, i) => {
+      const y0 = mainFrac + i * paneH;
+      try {
+        chart.priceScale(`pane-${uid}`).applyOptions({
+          scaleMargins: { top: y0 + paneH * 0.2, bottom: Math.max(0, 1 - y0 - paneH * 0.94) },
+          borderVisible: false,
+        });
+      } catch {
+        /* scale abhi bana nahi */
+      }
+    });
+    // paneSig = paneUids ki pehchaan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneSig, mainFrac, paneH, showVolume, chartType, indicators]);
+
+  const indIndex = useMemo(() => new Map(indCandles.map((c, i) => [toUnix(c.time) as number, i])), [indCandles]);
+  const valueIdx = (hoverTime == null ? undefined : indIndex.get(hoverTime)) ?? indCandles.length - 1;
+
+  const renderIndRow = (ind: ActiveIndicator, values: Num[][]) => {
+    const def = INDICATOR_BY_ID.get(ind.id);
+    if (!def) return null;
+    const list = indicators ?? [];
+    return (
+      <div key={ind.uid} className="cm-ind-row" data-hidden={ind.hidden || undefined}>
+        <span className="cm-ind-name">{indicatorTitle(ind)}</span>
+        {!ind.hidden && (
+          <span className="cm-ind-vals">
+            {def.outputs.map((o, i) => (
+              <span key={o.key} style={{ color: outputColor(ind, i, list) }}>
+                {fmtInd(values[i]?.[valueIdx])}
+              </span>
+            ))}
+          </span>
+        )}
+        <span className="cm-ind-actions">
+          {onIndicatorToggle && (
+            <button type="button" onClick={() => onIndicatorToggle(ind.uid)} aria-label={ind.hidden ? "Show" : "Hide"} title={ind.hidden ? "Show" : "Hide"}>
+              {ind.hidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          )}
+          {onIndicatorSettings && (
+            <button type="button" onClick={() => onIndicatorSettings(ind.uid)} aria-label="Settings" title="Settings">
+              <Settings2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {onIndicatorRemove && (
+            <button type="button" onClick={() => onIndicatorRemove(ind.uid)} aria-label="Remove" title="Remove">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  };
+
+  const overlayRows = indData.filter(({ ind }) => !INDICATOR_BY_ID.get(ind.id)?.pane);
+  const paneRows = paneUids.map((uid) => indData.find((d) => d.ind.uid === uid)).filter(Boolean) as typeof indData;
   const liveLegendBar = liveView && liveView.key === liveKey ? liveView.bar : null;
   const lastCandle = candles.at(-1);
   const last =
@@ -747,7 +1387,10 @@ export default function CandleChart({
     ts.setVisibleLogicalRange({ from: range.from + step, to: range.to + step });
   };
 
-  const resetChart = () => resetChartView(chartRef.current);
+  const resetChart = () => {
+    const chart = chartRef.current;
+    if (chart) showLatest(chart, barCountRef.current);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -756,7 +1399,8 @@ export default function CandleChart({
       const target = e.target as HTMLElement | null;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
       e.preventDefault();
-      resetChartView(chartRef.current);
+      const chart = chartRef.current;
+      if (chart) showLatest(chart, barCountRef.current);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -764,6 +1408,7 @@ export default function CandleChart({
 
   return (
     <div className="relative w-full h-full trade-chart-shell">
+      <div className="cm-legend-stack">
       {view && (
         <div className="trade-chart-legend">
           <span className="font-bold" style={{ color: "var(--text-primary)" }}>
@@ -771,7 +1416,7 @@ export default function CandleChart({
             <span style={{ color: "var(--text-muted)" }}>
               {/* Venue chart par hi — doosre platform se milaane wale ko pata ho
                   ki ye kis exchange ka kaunsa contract hai. */}
-              {` · Perp · ${venue}`}
+              {/Spot/i.test(venue) ? ` · ${venue}` : ` · Perp · ${venue}`}
               {interval ? ` · ${interval}` : ""} · {DESK_TZ_LABEL}
               {compareLabel ? ` · vs ${compareLabel}` : ""}
               {drawTool !== "cursor" ? ` · draw:${drawTool}` : ""}
@@ -786,13 +1431,90 @@ export default function CandleChart({
           </span>
         </div>
       )}
+      {overlayRows.length > 0 && (
+        <div className="cm-ind-legend">{overlayRows.map(({ ind, values }) => renderIndRow(ind, values))}</div>
+      )}
+      </div>
       <div
         ref={wrapRef}
         className="w-full h-full"
         role="img"
         aria-label="Crypto candlestick chart with indicator lines and volume"
       />
-      <div className="trade-chart-nav" role="toolbar" aria-label="Chart navigation">
+      {drawings.selected && (
+        <div className="cm-draw-bar" role="toolbar" aria-label="Drawing settings">
+          {DRAW_COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              className="cm-draw-swatch"
+              style={{ background: c }}
+              data-on={drawings.selected?.color === c}
+              onClick={() => drawings.edit({ color: c })}
+              aria-label={`Rang ${c}`}
+            />
+          ))}
+          <span className="cm-draw-sep" />
+          {DRAW_WIDTHS.map((w) => (
+            <button
+              key={w}
+              type="button"
+              className="cm-draw-width"
+              data-on={drawings.selected?.width === w}
+              onClick={() => drawings.edit({ width: w })}
+              aria-label={`Motaai ${w}`}
+              title={drawings.selected?.type === "text" ? `Size ${w}` : `${w}px`}
+            >
+              <span style={{ height: drawings.selected?.type === "text" ? 2 : w }} />
+            </button>
+          ))}
+          {drawings.selected.type === "text" && (
+            <>
+              <span className="cm-draw-sep" />
+              <button
+                type="button"
+                className="cm-draw-icon"
+                onClick={() => {
+                  const text = window.prompt("Text badlein", drawings.selected?.text ?? "")?.trim();
+                  if (text) drawings.edit({ text });
+                }}
+                aria-label="Text badlein"
+                title="Text badlein"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          <span className="cm-draw-sep" />
+          <button type="button" className="cm-draw-icon" data-tone="danger" onClick={drawings.remove} aria-label="Drawing delete karein" title="Delete (Del)">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+          <button type="button" className="cm-draw-icon" onClick={drawings.deselect} aria-label="Band karein" title="Band (Esc)">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+      {drawTool !== "cursor" && (
+        <div className="cm-draw-hint">{DRAW_HINTS[drawTool]}</div>
+      )}
+      {paneRows.map(({ ind, values }, i) => (
+        <div
+          key={ind.uid}
+          className="cm-pane"
+          style={{
+            top: `calc((100% - ${axisH}px) * ${mainFrac + i * paneH})`,
+            height: `calc((100% - ${axisH}px) * ${paneH})`,
+          }}
+        >
+          {renderIndRow(ind, values)}
+        </div>
+      ))}
+      <div
+        className="trade-chart-nav"
+        role="toolbar"
+        aria-label="Chart navigation"
+        style={paneRows.length ? { bottom: `calc((100% - ${axisH}px) * ${1 - mainFrac} + ${axisH + 14}px)` } : undefined}
+      >
         <ChartNavButton label="Zoom Out" onClick={() => zoom(1.25)}>
           <path d="M5 12h14" />
         </ChartNavButton>

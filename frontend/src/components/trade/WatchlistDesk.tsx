@@ -10,7 +10,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { CRYPTO_SYMBOLS, symbolLabel } from "@/lib/cryptoApi";
+import { CRYPTO_SYMBOLS } from "@/lib/cryptoApi";
+import { watchKeyLabel } from "@/lib/marketQuote";
 import {
   WATCHLISTS_CHANGED,
   addSymbolToWatchlist,
@@ -65,7 +66,7 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
     const syms = active?.symbols ?? [];
     if (!q) return syms;
     return syms.filter(
-      (s) => s.includes(q) || symbolLabel(s).replace("/", "").toUpperCase().includes(q),
+      (s) => s.includes(q) || watchKeyLabel(s).replace("/", "").toUpperCase().includes(q),
     );
   }, [active, query]);
 
@@ -341,7 +342,7 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
                     className="min-w-0 flex-1 text-left"
                     onClick={() => onPickSymbol(sym)}
                   >
-                    <div className="text-[13px] font-bold">{symbolLabel(sym)}</div>
+                    <div className="text-[13px] font-bold">{watchKeyLabel(sym)}</div>
                     <div className="text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
                       {sym} · Markets mein kholo
                     </div>
