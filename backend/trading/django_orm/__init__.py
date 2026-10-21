@@ -201,8 +201,29 @@ def save_demo_order_entry(order_entry: Dict[str, Any], *, user_id: Optional[int]
         quantity=Decimal(str(order_entry.get("quantity", 0))),
         price=Decimal(str(price)) if price not in (None, "") else None,
         status=str(order_entry.get("status", "")),
+        stop_loss=_dec(order_entry.get("stop_loss")),
+        take_profit=_dec(order_entry.get("take_profit")),
         created_at=ts,
     )
+
+
+def _dec(v: Any) -> Optional[Decimal]:
+    return Decimal(str(v)) if v not in (None, "") else None
+
+
+def _demo_order_dict(r: Any) -> Dict[str, Any]:
+    return {
+        "order_id": r.order_id,
+        "symbol": r.symbol,
+        "side": r.side,
+        "order_type": r.order_type,
+        "quantity": float(r.quantity),
+        "price": float(r.price) if r.price is not None else None,
+        "status": r.status,
+        "stop_loss": float(r.stop_loss) if r.stop_loss is not None else None,
+        "take_profit": float(r.take_profit) if r.take_profit is not None else None,
+        "timestamp": r.created_at.isoformat(),
+    }
 
 
 def fetch_recent_orders(*, limit: int = 50, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -220,21 +241,7 @@ def fetch_recent_orders(*, limit: int = 50, user_id: Optional[int] = None) -> Li
     if user_id is not None:
         rows = rows.filter(user_id=user_id)
 
-    out = []
-    for r in rows[:limit]:
-        out.append(
-            {
-                "order_id": r.order_id,
-                "symbol": r.symbol,
-                "side": r.side,
-                "order_type": r.order_type,
-                "quantity": float(r.quantity),
-                "price": float(r.price) if r.price is not None else None,
-                "status": r.status,
-                "timestamp": r.created_at.isoformat(),
-            }
-        )
-    return out
+    return [_demo_order_dict(r) for r in rows[:limit]]
 
 
 def fetch_user_demo_orders_oldest_first(user_id: int) -> List[Dict[str, Any]]:
@@ -243,19 +250,7 @@ def fetch_user_demo_orders_oldest_first(user_id: int) -> List[Dict[str, Any]]:
     from django_orm.models import DemoOrder
 
     rows = DemoOrder.objects.filter(user_id=user_id).order_by("created_at", "id")
-    return [
-        {
-            "order_id": r.order_id,
-            "symbol": r.symbol,
-            "side": r.side,
-            "order_type": r.order_type,
-            "quantity": float(r.quantity),
-            "price": float(r.price) if r.price is not None else None,
-            "status": r.status,
-            "timestamp": r.created_at.isoformat(),
-        }
-        for r in rows
-    ]
+    return [_demo_order_dict(r) for r in rows]
 
 
 def update_demo_order(order_id: str, *, user_id: int, status: str, price: Optional[float] = None) -> bool:
@@ -267,6 +262,92 @@ def update_demo_order(order_id: str, *, user_id: int, status: str, price: Option
     if price is not None:
         fields["price"] = Decimal(str(price))
     return DemoOrder.objects.filter(order_id=order_id, user_id=user_id).update(**fields) > 0
+
+
+_UNSET: Any = object()
+
+
+def modify_demo_order(
+    order_id: str,
+    *,
+    user_id: int,
+    order_type: Any = _UNSET,
+    quantity: Any = _UNSET,
+    price: Any = _UNSET,
+    status: Any = _UNSET,
+    stop_loss: Any = _UNSET,
+    take_profit: Any = _UNSET,
+    only_if_status: Optional[str] = None,
+) -> bool:
+    """
+    Sirf wahi fields badlo jo di gayi hain; None = khaali karo (Target/SL hatana).
+    `only_if_status` diya ho to row tabhi badle jab status abhi bhi wahi ho.
+    """
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    fields: Dict[str, Any] = {}
+    if order_type is not _UNSET:
+        fields["order_type"] = str(order_type)
+    if status is not _UNSET:
+        fields["status"] = str(status)
+    for name, value in (("quantity", quantity), ("price", price), ("stop_loss", stop_loss), ("take_profit", take_profit)):
+        if value is not _UNSET:
+            fields[name] = _dec(value)
+    if not fields:
+        return False
+    rows = DemoOrder.objects.filter(order_id=order_id, user_id=user_id)
+    if only_if_status is not None:
+        rows = rows.filter(status=only_if_status)
+    return rows.update(**fields) > 0
+
+
+def fetch_paper_brackets(user_id: int) -> Dict[str, Dict[str, Optional[float]]]:
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    return {
+        b.symbol: {
+            "stop_loss": float(b.stop_loss) if b.stop_loss is not None else None,
+            "take_profit": float(b.take_profit) if b.take_profit is not None else None,
+        }
+        for b in PaperBracket.objects.filter(user_id=user_id)
+    }
+
+
+def claim_paper_bracket(user_id: int, symbol: str) -> bool:
+    """
+    Bracket hatao aur batao ki isi call ne hataya. Do requests ek saath SL/Target
+    hit dekhein to sirf ek close order banaye — warna position ulti khul jaati.
+    """
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    deleted, _ = PaperBracket.objects.filter(user_id=user_id, symbol=symbol).delete()
+    return deleted > 0
+
+
+def claim_pending_demo_order(order_id: str, *, user_id: int, status: str) -> bool:
+    """Pending order ka status badlo — sirf tab jab abhi bhi pending ho (ek hi request jeete)."""
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    return DemoOrder.objects.filter(order_id=order_id, user_id=user_id, status="pending").update(status=status) > 0
+
+
+def set_paper_bracket(user_id: int, symbol: str, *, stop_loss: Optional[float], take_profit: Optional[float]) -> None:
+    """Dono khaali ho to row hi hata do."""
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    if stop_loss is None and take_profit is None:
+        PaperBracket.objects.filter(user_id=user_id, symbol=symbol).delete()
+        return
+    PaperBracket.objects.update_or_create(
+        user_id=user_id,
+        symbol=symbol,
+        defaults={"stop_loss": _dec(stop_loss), "take_profit": _dec(take_profit)},
+    )
 
 
 # --- Users & sessions ---

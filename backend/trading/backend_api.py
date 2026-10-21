@@ -45,6 +45,11 @@ from django_orm import (
     fetch_recent_orders,
     fetch_user_demo_orders_oldest_first,
     update_demo_order,
+    modify_demo_order,
+    fetch_paper_brackets,
+    set_paper_bracket,
+    claim_paper_bracket,
+    claim_pending_demo_order,
     create_user_account,
     get_user_account_by_username,
     get_user_account_by_email,
@@ -712,7 +717,7 @@ def get_candles():
                 'success': False,
             }), 400
 
-        if interval not in src.INTERVALS:
+        if interval not in src.intervals():
             return jsonify({
                 'error': f'{src.name} par {interval} timeframe nahi hai.',
                 'success': False,
@@ -720,7 +725,7 @@ def get_candles():
                 'intervals': src.intervals(),
             }), 400
 
-        rows = src.candles(symbol, interval, limit, end_ms=end_ms)
+        rows = src.fetch(symbol, interval, limit, end_ms=end_ms)
         if end_ms and not rows:
             # History ka shuru aa gaya — error nahi, khaali page; chart paging rok deta hai.
             return jsonify({
@@ -3495,8 +3500,9 @@ def _paper_replay(orders):
     return {s: p for s, p in book.items() if p['qty'] != 0}, realized, closes
 
 
-def _paper_account(orders, marks):
+def _paper_account(orders, marks, brackets=None):
     positions, realized, closes = _paper_replay(orders)
+    brackets = brackets or {}
     rows = []
     unrealized = 0.0
     used = 0.0
@@ -3527,6 +3533,8 @@ def _paper_account(orders, marks):
             'notional': round(abs(q) * (mark or entry) * fx, 4),
             'liquidation_price': None,
             'opened_at': p.get('opened_at'),
+            'stop_loss': (brackets.get(symbol) or {}).get('stop_loss'),
+            'take_profit': (brackets.get(symbol) or {}).get('take_profit'),
         })
     cash = PAPER_START_USD + realized
     equity = cash + unrealized
@@ -3592,19 +3600,62 @@ def _paper_fill_check(orders, symbol, side, qty, price):
     return None
 
 
+def _bracket_problem(side, ref, stop_loss, take_profit):
+    """Buy/long: SL neeche, Target upar. Sell/short: ulta. `ref` = entry ya abhi ka bhaav."""
+    for name, v in (('Stop loss', stop_loss), ('Target', take_profit)):
+        if v is not None and v <= 0:
+            return f'{name} 0 se bada hona chahiye.'
+    if not ref:
+        return None
+    long = side == 'buy'
+    if stop_loss is not None and (stop_loss >= ref if long else stop_loss <= ref):
+        return (f'{"Buy/Long" if long else "Sell/Short"} par Stop loss bhaav ({ref:,.6g}) se '
+                f'{"neeche" if long else "upar"} hona chahiye.')
+    if take_profit is not None and (take_profit <= ref if long else take_profit >= ref):
+        return (f'{"Buy/Long" if long else "Sell/Short"} par Target bhaav ({ref:,.6g}) se '
+                f'{"upar" if long else "neeche"} hona chahiye.')
+    return None
+
+
+def _after_paper_fill(user_id, filled_before, order):
+    """
+    Fill ke baad position ka Target/SL theek karo. Position band ya ulti ho
+    gayi to purana bracket hatao (long ka SL short par turant trigger ho jaata).
+    Order apne saath Target/SL laaya aur position usi side ki hai to wo lagao.
+    """
+    symbol = order['symbol']
+    before = _paper_book(filled_before)[0].get(symbol, {}).get('qty', 0.0)
+    after = _paper_book(filled_before + [dict(order, status='filled')])[0].get(symbol, {}).get('qty', 0.0)
+    brackets = fetch_paper_brackets(user_id)
+    current = brackets.get(symbol) or {}
+    flipped = after == 0 or (before != 0 and (before > 0) != (after > 0))
+    if flipped:
+        current = {}
+    sl, tp = order.get('stop_loss'), order.get('take_profit')
+    if after != 0 and (after > 0) == (order['side'] == 'buy') and (sl is not None or tp is not None):
+        current = {
+            'stop_loss': sl if sl is not None else current.get('stop_loss'),
+            'take_profit': tp if tp is not None else current.get('take_profit'),
+        }
+    if current != (brackets.get(symbol) or {}):
+        set_paper_bracket(user_id, symbol, stop_loss=current.get('stop_loss'), take_profit=current.get('take_profit'))
+
+
 def _settle_paper_limits(user_id):
     """
-    Pending paper limit orders ko abhi ke bhaav se milao.
+    Pending paper limit orders ko abhi ke bhaav se milao, phir khuli positions
+    ke Target/SL check karo.
 
     Matching engine background mein nahi chalta — jab bhi user orders/account
     dekhta hai tab check hota hai. Isliye sirf abhi ka bhaav dekha jaata hai,
-    beech ki wick nahi.
+    beech ki wick nahi; SL/Target hit hone par position abhi ke bhaav par band hoti hai.
     """
     orders = fetch_user_demo_orders_oldest_first(user_id)
     pending = [o for o in orders if o['status'] == 'pending' and o.get('price')]
-    if not pending:
+    brackets = fetch_paper_brackets(user_id)
+    if not pending and not brackets:
         return orders
-    marks = _paper_prices_for(o['symbol'] for o in pending)
+    marks = _paper_prices_for([o['symbol'] for o in pending] + list(brackets))
     changed = False
     for o in pending:
         mark = marks.get(o['symbol'])
@@ -3616,9 +3667,47 @@ def _settle_paper_limits(user_id):
             continue
         settled = [x for x in orders if x['status'] == 'filled']
         reason = _paper_fill_check(settled, o['symbol'], o['side'], float(o['quantity']), limit)
-        update_demo_order(o['order_id'], user_id=user_id, status='rejected' if reason else 'filled')
-        o['status'] = 'rejected' if reason else 'filled'
         changed = True
+        if not claim_pending_demo_order(o['order_id'], user_id=user_id, status='rejected' if reason else 'filled'):
+            continue
+        if not reason:
+            _after_paper_fill(user_id, settled, o)
+        o['status'] = 'rejected' if reason else 'filled'
+
+    brackets = fetch_paper_brackets(user_id) if changed else brackets
+    if brackets:
+        filled = [x for x in orders if x['status'] == 'filled']
+        positions = _paper_book(filled)[0]
+        for symbol, b in brackets.items():
+            q = positions.get(symbol, {}).get('qty', 0.0)
+            if q == 0:
+                set_paper_bracket(user_id, symbol, stop_loss=None, take_profit=None)
+                continue
+            mark = marks.get(symbol) or _paper_price(symbol)
+            if not mark:
+                continue
+            sl, tp = b.get('stop_loss'), b.get('take_profit')
+            long = q > 0
+            hit = None
+            if sl is not None and (mark <= sl if long else mark >= sl):
+                hit = 'stop_loss'
+            elif tp is not None and (mark >= tp if long else mark <= tp):
+                hit = 'take_profit'
+            if not hit:
+                continue
+            changed = True
+            if not claim_paper_bracket(user_id, symbol):
+                continue
+            save_demo_order_entry({
+                'order_id': f"ORD_{int(time.time() * 1000)}_{secrets.token_hex(3)}",
+                'symbol': symbol,
+                'side': 'sell' if long else 'buy',
+                'order_type': hit,
+                'quantity': round(abs(q), 10),
+                'price': mark,
+                'status': 'filled',
+                'timestamp': datetime.now().isoformat(),
+            }, user_id=user_id)
     return fetch_user_demo_orders_oldest_first(user_id) if changed else orders
 
 
@@ -3637,6 +3726,8 @@ def place_order():
         order_type = str(data.get('order_type') or 'market').strip().lower()
         quantity = _fnum(data.get('quantity'), 0.0)
         limit_price = _fnum(data.get('price'), 0.0) or None
+        stop_loss = _fnum(data.get('stop_loss'), 0.0) or None
+        take_profit = _fnum(data.get('take_profit'), 0.0) or None
 
         if not symbol or quantity <= 0:
             return jsonify({'success': False, 'error': 'Symbol aur quantity required hain'}), 400
@@ -3668,10 +3759,15 @@ def place_order():
             limit_price >= mark if side == 'buy' else limit_price <= mark
         )
         fill_price = mark if marketable else None
+        if meta and side == 'sell' and (stop_loss or take_profit):
+            return jsonify({'success': False, 'error': 'Spot sell par Target/SL nahi lagta — wo coin bechna hai, position nahi.'}), 400
+        problem = _bracket_problem(side, fill_price or limit_price, stop_loss, take_profit)
+        if problem:
+            return jsonify({'success': False, 'error': problem, 'reason': 'bracket'}), 400
 
         orders = _settle_paper_limits(g.user['id'])
+        settled = [o for o in orders if o['status'] == 'filled']
         if marketable or (meta and side == 'sell'):
-            settled = [o for o in orders if o['status'] == 'filled']
             reason = _paper_fill_check(settled, symbol, side, quantity, fill_price)
             if reason:
                 return jsonify({'success': False, 'error': reason, 'reason': 'paper_balance'}), 400
@@ -3684,9 +3780,13 @@ def place_order():
             'quantity': quantity,
             'price': fill_price if marketable else limit_price,
             'status': 'filled' if marketable else 'pending',
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
             'timestamp': datetime.now().isoformat(),
         }
         save_demo_order_entry(order_entry, user_id=g.user['id'])
+        if marketable:
+            _after_paper_fill(g.user['id'], settled, order_entry)
 
         message = (
             f"Paper {side.upper()} {quantity:g} {label} @ {fill_price:,.4f} fill ho gaya"
@@ -3725,7 +3825,140 @@ def paper_account():
         orders = _settle_paper_limits(g.user['id'])
         filled = [o for o in orders if o['status'] == 'filled']
         marks = _paper_prices_for({o['symbol'] for o in filled})
-        return jsonify({'success': True, 'data': _paper_account(filled, marks)})
+        return jsonify({'success': True, 'data': _paper_account(filled, marks, fetch_paper_brackets(g.user['id']))})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _optional_price(data, key):
+    """(diya gaya?, value) — key hi na ho to 'mat chhedo', null/0 = hata do."""
+    if key not in data:
+        return False, None
+    return True, _fnum(data.get(key), 0.0) or None
+
+
+@app.route('/api/paper/orders/modify', methods=['POST'])
+@require_auth
+def paper_modify_order():
+    """
+    Pending paper order badlo: limit price, quantity, Target/SL, ya type.
+    Market mein badla (ya nayi limit abhi ke bhaav ko cross karti hai) to turant fill.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        order_id = str(data.get('order_id') or '').strip()
+        if not order_id:
+            return jsonify({'success': False, 'error': 'order_id chahiye'}), 400
+        user_id = g.user['id']
+        orders = _settle_paper_limits(user_id)
+        hit = next((o for o in orders if o['order_id'] == order_id), None)
+        if not hit:
+            return jsonify({'success': False, 'error': 'Order nahi mila'}), 404
+        if hit['status'] != 'pending':
+            return jsonify({
+                'success': False,
+                'error': f"Order {hit['status']} ho chuka hai — ab position ka Target/SL badlein.",
+            }), 400
+
+        symbol, side = hit['symbol'], hit['side']
+        meta = _spot_meta(symbol)
+        label = f"{meta['base']}/{meta['quote']}" if meta else symbol
+        order_type = str(data.get('order_type') or hit['order_type']).strip().lower()
+        if order_type not in ('market', 'limit'):
+            return jsonify({'success': False, 'error': "order_type 'market' ya 'limit' hona chahiye"}), 400
+        quantity = _fnum(data.get('quantity'), 0.0) if 'quantity' in data else float(hit['quantity'])
+        if quantity <= 0:
+            return jsonify({'success': False, 'error': 'Quantity 0 se zyada honi chahiye'}), 400
+        limit_price = (_fnum(data.get('price'), 0.0) or None) if 'price' in data else hit.get('price')
+        if order_type == 'limit' and not limit_price:
+            return jsonify({'success': False, 'error': 'Limit order ke liye price chahiye'}), 400
+        sl_given, stop_loss = _optional_price(data, 'stop_loss')
+        tp_given, take_profit = _optional_price(data, 'take_profit')
+        stop_loss = stop_loss if sl_given else hit.get('stop_loss')
+        take_profit = take_profit if tp_given else hit.get('take_profit')
+
+        mark = _paper_price(symbol)
+        if not mark:
+            return jsonify({'success': False, 'error': f'{label} ka abhi ka bhaav nahi mila — thodi der baad try karein.'}), 503
+        if meta:
+            problem = _spot_order_problem(meta, side, order_type, quantity, limit_price or mark)
+            if problem:
+                return jsonify({'success': False, 'error': problem, 'reason': 'spot_rules'}), 400
+        marketable = order_type == 'market' or (limit_price >= mark if side == 'buy' else limit_price <= mark)
+        fill_price = mark if marketable else None
+        problem = _bracket_problem(side, fill_price or limit_price, stop_loss, take_profit)
+        if problem:
+            return jsonify({'success': False, 'error': problem, 'reason': 'bracket'}), 400
+
+        settled = [o for o in orders if o['status'] == 'filled']
+        if marketable or (meta and side == 'sell'):
+            reason = _paper_fill_check(settled, symbol, side, quantity, fill_price)
+            if reason:
+                return jsonify({'success': False, 'error': reason, 'reason': 'paper_balance'}), 400
+
+        if not modify_demo_order(
+            order_id,
+            user_id=user_id,
+            order_type=order_type,
+            quantity=quantity,
+            price=fill_price if marketable else limit_price,
+            status='filled' if marketable else 'pending',
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            only_if_status='pending',
+        ):
+            return jsonify({'success': False, 'error': 'Order abhi abhi fill/cancel ho gaya — list refresh karke dekhein.'}), 409
+        updated = dict(hit, order_type=order_type, quantity=quantity, price=fill_price or limit_price,
+                       status='filled' if marketable else 'pending', stop_loss=stop_loss, take_profit=take_profit)
+        if marketable:
+            _after_paper_fill(user_id, settled, updated)
+        message = (
+            f"Order fill ho gaya — {side.upper()} {quantity:g} {label} @ {fill_price:,.4f}"
+            if marketable
+            else 'Paper order update ho gaya'
+        )
+        return jsonify({'success': True, 'message': message, 'data': updated})
+    except Exception as e:
+        print(f"❌ Paper modify error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/paper/positions/bracket', methods=['POST'])
+@require_auth
+def paper_position_bracket():
+    """Khuli paper position ka Target/SL lagao, badlo ya hatao (null)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        symbol = _spot_key(str(data.get('symbol') or '').strip().upper())
+        if not symbol:
+            return jsonify({'success': False, 'error': 'symbol chahiye'}), 400
+        user_id = g.user['id']
+        orders = _settle_paper_limits(user_id)
+        filled = [o for o in orders if o['status'] == 'filled']
+        q = _paper_book(filled)[0].get(symbol, {}).get('qty', 0.0)
+        if q == 0:
+            return jsonify({'success': False, 'error': 'Is symbol par koi khuli paper position nahi hai (shayad SL/Target hit ho chuka).'}), 400
+        current = fetch_paper_brackets(user_id).get(symbol) or {}
+        sl_given, stop_loss = _optional_price(data, 'stop_loss')
+        tp_given, take_profit = _optional_price(data, 'take_profit')
+        stop_loss = stop_loss if sl_given else current.get('stop_loss')
+        take_profit = take_profit if tp_given else current.get('take_profit')
+        mark = _paper_price(symbol)
+        # Abhi ke bhaav se tulna — warna galat taraf ka SL agle hi refresh par turant chal jaata.
+        problem = _bracket_problem('buy' if q > 0 else 'sell', mark, stop_loss, take_profit)
+        if problem:
+            return jsonify({'success': False, 'error': problem.replace('bhaav', 'abhi ka bhaav'), 'reason': 'bracket'}), 400
+        set_paper_bracket(user_id, symbol, stop_loss=stop_loss, take_profit=take_profit)
+        if stop_loss is None and take_profit is None:
+            message = 'Target/SL hata diya'
+        else:
+            parts = []
+            if take_profit is not None:
+                parts.append(f'Target {take_profit:,.6g}')
+            if stop_loss is not None:
+                parts.append(f'SL {stop_loss:,.6g}')
+            message = f"{' · '.join(parts)} lag gaya"
+        return jsonify({'success': True, 'message': message, 'data': {'stop_loss': stop_loss, 'take_profit': take_profit}})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -3743,7 +3976,8 @@ def paper_cancel_order():
             return jsonify({'success': False, 'error': 'Order nahi mila'}), 404
         if hit['status'] != 'pending':
             return jsonify({'success': False, 'error': f"Order {hit['status']} hai, cancel nahi ho sakta"}), 400
-        update_demo_order(order_id, user_id=g.user['id'], status='cancelled')
+        if not claim_pending_demo_order(order_id, user_id=g.user['id'], status='cancelled'):
+            return jsonify({'success': False, 'error': 'Order abhi abhi fill ho gaya — cancel nahi hua.'}), 409
         return jsonify({'success': True, 'message': 'Paper order cancel ho gaya'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

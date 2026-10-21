@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Archive,
   ExternalLink,
+  FlaskConical,
   Pause,
   Pencil,
   Play,
@@ -25,7 +26,7 @@ import {
   type StrategyStatus,
 } from "@/lib/strategyBuilder";
 
-type Filter = "all" | "live" | "paused" | "draft" | "archived";
+type Filter = "all" | "live" | "paper" | "paused" | "draft" | "archived";
 
 interface Props {
   onCreate: () => void;
@@ -39,6 +40,7 @@ function fmtMoney(n: number): string {
 
 function statusBadge(status: StrategyStatus): string {
   if (status === "live") return "trade-badge-green";
+  if (status === "paper") return "trade-badge-green";
   if (status === "paused") return "trade-badge-amber";
   if (status === "archived") return "trade-badge-neutral";
   return "trade-badge-blue";
@@ -66,8 +68,10 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
   }, [sync]);
 
   const counts = useMemo(() => {
-    const c = { all: items.length, live: 0, paused: 0, draft: 0, archived: 0 };
-    for (const s of items) c[s.status] += 1;
+    const c = { all: items.length, live: 0, paper: 0, paused: 0, draft: 0, archived: 0 };
+    for (const s of items) {
+      if (s.status in c) c[s.status as keyof typeof c] += 1;
+    }
     return c;
   }, [items]);
 
@@ -101,12 +105,12 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
   const kpis = useMemo(() => {
     const closed = items.reduce((a, s) => a + (s.stats?.closedPnl30d ?? 0), 0);
     const trades = items.reduce((a, s) => a + (s.stats?.closedTrades ?? 0), 0);
-    const live = items.filter((s) => s.status === "live").length;
+    const live = items.filter((s) => s.status === "live" || s.status === "paper").length;
     const drafts = items.filter((s) => s.status === "draft").length;
     return [
       { label: "Closed PnL 30D", value: fmtMoney(closed), color: closed >= 0 ? "var(--green)" : "var(--red)" },
       { label: "Closed trades", value: String(trades), color: undefined },
-      { label: "Live", value: String(live), color: "var(--accent)" },
+      { label: "Live & Paper", value: String(live), color: "var(--accent)" },
       { label: "Drafts", value: String(drafts), color: undefined },
     ];
   }, [items]);
@@ -120,6 +124,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
   const filters: { id: Filter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "live", label: "Live" },
+    { id: "paper", label: "Paper" },
     { id: "paused", label: "Paused" },
     { id: "draft", label: "Draft" },
     { id: "archived", label: "Archived" },
@@ -138,7 +143,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
         <div className="trade-page-actions">
           <button type="button" className="trade-btn trade-btn-primary" onClick={onCreate}>
             <Plus className="w-4 h-4" />
-            New strategy
+            Open Strategy Builder
           </button>
         </div>
       </div>
@@ -241,7 +246,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                         </span>
                       </div>
                       <div className="ms-row-meta">
-                        {s.market.direction} · {s.market.symbols.map(symbolLabel).join(", ") || "—"} · {s.market.interval}
+                        <span className="capitalize font-semibold text-accent">{s.market.strategyType ?? "indicators"}</span> · {s.market.direction} · {s.market.symbols.map(symbolLabel).join(", ") || "—"} · {s.market.interval}
                       </div>
                       <div className="ms-row-pnl tnum" style={{ color: (s.stats?.closedPnl30d ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
                         {fmtMoney(s.stats?.closedPnl30d ?? 0)}
@@ -321,6 +326,15 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                   <Play className="w-4 h-4" />
                   Open & run
                 </Link>
+                <button
+                  type="button"
+                  className="trade-btn trade-btn-ghost text-emerald-400"
+                  onClick={() => onEdit(selectedStrategy.id)}
+                  title="Test in Simulator & Deploy to Paper"
+                >
+                  <FlaskConical className="w-4 h-4" />
+                  Simulator & Paper
+                </button>
                 <button type="button" className="trade-btn trade-btn-ghost" onClick={() => onEdit(selectedStrategy.id)}>
                   <Pencil className="w-4 h-4" />
                   Edit

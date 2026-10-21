@@ -107,18 +107,17 @@ MODEL_DESCRIPTIONS = {
 VALID_MODEL_IDS = {"auto", "gemini", "grok", "groq", "openai", "claude"}
 
 # Desk sirf Gemini par chalta hai — Google Search grounding ke saath, jo live
-# market questions par baaki models se behtar hai, aur ek hi model hone se
-# jawab ka lehja aur quality har baar ek jaisi rehti hai. False kar dene par
-# purana multi-model routing wapas aa jayega.
-GEMINI_ONLY = True
+# Desk Gemini ko pehle preference deta hai — Google Search grounding ke saath.
+# Agar Gemini quota ya outage aaye, toh Groq/OpenAI par graceful fallback hota hai.
+GEMINI_ONLY = False
 
 
 def _normalize_model(preferred_model: Optional[str]) -> str:
-    """Gemini-only mode mein har request Gemini par jaati hai."""
+    """Gemini-first fallback routing."""
     if GEMINI_ONLY:
         return "gemini"
-    model = _normalize_model(preferred_model)
-    return model if model in VALID_MODEL_IDS else "auto"
+    m = (preferred_model or "gemini").strip().lower()
+    return m if m in VALID_MODEL_IDS else "auto"
 VISION_MODEL_IDS = {"auto", "gemini", "openai"}
 
 
@@ -618,6 +617,9 @@ class ArjunAI:
                                 key_i + 1, model_id, enable_search, attempt + 1, err[:300],
                             )
                             if self._gemini_is_quota_error(err):
+                                if enable_search:
+                                    logging.warning("Gemini key %s search quota hit, retrying without search", key_i + 1)
+                                    break
                                 quota_hit = True
                                 break
                             action = self._gemini_retry_action(err, enable_search)
@@ -791,6 +793,9 @@ class ArjunAI:
                             key_i + 1, model_id, attempt + 1, err[:300],
                         )
                         if self._gemini_is_quota_error(err):
+                            if enable_search:
+                                logging.warning("Gemini stream search quota hit on key %s, retrying without search", key_i + 1)
+                                continue
                             quota_hit = True
                             break
                         action = self._gemini_retry_action(err, False)

@@ -43,6 +43,14 @@ function defaultStore(): WatchlistStore {
   };
 }
 
+/** "btcinr@COINDCX-SPOT" -> "BTCINR@coindcx-spot": symbol bade akshar, venue chhote. */
+export function normalizeWatchKey(key: string): string {
+  const raw = key.trim().replace(/\s+/g, "");
+  const at = raw.indexOf("@");
+  if (at < 0) return raw.toUpperCase().replace("/", "");
+  return `${raw.slice(0, at).toUpperCase().replace("/", "")}@${raw.slice(at + 1).toLowerCase()}`;
+}
+
 function emitChange(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new Event(WATCHLISTS_CHANGED));
@@ -63,6 +71,7 @@ export function loadWatchlistStore(): WatchlistStore {
       localStorage.setItem(WATCHLISTS_KEY, JSON.stringify(store));
       return store;
     }
+    parsed.lists = parsed.lists.map((l) => ({ ...l, symbols: [...new Set(l.symbols.map(normalizeWatchKey))] }));
     if (!parsed.lists.some((l) => l.id === parsed.activeId)) {
       parsed.activeId = parsed.lists[0].id;
     }
@@ -136,7 +145,7 @@ export function addSymbolToWatchlist(listId: string, symbol: string): { ok: bool
   const store = loadWatchlistStore();
   const list = store.lists.find((l) => l.id === listId);
   if (!list) return { ok: false, error: "Watchlist nahi mili" };
-  const sym = symbol.trim().toUpperCase();
+  const sym = normalizeWatchKey(symbol);
   if (!sym) return { ok: false, error: "Symbol chahiye" };
   if (list.symbols.includes(sym)) {
     return { ok: false, error: `"${sym}" is list mein pehle se hai` };
@@ -150,6 +159,23 @@ export function addSymbolToWatchlist(listId: string, symbol: string): { ok: bool
     ),
   });
   return { ok: true };
+}
+
+/** Ek saath kai pairs — pehle se maujood chhod deta hai, kitne naye jude wo batata hai. */
+export function addSymbolsToWatchlist(listId: string, symbols: string[]): { added: number } {
+  const store = loadWatchlistStore();
+  const list = store.lists.find((l) => l.id === listId);
+  if (!list) return { added: 0 };
+  const have = new Set(list.symbols);
+  const fresh = [...new Set(symbols.map(normalizeWatchKey).filter(Boolean))].filter((k) => !have.has(k));
+  if (!fresh.length) return { added: 0 };
+  saveStore({
+    ...store,
+    lists: store.lists.map((l) =>
+      l.id === listId ? { ...l, symbols: [...l.symbols, ...fresh], updatedAt: nowIso() } : l,
+    ),
+  });
+  return { added: fresh.length };
 }
 
 export function removeSymbolFromWatchlist(listId: string, symbol: string): void {

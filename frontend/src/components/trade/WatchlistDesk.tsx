@@ -1,24 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Check,
-  Pencil,
-  Plus,
-  Search,
-  Star,
-  Trash2,
-  X,
-} from "lucide-react";
-import { CRYPTO_SYMBOLS } from "@/lib/cryptoApi";
-import { watchKeyLabel } from "@/lib/marketQuote";
+import { Check, ExternalLink, Pencil, Plus, Search, Star, Trash2, X } from "lucide-react";
+import { fetchMarketTickers, fetchSpotTickers } from "@/lib/cryptoApi";
+import { isSpotKey, watchKeyLabel } from "@/lib/marketQuote";
 import {
   WATCHLISTS_CHANGED,
   addSymbolToWatchlist,
+  addSymbolsToWatchlist,
   createWatchlist,
   deleteWatchlist,
   getActiveWatchlist,
   loadWatchlistStore,
+  normalizeWatchKey,
   removeSymbolFromWatchlist,
   renameWatchlist,
   setActiveWatchlist,
@@ -27,6 +21,39 @@ import {
 
 interface Props {
   onPickSymbol: (symbol: string) => void;
+}
+
+/** Add-picker ki ek row: Delta perp ya CoinDCX spot, jo bhi exchange par mile. */
+interface PairOption {
+  key: string;
+  label: string;
+  base: string;
+  venue: "Delta perp" | "CoinDCX spot";
+  price: number | null;
+  change: number | null;
+}
+
+const SUGGESTION_LIMIT = 80;
+
+type VenueFilter = "all" | "perp" | "spot";
+const VENUE_FILTERS: { id: VenueFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "perp", label: "Perps" },
+  { id: "spot", label: "Spot" },
+];
+
+function fmtChange(n: number | null | undefined): string {
+  return n == null || !Number.isFinite(n) ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+
+/** Coin ka chhota gol avatar — pehle 1-3 akshar. */
+function Coin({ base }: { base: string }) {
+  return <span className="wl-coin" aria-hidden>{base.slice(0, base.length > 4 ? 3 : 2)}</span>;
+}
+
+function fmtPx(n: number | null): string {
+  if (n == null) return "—";
+  return n >= 1000 ? n.toLocaleString("en-US", { maximumFractionDigits: 2 }) : n >= 1 ? n.toFixed(3) : n.toFixed(6);
 }
 
 export default function WatchlistDesk({ onPickSymbol }: Props) {
@@ -39,6 +66,9 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  const [universe, setUniverse] = useState<PairOption[]>([]);
+  const [universeLoading, setUniverseLoading] = useState(true);
+  const [venueFilter, setVenueFilter] = useState<VenueFilter>("all");
 
   const sync = useCallback(() => {
     const store = loadWatchlistStore();
@@ -56,6 +86,39 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
     };
   }, [sync]);
 
+  // Exchange ke saare pairs ek baar laate hain — picker mein koi 30-coin ki hadd nahi.
+  useEffect(() => {
+    let alive = true;
+    void Promise.allSettled([fetchMarketTickers(), fetchSpotTickers()]).then(([perps, spots]) => {
+      if (!alive) return;
+      const out: PairOption[] = [];
+      if (perps.status === "fulfilled") {
+        for (const t of perps.value) {
+          out.push({ key: t.symbol, label: `${t.base}/USD`, base: t.base, venue: "Delta perp", price: t.price, change: t.change_24h });
+        }
+      }
+      if (spots.status === "fulfilled") {
+        for (const t of spots.value) {
+          out.push({
+            key: normalizeWatchKey(`${t.symbol}@coindcx-spot`),
+            label: `${t.base}/${t.quote}`,
+            base: t.base,
+            venue: "CoinDCX spot",
+            price: t.price,
+            change: t.change_24h,
+          });
+        }
+      }
+      setUniverse(out);
+      setUniverseLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const quotes = useMemo(() => new Map(universe.map((o) => [o.key, o])), [universe]);
+
   const active = useMemo(
     () => lists.find((l) => l.id === activeId) ?? lists[0] ?? getActiveWatchlist(),
     [lists, activeId],
@@ -70,18 +133,20 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
     );
   }, [active, query]);
 
-  const addSuggestions = useMemo(() => {
-    const q = addQuery.trim().toUpperCase().replace("/", "");
+  const q = addQuery.trim().toUpperCase().replace("/", "");
+  const addMatches = useMemo(() => {
     const existing = new Set(active?.symbols ?? []);
-    let pool = CRYPTO_SYMBOLS.filter((s) => !existing.has(s.value));
-    if (q) {
-      pool = pool.filter(
-        (s) =>
-          s.value.includes(q) || s.label.replace("/", "").toUpperCase().includes(q),
-      );
-    }
-    return pool.slice(0, 8);
-  }, [addQuery, active]);
+    const pool = universe.filter(
+      (o) => !existing.has(o.key) && (venueFilter === "all" || (venueFilter === "perp") === (o.venue === "Delta perp")),
+    );
+    if (!q) return pool;
+    return pool.filter(
+      (o) => o.key.includes(q) || o.base.toUpperCase().includes(q) || o.label.replace("/", "").toUpperCase().includes(q),
+    );
+  }, [universe, active, q, venueFilter]);
+  const addSuggestions = addMatches.slice(0, SUGGESTION_LIMIT);
+  // Jo pair list mein nahi mila use bhi seedha daal sakte hain (naya listing, ya koi aur naam).
+  const customKey = q && !universe.some((o) => o.key === q) ? normalizeWatchKey(q) : "";
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -128,8 +193,16 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
       flash(res.error || "Add fail");
       return;
     }
+    sync();
+  };
+
+  const onAddAll = () => {
+    if (!active || addMatches.length === 0) return;
+    if (addMatches.length > 25 && !window.confirm(`${addMatches.length} pairs "${active.name}" mein add karein?`)) return;
+    const { added } = addSymbolsToWatchlist(active.id, addMatches.map((o) => o.key));
     setAddQuery("");
     sync();
+    flash(`${added} pairs add ho gaye`);
   };
 
   const onRemove = (symbol: string) => {
@@ -138,106 +211,116 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
     sync();
   };
 
+  const symbolCount = active?.symbols.length ?? 0;
+
   return (
     <div className="space-y-4">
-      <div className="trade-panel">
-        <div className="trade-panel-head">
-          <span className="trade-panel-title flex items-center gap-2">
-            <Star className="w-4 h-4" style={{ color: "var(--accent)" }} />
-            Watchlists
-          </span>
+      <div className="trade-page-head">
+        <div>
+          <div className="trade-page-kicker">Your markets</div>
+          <h2 className="trade-page-title">Watchlists</h2>
+          <p className="trade-page-sub">
+            Apne coins ek jagah — Delta perps aur CoinDCX spot, kitne bhi pairs. Pair par click karke chart kholo.
+          </p>
+        </div>
+        <div className="trade-page-actions">
           <button
             type="button"
-            className="trade-btn trade-btn-primary trade-size-sm"
+            className="trade-btn trade-btn-primary"
             onClick={() => {
               setCreating(true);
               setNewName("");
             }}
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             New list
           </button>
         </div>
+      </div>
 
-        <div className="p-3 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {lists.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                className="trade-seg-btn"
-                data-active={l.id === active?.id}
-                onClick={() => onSelectList(l.id)}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
-                  border: "1px solid var(--tr-line-soft)",
-                  background: l.id === active?.id ? "var(--tr-field)" : "transparent",
-                  color: "var(--text-primary)",
-                  fontSize: 12,
-                  fontWeight: 600,
-                }}
-              >
-                {l.name}
-                <span className="tnum" style={{ color: "var(--text-muted)", marginLeft: 6 }}>
-                  {l.symbols.length}
-                </span>
-              </button>
-            ))}
-          </div>
+      <div className="wl-tabs" role="tablist" aria-label="Watchlists">
+        {lists.map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            role="tab"
+            aria-selected={l.id === active?.id}
+            className="wl-tab"
+            data-active={l.id === active?.id}
+            onClick={() => onSelectList(l.id)}
+          >
+            <Star className="w-3.5 h-3.5" />
+            {l.name}
+            <span className="wl-tab-count tnum">{l.symbols.length}</span>
+          </button>
+        ))}
+        {creating && (
+          <span className="wl-create">
+            <input
+              className="wl-create-input"
+              placeholder="List ka naam"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onCreate();
+                if (e.key === "Escape") setCreating(false);
+              }}
+              autoFocus
+            />
+            <button type="button" className="trade-btn trade-btn-primary trade-size-sm" onClick={onCreate}>
+              <Check className="w-3.5 h-3.5" />
+              Create
+            </button>
+            <button type="button" className="trade-btn trade-btn-ghost trade-size-sm" onClick={() => setCreating(false)} aria-label="Cancel">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </span>
+        )}
+      </div>
 
-          {creating && (
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                className="trade-input flex-1 min-w-[160px]"
-                placeholder="List ka naam"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && onCreate()}
-                autoFocus
-              />
-              <button type="button" className="trade-btn trade-btn-primary trade-size-sm" onClick={onCreate}>
-                <Check className="w-3.5 h-3.5" />
-                Create
-              </button>
-              <button
-                type="button"
-                className="trade-btn trade-size-sm"
-                onClick={() => setCreating(false)}
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
+      {notice && (
+        <p className="wl-notice" role="status">
+          <Check className="w-3.5 h-3.5" />
+          {notice}
+        </p>
+      )}
 
-          {active && (
-            <div className="flex flex-wrap items-center gap-2">
+      <div className="wl-layout">
+        {/* ── Active list ───────────────────────────── */}
+        <div className="trade-panel">
+          <div className="trade-panel-head wl-head">
+            <div className="wl-head-title">
               {renaming ? (
                 <>
                   <input
-                    className="trade-input flex-1 min-w-[160px]"
+                    className="wl-create-input"
                     value={renameValue}
                     onChange={(e) => setRenameValue(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && onRenameSave()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") onRenameSave();
+                      if (e.key === "Escape") setRenaming(false);
+                    }}
                     autoFocus
                   />
                   <button type="button" className="trade-btn trade-btn-primary trade-size-sm" onClick={onRenameSave}>
                     <Check className="w-3.5 h-3.5" />
                     Save
                   </button>
-                  <button type="button" className="trade-btn trade-size-sm" onClick={() => setRenaming(false)}>
+                  <button type="button" className="trade-btn trade-btn-ghost trade-size-sm" onClick={() => setRenaming(false)} aria-label="Cancel">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </>
               ) : (
                 <>
-                  <span className="text-[14px] font-bold">{active.name}</span>
+                  <span className="wl-name">{active?.name}</span>
+                  <span className="trade-badge trade-badge-neutral tnum">{symbolCount} pairs</span>
                   <button
                     type="button"
-                    className="trade-btn trade-size-sm"
+                    className="wl-icon-btn"
                     title="Rename"
+                    aria-label="Rename list"
                     onClick={() => {
-                      setRenameValue(active.name);
+                      setRenameValue(active?.name ?? "");
                       setRenaming(true);
                     }}
                   >
@@ -245,8 +328,9 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
                   </button>
                   <button
                     type="button"
-                    className="trade-btn trade-size-sm"
+                    className="wl-icon-btn wl-icon-danger"
                     title="Delete list"
+                    aria-label="Delete list"
                     onClick={onDeleteList}
                     disabled={lists.length <= 1}
                   >
@@ -255,110 +339,167 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
                 </>
               )}
             </div>
-          )}
-
-          {notice && (
-            <p className="text-[12px]" style={{ color: "var(--accent)" }}>
-              {notice}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="trade-panel">
-        <div className="trade-panel-head">
-          <span className="trade-panel-title">Add symbol</span>
-        </div>
-        <div className="p-3 space-y-3">
-          <div className="relative">
-            <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5"
-              style={{ color: "var(--text-muted)" }}
-            />
-            <input
-              className="trade-input pl-9"
-              placeholder="Search BTC, ETH…"
-              value={addQuery}
-              onChange={(e) => setAddQuery(e.target.value)}
-            />
+            <label className="trade-search">
+              <Search className="w-3.5 h-3.5 flex-none" style={{ color: "var(--text-muted)" }} />
+              <input
+                className="trade-search-input"
+                placeholder="Filter list"
+                aria-label="Filter watchlist"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </label>
           </div>
-          {addSuggestions.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {addSuggestions.map((s) => (
-                <button
-                  key={s.value}
-                  type="button"
-                  className="trade-btn trade-size-sm"
-                  onClick={() => onAdd(s.value)}
-                >
-                  <Plus className="w-3 h-3" />
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-              {addQuery ? "Koi naya symbol nahi mila" : "Type karke symbol add karein"}
-            </p>
-          )}
-        </div>
-      </div>
 
-      <div className="trade-panel">
-        <div className="trade-panel-head">
-          <span className="trade-panel-title">
-            Symbols
-            <span className="tnum trade-badge trade-badge-neutral ml-2">
-              {active?.symbols.length ?? 0}
-            </span>
-          </span>
-          <div className="relative w-[180px]">
-            <Search
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5"
-              style={{ color: "var(--text-muted)" }}
-            />
-            <input
-              className="trade-input pl-8 text-[12px]"
-              placeholder="Filter"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </div>
-        </div>
-        <div className="p-3">
           {filteredSymbols.length === 0 ? (
-            <div className="trade-empty">
-              <span className="trade-empty-icon">
-                <Star className="w-4 h-4" />
+            <div className="trade-empty trade-empty-lg">
+              <span className="trade-empty-icon trade-empty-icon-lg">
+                <Star className="w-5 h-5" />
               </span>
-              Is list mein abhi koi symbol nahi — upar se add karein
+              <p className="text-[14px] font-semibold mt-1" style={{ color: "var(--text-secondary)" }}>
+                {query ? "Filter se kuch nahi mila" : "Is list mein abhi koi pair nahi"}
+              </p>
+              <p className="max-w-[300px]">{query ? "Doosra naam try karo." : "Side ke panel se pairs search karke + dabao."}</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {filteredSymbols.map((sym) => (
-                <div key={sym} className="trade-row">
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => onPickSymbol(sym)}
-                  >
-                    <div className="text-[13px] font-bold">{watchKeyLabel(sym)}</div>
-                    <div className="text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
-                      {sym} · Markets mein kholo
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    className="trade-btn trade-size-sm flex-none"
-                    title="Remove"
-                    onClick={() => onRemove(sym)}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
+            <div className="overflow-x-auto lg:overflow-y-auto lg:max-h-[70vh]">
+              <table className="trade-table wl-table">
+                <thead>
+                  <tr>
+                    <th>Pair</th>
+                    <th className="trade-num">Price</th>
+                    <th className="trade-num">24h</th>
+                    <th aria-label="Actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSymbols.map((sym) => {
+                    const quote = quotes.get(sym);
+                    const spot = isSpotKey(sym);
+                    const label = watchKeyLabel(sym);
+                    const change = quote?.change ?? null;
+                    return (
+                      <tr key={sym}>
+                        <td>
+                          <button type="button" className="wl-pair-btn" onClick={() => onPickSymbol(sym)} title="Markets mein kholo">
+                            <Coin base={label.split("/")[0]} />
+                            <span className="wl-pair-text">
+                              <span className="wl-pair-name">{label}</span>
+                              <span className="wl-pair-sub">{spot ? "CoinDCX spot" : "Delta perpetual"}</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td className="trade-num tnum" style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                          {fmtPx(quote?.price ?? null)}
+                        </td>
+                        <td className="trade-num">
+                          {change == null ? (
+                            <span style={{ color: "var(--text-muted)" }}>—</span>
+                          ) : (
+                            <span className={`trade-badge ${change >= 0 ? "trade-badge-green" : "trade-badge-red"} tnum`}>
+                              {fmtChange(change)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="trade-num">
+                          <span className="wl-actions">
+                            <button type="button" className="wl-icon-btn wl-open" title="Chart kholo" aria-label={`${label} chart kholo`} onClick={() => onPickSymbol(sym)}>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
+                            <button type="button" className="wl-icon-btn wl-icon-danger" title="Hatao" aria-label={`${label} hatao`} onClick={() => onRemove(sym)}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
+        </div>
+
+        {/* ── Add pairs ─────────────────────────────── */}
+        <div className="trade-panel wl-side">
+          <div className="trade-panel-head wl-head">
+            <span className="trade-panel-title">Add pairs</span>
+            <span className="wl-meta">
+              {universeLoading ? "Loading…" : `${universe.length} available`}
+            </span>
+          </div>
+          <div className="wl-add-controls">
+            <label className="trade-search wl-search-full">
+              <Search className="w-3.5 h-3.5 flex-none" style={{ color: "var(--text-muted)" }} />
+              <input
+                className="trade-search-input"
+                style={{ width: "100%" }}
+                placeholder="Search BTC, ETH, DOGE, BTCINR…"
+                aria-label="Search pairs to add"
+                value={addQuery}
+                onChange={(e) => setAddQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  if (addSuggestions.length === 1) onAdd(addSuggestions[0].key);
+                  else if (customKey && addSuggestions.length === 0) onAdd(customKey);
+                }}
+              />
+            </label>
+            <div className="wl-add-row">
+              <div className="trade-seg">
+                {VENUE_FILTERS.map((f) => (
+                  <button key={f.id} type="button" data-active={venueFilter === f.id} onClick={() => setVenueFilter(f.id)} className="trade-seg-btn">
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              {addMatches.length > 1 && (
+                <button type="button" className="trade-btn trade-btn-ghost trade-size-sm" onClick={onAddAll}>
+                  <Plus className="w-3.5 h-3.5" />
+                  Add all {addMatches.length}
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="wl-results">
+            {addSuggestions.map((o) => (
+              <button key={o.key} type="button" className="wl-result" onClick={() => onAdd(o.key)} title={`${o.venue} · ${o.key}`}>
+                <Coin base={o.base} />
+                <span className="wl-pair-text">
+                  <span className="wl-pair-name">{o.label}</span>
+                  <span className="wl-pair-sub">{o.venue === "Delta perp" ? "Perp" : "Spot"} · {fmtPx(o.price)}</span>
+                </span>
+                <span className="wl-add-chip" aria-hidden>
+                  <Plus className="w-3.5 h-3.5" />
+                </span>
+              </button>
+            ))}
+            {!universeLoading && addSuggestions.length === 0 && !customKey && (
+              <div className="trade-empty trade-empty-md">
+                {universe.length === 0
+                  ? "Pair list nahi aayi — symbol type karke (jaise SOLUSDT) Enter dabao."
+                  : q
+                    ? "Koi naya pair nahi mila"
+                    : "Is filter ke saare pairs list mein hain"}
+              </div>
+            )}
+            {customKey && addSuggestions.length === 0 && !universeLoading && (
+              <button type="button" className="wl-result" onClick={() => onAdd(customKey)}>
+                <Coin base={customKey} />
+                <span className="wl-pair-text">
+                  <span className="wl-pair-name">{customKey}</span>
+                  <span className="wl-pair-sub">Jaisa hai waisa add karo</span>
+                </span>
+                <span className="wl-add-chip" aria-hidden>
+                  <Plus className="w-3.5 h-3.5" />
+                </span>
+              </button>
+            )}
+            {addMatches.length > SUGGESTION_LIMIT && (
+              <p className="wl-more">Pehle {SUGGESTION_LIMIT} dikh rahe hain — naam likhkar chhaant lo.</p>
+            )}
+          </div>
         </div>
       </div>
     </div>

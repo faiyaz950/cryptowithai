@@ -15,7 +15,7 @@ dikhana.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -45,9 +45,70 @@ class MarketSource:
     # exchange par mumkin hi nahi — UI use button hi nahi dikhata.
     INTERVALS: Dict[str, str] = {}
 
+    # Jo timeframe exchange khud nahi deta, use daily candles se banate hain.
+    DERIVED: Dict[str, str] = {"1w": "1d", "1M": "1d"}
+    _DERIVED_MAX_DAYS = 6000
+
     @classmethod
     def intervals(cls) -> List[str]:
-        return list(cls.INTERVALS)
+        extra = [iv for iv, base in cls.DERIVED.items() if iv not in cls.INTERVALS and base in cls.INTERVALS]
+        return list(cls.INTERVALS) + extra
+
+    @classmethod
+    def fetch(
+        cls, ui_symbol: str, interval: str, limit: int, end_ms: Optional[int] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """`candles()` jaisa, par weekly/monthly bhi — jo exchange nahi deta wo daily se bante hain."""
+        if interval in cls.INTERVALS:
+            return cls.candles(ui_symbol, interval, limit, end_ms=end_ms)
+        base = cls.DERIVED.get(interval)
+        if not base or base not in cls.INTERVALS:
+            return None
+        return cls._aggregate(ui_symbol, interval, limit, end_ms)
+
+    @classmethod
+    def _aggregate(cls, ui_symbol, interval, limit, end_ms):
+        days_per = 7 if interval == "1w" else 31
+        need = min((limit + 1) * days_per, cls._DERIVED_MAX_DAYS)
+        daily: List[Dict[str, Any]] = []
+        cursor = end_ms
+        while len(daily) < need:
+            page = cls.candles(ui_symbol, "1d", min(1000, need - len(daily)), end_ms=cursor)
+            if not page:
+                break
+            daily = page + [c for c in daily if c["time"] > page[-1]["time"]]
+            if len(page) < 10:
+                break
+            cursor = page[0]["time"] - 1
+        if not daily:
+            return None
+
+        def bucket(ms: int) -> int:
+            d = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+            if interval == "1w":  # Monday 00:00 UTC
+                d = d.replace(hour=0, minute=0, second=0, microsecond=0)
+                d = d - timedelta(days=d.weekday())
+            else:
+                d = d.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            return int(d.timestamp() * 1000)
+
+        groups: Dict[int, List[Dict[str, Any]]] = {}
+        for c in daily:
+            groups.setdefault(bucket(c["time"]), []).append(c)
+        starts = sorted(groups)
+        # Sabse purana bucket adhoora ho sakta hai (daily history yahin se shuru hui) — bhar
+        # na ho to hata do, warna chhoti candle poori jaisi dikhegi. Exchange ki asli pehli
+        # candle ho to rakho (len(daily) < need => itni hi history hai).
+        if len(daily) >= need and len(starts) > 1 and bucket(daily[0]["time"]) != daily[0]["time"]:
+            starts = starts[1:]
+        out = []
+        for st in starts:
+            g = groups[st]
+            out.append(cls.candle(
+                st, g[0]["open"], max(c["high"] for c in g), min(c["low"] for c in g),
+                g[-1]["close"], sum((c["volume"] or 0) for c in g),
+            ))
+        return out[-limit:]
 
     @classmethod
     def to_symbol(cls, ui_symbol: str) -> Optional[str]:
@@ -475,6 +536,11 @@ class BybitMarket(MarketSource):
 _DELTA_BASE = "https://api.india.delta.exchange"
 
 
+# (symbol, interval) -> Delta ki sabse purani candle ka time. Jab Delta limit se kam candles
+# de, to uski history wahin khatam hai.
+_DELTA_FLOOR: Dict[Any, int] = {}
+
+
 class DeltaMarket(MarketSource):
     id = "delta"
     name = "Delta Exchange India"
@@ -492,6 +558,41 @@ class DeltaMarket(MarketSource):
 
     @classmethod
     def candles(cls, ui_symbol, interval, limit, end_ms=None):
+        """
+        Delta ki apni history pehle; use khatam hone par (BTC par Dec 2023 se pehle
+        Delta India ke paas candles hi nahi) baaki hissa Bybit ke linear perp se jodte hain,
+        taaki chart 2020-22 tak peeche scroll ho sake.
+        """
+        floor = _DELTA_FLOOR.get((ui_symbol, interval))
+        if end_ms and floor and end_ms < floor:
+            # Delta par is se pehle kuch hai hi nahi (pehle dekh chuke) — uske 7-8 bekaar retry mat karo.
+            rows = None
+        else:
+            rows = cls._delta_candles(ui_symbol, interval, limit, end_ms)
+        if rows is None and not end_ms:
+            return None  # Delta hi nahi chala — purana data dikha kar chhupana galat hai
+        have = len(rows) if rows else 0
+        if rows and have < (limit or 0):
+            _DELTA_FLOOR[(ui_symbol, interval)] = rows[0]["time"]
+        need = (limit or 0) - have
+        if need <= 0:
+            return rows
+        cursor = (rows[0]["time"] - 1) if rows else end_ms
+        older: List[Dict[str, Any]] = []
+        for _ in range(8):
+            if len(older) >= need or not cursor:
+                break
+            page = BybitMarket.candles(ui_symbol, interval, min(1000, need - len(older)), end_ms=cursor)
+            if not page:
+                break
+            older = page + older
+            cursor = page[0]["time"] - 1
+        if not older:
+            return rows
+        return older + (rows or [])
+
+    @classmethod
+    def _delta_candles(cls, ui_symbol, interval, limit, end_ms=None):
         if interval not in cls.INTERVALS:
             return None
         end_time = (

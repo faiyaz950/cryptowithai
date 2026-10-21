@@ -2,12 +2,27 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
-import { Activity, AlertCircle, Info, Play, Power, RefreshCw, RotateCcw } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  FlaskConical,
+  Info,
+  Play,
+  Power,
+  RefreshCw,
+  RotateCcw,
+  X,
+  Zap,
+} from "lucide-react";
 import BacktestResults from "@/components/trade/BacktestResults";
 import OptionChainPanel from "@/components/trade/OptionChainPanel";
 import SpreadPanel from "@/components/trade/SpreadPanel";
 import CondorPanel from "@/components/trade/CondorPanel";
+import { useAuth } from "@/context/AuthContext";
 import {
   CHART_RANGES,
   CRYPTO_INTERVALS,
@@ -16,6 +31,7 @@ import {
   candlesSpanDays,
   fetchCandles,
   maxDaysForInterval,
+  placeDemoOrder,
   runBacktest,
   symbolLabel,
   type BacktestResult,
@@ -34,6 +50,13 @@ import {
   type StrategyField,
   type StrategyValues,
 } from "@/lib/strategies";
+import {
+  CUSTOM_STRATEGIES_CHANGED,
+  deployStrategyToPaper,
+  listPaperDeployedStrategies,
+  type PaperDeploymentSettings,
+  type StrategyCategory,
+} from "@/lib/strategyBuilder";
 import { optionsKind, runOptionsBacktest } from "@/lib/optionsBacktest";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
@@ -96,6 +119,39 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
   const [btResult, setBtResult] = useState<BacktestResult | null>(null);
   const [btError, setBtError] = useState<string | null>(null);
   const [btProgress, setBtProgress] = useState<string | null>(null);
+
+  const { token } = useAuth();
+  const searchParams = useSearchParams();
+
+  const [deployModalOpen, setDeployModalOpen] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [deploySuccess, setDeploySuccess] = useState(false);
+  const [deployError, setDeployError] = useState<string | null>(null);
+
+  const [testCapital, setTestCapital] = useState(1000);
+  const [testLeverage, setTestLeverage] = useState(1);
+  const [isPaperActive, setIsPaperActive] = useState(false);
+
+  const checkPaper = useCallback(() => {
+    const list = listPaperDeployedStrategies();
+    setIsPaperActive(list.some((s) => s.id === def.id && s.status === "paper"));
+  }, [def.id]);
+
+  useEffect(() => {
+    checkPaper();
+    window.addEventListener(CUSTOM_STRATEGIES_CHANGED, checkPaper);
+    window.addEventListener("storage", checkPaper);
+    return () => {
+      window.removeEventListener(CUSTOM_STRATEGIES_CHANGED, checkPaper);
+      window.removeEventListener("storage", checkPaper);
+    };
+  }, [checkPaper]);
+
+  useEffect(() => {
+    if (searchParams.get("paper") === "1") {
+      setDeployModalOpen(true);
+    }
+  }, [searchParams]);
 
   const symbol = str(values, "symbol", "BTCUSDT");
   const timeframe = str(values, "timeframe", "1h");
@@ -188,6 +244,74 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     log("Live monitor OFF");
   };
 
+  const handleDeployToPaper = async () => {
+    setDeploying(true);
+    setDeployError(null);
+    try {
+      const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
+      const slPoints = num(values, "sl_points", 400);
+      const targetPoints = num(values, "target_points", 800);
+      const slPct = currentPrice > 0 ? Number(((slPoints / currentPrice) * 100).toFixed(2)) : 1.2;
+      const tpPct = currentPrice > 0 ? Number(((targetPoints / currentPrice) * 100).toFixed(2)) : 2.5;
+
+      const settings: PaperDeploymentSettings = {
+        capitalUsd: testCapital,
+        leverage: testLeverage,
+        autoExecute: true,
+        deployedAt: new Date().toISOString(),
+        symbol,
+        timeframe,
+        confirmedTpPct: tpPct || 2.5,
+        confirmedSlPct: slPct || 1.2,
+      };
+
+      const cat: StrategyCategory = def.category.toLowerCase().includes("option")
+        ? "options"
+        : def.category.toLowerCase().includes("perp") || def.category.toLowerCase().includes("future")
+        ? "futures"
+        : def.category.toLowerCase().includes("hedge")
+        ? "hedging"
+        : "indicators";
+
+      const deployed = deployStrategyToPaper(def.id, settings, {
+        name: def.name,
+        description: def.logic,
+        category: cat,
+      });
+
+      if (!deployed) throw new Error("Strategy save nahi ho saki");
+
+      activate();
+      setIsPaperActive(true);
+
+      if (token && currentPrice > 0) {
+        try {
+          const qty = Number((testCapital / currentPrice).toFixed(4));
+          const slPrice = currentPrice * (1 - (slPct || 1.2) / 100);
+          const tpPrice = currentPrice * (1 + (tpPct || 2.5) / 100);
+
+          await placeDemoOrder(token, {
+            symbol,
+            side: "buy",
+            order_type: "market",
+            quantity: Math.max(0.001, qty),
+            stop_loss: slPrice,
+            take_profit: tpPrice,
+          });
+        } catch {
+          // demo order fallback
+        }
+      }
+
+      setDeploySuccess(true);
+      log(`Strategy ${def.name} successfully deployed to Paper Trading!`);
+    } catch (err) {
+      setDeployError(err instanceof Error ? err.message : "Paper deployment fail ho gaya");
+    } finally {
+      setDeploying(false);
+    }
+  };
+
   const handleBacktest = async () => {
     setBtRunning(true);
     setBtError(null);
@@ -273,13 +397,28 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
           ))}
 
           <div className="space-y-2">
+            <button
+              type="button"
+              className="trade-btn trade-btn-primary trade-btn-lg w-full"
+              style={{
+                background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                borderColor: "transparent",
+                color: "#fff",
+                fontWeight: 700,
+              }}
+              onClick={() => setDeployModalOpen(true)}
+            >
+              <FlaskConical className="w-4 h-4" />
+              {isPaperActive ? "Paper Active · Re-Deploy" : "Deploy to Paper Trading"}
+            </button>
+
             {active ? (
               <button type="button" className="trade-btn trade-btn-ghost trade-btn-lg w-full" onClick={deactivate}>
                 <Power className="w-4 h-4" />
                 Deactivate live monitor
               </button>
             ) : (
-              <button type="button" className="trade-btn trade-btn-primary trade-btn-lg w-full" onClick={activate}>
+              <button type="button" className="trade-btn trade-btn-ghost trade-btn-lg w-full" onClick={activate}>
                 <Play className="w-4 h-4" />
                 Activate live monitor
               </button>
@@ -478,6 +617,175 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
           />
         )}
       </div>
+
+      {/* ── Deploy to Paper Modal ───────────────────────────────── */}
+      {deployModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="trade-panel max-w-lg w-full p-6 space-y-4 relative border shadow-2xl">
+            <button
+              type="button"
+              className="absolute top-4 right-4 trade-iconbtn"
+              onClick={() => {
+                setDeployModalOpen(false);
+                setDeploySuccess(false);
+                setDeployError(null);
+              }}
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {deploySuccess ? (
+              <div className="text-center py-4 space-y-3">
+                <div className="w-14 h-14 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
+                  <Check className="w-8 h-8 stroke-[3]" />
+                </div>
+                <h3 className="text-xl font-bold text-emerald-400">Deployed to Paper Trading!</h3>
+                <p className="text-[13px] max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
+                  <b>{def.name}</b> ab Paper Trading Desk par live virtual capital ke saath deploy ho chuki hai. Entry aur exit conditions trigger hone par automatic paper trades execute hongi.
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-3">
+                  <button
+                    type="button"
+                    className="trade-btn trade-btn-primary"
+                    onClick={() => {
+                      setDeployModalOpen(false);
+                      router.push("/trade?tab=trades");
+                    }}
+                  >
+                    <FlaskConical className="w-4 h-4" />
+                    Open Paper Trading Desk
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    className="trade-btn trade-btn-ghost"
+                    onClick={() => {
+                      setDeployModalOpen(false);
+                      setDeploySuccess(false);
+                    }}
+                  >
+                    Stay on Monitor
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center flex-none">
+                    <FlaskConical className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-[16px] font-bold">Deploy {def.name} to Paper Trading</h3>
+                    <p className="text-[12px]" style={{ color: "var(--text-muted)" }}>
+                      Live market prices par zero financial risk ke saath catalogue strategy test karein.
+                    </p>
+                  </div>
+                </div>
+
+                {deployError && (
+                  <div className="p-3 rounded-lg bg-rose-500/10 text-rose-400 text-[12px] flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 flex-none" />
+                    {deployError}
+                  </div>
+                )}
+
+                {/* Configuration Summary */}
+                <div className="p-3.5 rounded-xl bg-[rgba(255,255,255,0.02)] border border-[var(--border-subtle)] space-y-2 text-[12.5px]">
+                  <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
+                    <span style={{ color: "var(--text-muted)" }}>Strategy</span>
+                    <span className="font-bold flex items-center gap-1.5">
+                      {def.name}
+                      <span className="trade-badge trade-badge-blue text-[10px]">{def.category}</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
+                    <span style={{ color: "var(--text-muted)" }}>Target Pair & Timeframe</span>
+                    <span className="font-bold font-mono">
+                      {symbolLabel(symbol)} · {timeframe}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
+                    <span style={{ color: "var(--text-muted)" }}>Stop Loss & Target</span>
+                    <span className="font-bold font-mono text-emerald-400">
+                      Target: {num(values, "target_points", 800)} pts · <span className="text-rose-400">SL: {num(values, "sl_points", 400)} pts</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center py-1">
+                    <span style={{ color: "var(--text-muted)" }}>Execution Mode</span>
+                    <span className="font-bold text-emerald-400 flex items-center gap-1">
+                      <Zap className="w-3.5 h-3.5" />
+                      Auto-Execute Virtual Orders on Signal Match
+                    </span>
+                  </div>
+                </div>
+
+                {/* Capital & Leverage inputs */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11.5px] font-bold block mb-1">
+                      Paper Capital ($ Allocation)
+                    </label>
+                    <input
+                      type="number"
+                      min="100"
+                      max="100000"
+                      step="100"
+                      value={testCapital}
+                      onChange={(e) => setTestCapital(Math.max(50, Number(e.target.value)))}
+                      className="trade-input w-full text-[13px] py-1.5 px-3 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11.5px] font-bold block mb-1">Leverage</label>
+                    <select
+                      value={testLeverage}
+                      onChange={(e) => setTestLeverage(Number(e.target.value))}
+                      className="trade-input w-full text-[13px] py-1.5 px-3 rounded-lg"
+                    >
+                      {[1, 2, 3, 5, 10, 15, 20, 25, 50].map((l) => (
+                        <option key={l} value={l}>
+                          {l}x Leverage
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    className="trade-btn trade-btn-ghost"
+                    onClick={() => setDeployModalOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deploying}
+                    className="trade-btn trade-btn-primary"
+                    style={{
+                      background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                      borderColor: "transparent",
+                      color: "#fff",
+                      fontWeight: 700,
+                    }}
+                    onClick={handleDeployToPaper}
+                  >
+                    {deploying ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <FlaskConical className="w-4 h-4" />
+                    )}
+                    Confirm & Deploy to Paper
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

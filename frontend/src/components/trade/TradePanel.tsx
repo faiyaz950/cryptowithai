@@ -2,11 +2,22 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, Inbox, LogIn, Plug, Wallet, Zap } from "lucide-react";
-import type { DemoOrder, PaperAccount, SpotRules } from "@/lib/cryptoApi";
+import { AlertCircle, ArrowRight, Bot, CheckCircle2, Inbox, LogIn, Plug, SlidersHorizontal, Sparkles, Wallet, Zap } from "lucide-react";
+import type { Candle, DemoOrder, PaperAccount, SpotRules } from "@/lib/cryptoApi";
+import { LiveTag, ModeStrip, PaperTag } from "./ModeTag";
 import { CRYPTO_SYMBOLS, symbolLabel } from "@/lib/cryptoApi";
 import { fmtQuotePrice } from "@/lib/marketQuote";
 import type { ExchangePosition } from "@/lib/accountApi";
+import {
+  CUSTOM_STRATEGIES_CHANGED,
+  STRATEGY_TEMPLATES,
+  deployStrategyToPaper,
+  evaluateStrategyLive,
+  getTemplate,
+  listCustomStrategies,
+  type CustomStrategy,
+  type LiveEval,
+} from "@/lib/strategyBuilder";
 
 /**
  * Khaali positions ka matlab teen alag baatein ho sakti hain, aur user ko
@@ -18,6 +29,16 @@ export type PositionsState = {
   positions: ExchangePosition[];
   message?: string;
 };
+
+function signedMoney(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const flat = Math.abs(n) < 0.005;
+  return `${flat ? "" : n > 0 ? "+" : "-"}$${Math.abs(n).toFixed(2)}`;
+}
+
+function moneyTone(n: number | null | undefined): "up" | "down" | "flat" {
+  return n == null || Math.abs(n) < 0.005 ? "flat" : n > 0 ? "up" : "down";
+}
 
 export type OrderMode = "paper" | "live";
 
@@ -71,7 +92,14 @@ interface Props {
     order_type: "market" | "limit";
     quantity: number;
     price?: number | null;
+    stop_loss?: number | null;
+    take_profit?: number | null;
   }) => Promise<void>;
+  candles?: Candle[];
+  interval?: string;
+  onDeployStrategySuccess?: () => void;
+  activePanel?: "ticket" | "strategy" | "trades";
+  onActivePanelChange?: (panel: "ticket" | "strategy" | "trades") => void;
 }
 
 const OPEN_STATUSES = ["pending", "open", "submitted", "new", "partially_filled"];
@@ -104,8 +132,19 @@ export default function TradePanel({
   placing,
   liveState,
   onPlace,
+  candles = [],
+  interval = "15m",
+  onDeployStrategySuccess,
+  activePanel,
+  onActivePanelChange,
 }: Props) {
-  const [panel, setPanel] = useState<"ticket" | "trades">("ticket");
+  const [internalPanel, setInternalPanel] = useState<"ticket" | "strategy" | "trades">("ticket");
+  const panel = activePanel ?? internalPanel;
+  const setPanel = (p: "ticket" | "strategy" | "trades") => {
+    setInternalPanel(p);
+    onActivePanelChange?.(p);
+  };
+
   const [mode, setMode] = useState<OrderMode>("paper");
   const [tradeSymbol, setTradeSymbol] = useState(symbol);
   const [side, setSide] = useState<"buy" | "sell">("buy");
@@ -114,7 +153,49 @@ export default function TradePanel({
   const [price, setPrice] = useState("");
   const [qtyPct, setQtyPct] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const [book, setBook] = useState<"open" | "history">("open");
+  const [bracketOn, setBracketOn] = useState(false);
+  const [takeProfit, setTakeProfit] = useState("");
+  const [stopLoss, setStopLoss] = useState("");
+
+  // Strategy Bot State
+  const [selectedStratId, setSelectedStratId] = useState<string>("rsi-oversold-long");
+  const [customStrategies, setCustomStrategies] = useState<CustomStrategy[]>([]);
+  const [stratCapital, setStratCapital] = useState<string>("250");
+  const [stratNotice, setStratNotice] = useState<string>("");
+
+  useEffect(() => {
+    const loadStrats = () => setCustomStrategies(listCustomStrategies());
+    loadStrats();
+    window.addEventListener(CUSTOM_STRATEGIES_CHANGED, loadStrats);
+    return () => window.removeEventListener(CUSTOM_STRATEGIES_CHANGED, loadStrats);
+  }, []);
+
+  const currentStrat = useMemo<CustomStrategy>(() => {
+    const custom = customStrategies.find((s) => s.id === selectedStratId);
+    if (custom) return custom;
+    const tmpl = getTemplate(selectedStratId) ?? STRATEGY_TEMPLATES[0];
+    return tmpl.apply(tradeSymbol);
+  }, [customStrategies, selectedStratId, tradeSymbol]);
+
+  const liveEval = useMemo<LiveEval>(() => {
+    if (!candles || candles.length < 5) {
+      return {
+        tone: "neutral",
+        headline: "Waiting for chart data",
+        detail: "Candles load hone ke baad live signal update hoga.",
+        readouts: [],
+      };
+    }
+    return evaluateStrategyLive(currentStrat, candles);
+  }, [currentStrat, candles]);
+
+  const stratTpPct = currentStrat.risk?.takeProfit?.enabled ? currentStrat.risk.takeProfit.value : 2.5;
+  const stratSlPct = currentStrat.risk?.stopLoss?.enabled ? currentStrat.risk.stopLoss.value : 1.2;
+  const stratIsLong = currentStrat.market?.direction !== "short";
+  const stratSide: "buy" | "sell" = stratIsLong ? "buy" : "sell";
+  const stratTpPrice = lastPrice ? (stratIsLong ? lastPrice * (1 + stratTpPct / 100) : lastPrice * (1 - stratTpPct / 100)) : undefined;
+  const stratSlPrice = lastPrice ? (stratIsLong ? lastPrice * (1 - stratSlPct / 100) : lastPrice * (1 + stratSlPct / 100)) : undefined;
+  const stratRr = stratSlPct > 0 ? (stratTpPct / stratSlPct).toFixed(2) : "2.00";
 
   const spotKey = spot?.key ?? null;
   useEffect(() => {
@@ -149,6 +230,21 @@ export default function TradePanel({
 
   const effectivePrice = orderType === "limit" ? Number(price || lastPrice || 0) : Number(lastPrice || 0);
   const orderValue = Number(quantity || 0) * effectivePrice;
+  /** Spot sell position band karta hai — uspar Target/SL ka matlab nahi. */
+  const canBracket = effectiveMode === "paper" && !(spot && side === "sell");
+  const bracketActive = canBracket && bracketOn;
+
+  const bracketHint = (value: string, kind: "tp" | "sl") => {
+    const v = Number(value);
+    if (!value || !(v > 0) || !(effectivePrice > 0)) return null;
+    const pct = ((v - effectivePrice) / effectivePrice) * 100;
+    const good = kind === "tp" ? (side === "buy" ? pct > 0 : pct < 0) : side === "buy" ? pct < 0 : pct > 0;
+    return (
+      <span className="po-hint" data-tone={good ? (kind === "tp" ? "up" : "down") : "warn"}>
+        {good ? `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%` : kind === "tp" ? `${side === "buy" ? "Upar" : "Neeche"} rakhein` : `${side === "buy" ? "Neeche" : "Upar"} rakhein`}
+      </span>
+    );
+  };
 
   /** Spot: kharidne ke liye quote (INR) mein paisa, bechne ke liye paas ke coins. */
   const spotHeld = spot
@@ -193,6 +289,8 @@ export default function TradePanel({
       setError("Limit order ke liye price chahiye");
       return;
     }
+    const tp = bracketActive && Number(takeProfit) > 0 ? Number(takeProfit) : null;
+    const sl = bracketActive && Number(stopLoss) > 0 ? Number(stopLoss) : null;
     try {
       await onPlace({
         mode: effectiveMode,
@@ -201,13 +299,89 @@ export default function TradePanel({
         order_type: orderType,
         quantity: qty,
         price: limitPrice,
+        ...(bracketActive ? { stop_loss: sl, take_profit: tp } : {}),
       });
+      if (bracketActive) {
+        setTakeProfit("");
+        setStopLoss("");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Order fail ho gaya");
     }
   };
 
-  const shownOrders = book === "open" ? openOrders : history;
+  const applyStrategyToTicket = (stratId: string) => {
+    const custom = customStrategies.find((s) => s.id === stratId);
+    const strat = custom ?? (getTemplate(stratId) ?? STRATEGY_TEMPLATES[0]).apply(tradeSymbol);
+    const isL = strat.market.direction !== "short";
+    setSide(isL ? "buy" : "sell");
+    setBracketOn(true);
+    if (lastPrice) {
+      const tpVal = strat.risk.takeProfit.enabled ? strat.risk.takeProfit.value : 2.5;
+      const slVal = strat.risk.stopLoss.enabled ? strat.risk.stopLoss.value : 1.2;
+      const tp = isL ? lastPrice * (1 + tpVal / 100) : lastPrice * (1 - tpVal / 100);
+      const sl = isL ? lastPrice * (1 - slVal / 100) : lastPrice * (1 + slVal / 100);
+      setTakeProfit(tp.toFixed(2));
+      setStopLoss(sl.toFixed(2));
+      const posSize = strat.risk.positionSizeUsd || 250;
+      const q = posSize / lastPrice;
+      setQuantity(floorToStep(q, spot?.rules?.qty_step));
+    }
+    setPanel("ticket");
+  };
+
+  const executeStrategyPaperTrade = async () => {
+    setError("");
+    setStratNotice("");
+    if (!lastPrice || lastPrice <= 0) {
+      setError("Price data available nahi hai");
+      return;
+    }
+    const cap = Number(stratCapital) || 250;
+    const qty = cap / lastPrice;
+    const finalQty = Math.max(0.001, Number(floorToStep(qty, spot?.rules?.qty_step)));
+    try {
+      await onPlace({
+        mode: "paper",
+        symbol: tradeSymbol,
+        side: stratSide,
+        order_type: "market",
+        quantity: finalQty,
+        take_profit: stratTpPrice ? Number(stratTpPrice.toFixed(2)) : null,
+        stop_loss: stratSlPrice ? Number(stratSlPrice.toFixed(2)) : null,
+      });
+      setStratNotice(`Paper trade lag gaya: ${currentStrat.name} (${stratSide.toUpperCase()} ${finalQty} ${unit})`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Paper trade execute nahi ho paya");
+    }
+  };
+
+  const deployCurrentToPaper = () => {
+    setStratNotice("");
+    const deployed = deployStrategyToPaper(
+      currentStrat.id,
+      {
+        capitalUsd: Number(stratCapital) || 250,
+        leverage: currentStrat.market.leverage || 10,
+        autoExecute: true,
+        deployedAt: new Date().toISOString(),
+        symbol: tradeSymbol,
+        timeframe: interval || "15m",
+        confirmedTpPct: stratTpPct,
+        confirmedSlPct: stratSlPct,
+      },
+      {
+        name: currentStrat.name,
+        description: currentStrat.description,
+        category: currentStrat.market.strategyType,
+      }
+    );
+    if (deployed) {
+      setStratNotice(`Bot deployed to Paper Trading! Monitoring ${tradeSymbol} 24/7.`);
+      onDeployStrategySuccess?.();
+    }
+  };
+
   const recentTrades = history.length ? history : openOrders;
 
   const liveBlockedReason =
@@ -231,6 +405,15 @@ export default function TradePanel({
         <div className="desk-ticket-tabs">
           <button type="button" data-active={panel === "ticket"} onClick={() => setPanel("ticket")} className="desk-ticket-tab">
             Order Ticket
+          </button>
+          <button
+            type="button"
+            data-active={panel === "strategy"}
+            onClick={() => setPanel("strategy")}
+            className="desk-ticket-tab flex items-center justify-center gap-1"
+          >
+            <Bot className="w-3.5 h-3.5 text-amber-400" />
+            Strategy Bot
           </button>
           <button type="button" data-active={panel === "trades"} onClick={() => setPanel("trades")} className="desk-ticket-tab">
             Recent Trades
@@ -259,6 +442,7 @@ export default function TradePanel({
                   Live
                 </button>
               </div>
+              <div className="mt-2"><ModeStrip mode={effectiveMode} /></div>
             </div>
 
             <div className="trade-seg trade-seg-full">
@@ -268,6 +452,37 @@ export default function TradePanel({
               <button type="button" data-active={side === "sell"} data-tone="sell" onClick={() => setSide("sell")} className="trade-seg-btn">
                 {spot ? "Sell" : "Sell / Short"}
               </button>
+            </div>
+
+            {/* Quick Strategy Auto-fill */}
+            <div className="p-2 rounded-lg bg-[var(--tr-field)] border border-[var(--tr-line-soft)] flex items-center justify-between gap-2 text-[11px]">
+              <div className="flex items-center gap-1.5 font-semibold text-[var(--text-secondary)]">
+                <Zap className="w-3.5 h-3.5 text-amber-400 flex-none" />
+                <span>Strategy Rule:</span>
+              </div>
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) applyStrategyToTicket(e.target.value);
+                }}
+                className="text-[11px] font-semibold bg-transparent text-[var(--accent)] border-0 cursor-pointer focus:outline-none max-w-[170px] truncate"
+              >
+                <option value="" disabled>⚡ Fill with Strategy…</option>
+                <optgroup label="Ready-Made Strategies">
+                  <option value="rsi-oversold-long">RSI Oversold Long</option>
+                  <option value="ema-crossover">EMA Crossover</option>
+                  <option value="macd">MACD Momentum</option>
+                  <option value="rsi-ema">RSI + EMA</option>
+                  <option value="rsi-combo">RSI Combo</option>
+                </optgroup>
+                {customStrategies.length > 0 && (
+                  <optgroup label="Custom Strategies">
+                    {customStrategies.map((cs) => (
+                      <option key={cs.id} value={cs.id}>{cs.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
             </div>
 
             <div>
@@ -405,6 +620,46 @@ export default function TradePanel({
               />
             </div>
 
+            {canBracket && (
+              <div className="tp-bracket" data-on={bracketOn}>
+                <button type="button" className="tp-bracket-toggle" aria-expanded={bracketOn} onClick={() => setBracketOn((v) => !v)}>
+                  <span className="tp-check" aria-hidden />
+                  Target / Stop loss
+                  <span className="tp-bracket-opt">optional</span>
+                </button>
+                {bracketOn && (
+                  <div className="po-grid">
+                    <label>
+                      <span className="trade-label">Target</span>
+                      <input
+                        className="trade-input"
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={takeProfit}
+                        placeholder={side === "buy" ? "Upar ka bhaav" : "Neeche ka bhaav"}
+                        onChange={(e) => setTakeProfit(e.target.value)}
+                      />
+                      {bracketHint(takeProfit, "tp")}
+                    </label>
+                    <label>
+                      <span className="trade-label">Stop loss</span>
+                      <input
+                        className="trade-input"
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={stopLoss}
+                        placeholder={side === "buy" ? "Neeche ka bhaav" : "Upar ka bhaav"}
+                        onChange={(e) => setStopLoss(e.target.value)}
+                      />
+                      {bracketHint(stopLoss, "sl")}
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div
               className="flex items-center justify-between px-3 py-2.5 rounded-[10px]"
               style={{ background: "var(--tr-field)", border: "1px solid var(--tr-line-soft)" }}
@@ -514,11 +769,197 @@ export default function TradePanel({
               ) : (
                 <>
                   Ye <b>paper order</b> hai — exchange par nahi jaata. Market order abhi ke Delta bhaav par
-                  fill hota hai, limit order bhaav cross hone par. ${DEMO_BALANCE_USDT.toLocaleString("en-US")} virtual
+                  fill hota hai, limit order bhaav cross hone par. ${DEMO_BALANCE_USDT.toLocaleString("en-US")}{" "}virtual
                   balance se shuru, neeche paper positions aur P&amp;L dikhte hain.
                 </>
               )}
             </p>
+          </div>
+        ) : panel === "strategy" ? (
+          <div className="trade-panel-body space-y-3.5">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="trade-label !mb-0" htmlFor="strategy-select">Select Strategy / Bot</label>
+                <Link href="/trade?tab=builder" className="text-[11px] font-semibold text-[var(--accent)] hover:underline flex items-center gap-1">
+                  <SlidersHorizontal className="w-3 h-3" /> Custom Builder
+                </Link>
+              </div>
+              <select
+                id="strategy-select"
+                value={selectedStratId}
+                onChange={(e) => setSelectedStratId(e.target.value)}
+                className="trade-select font-semibold"
+              >
+                <optgroup label="Ready-Made Indicator Strategies">
+                  <option value="rsi-oversold-long">RSI Oversold Long (Dip Reversal)</option>
+                  <option value="ema-crossover">EMA Crossover (9/21 Trend)</option>
+                  <option value="macd">MACD Momentum Breakout</option>
+                  <option value="rsi-ema">RSI + EMA Confluence</option>
+                  <option value="rsi-combo">RSI Combo (Dual RSI)</option>
+                </optgroup>
+                <optgroup label="Futures & Options Strategies">
+                  <option value="futures-trend-rider">Futures Trend Rider 20x</option>
+                  <option value="futures-breakout-scalp">Futures Volatility Scalper</option>
+                  <option value="options-iron-condor">Delta Neutral Iron Condor</option>
+                  <option value="hedging-spot-perp">Spot + Short Perp Hedge</option>
+                </optgroup>
+                {customStrategies.length > 0 && (
+                  <optgroup label="My Custom Strategies">
+                    {customStrategies.map((cs) => (
+                      <option key={cs.id} value={cs.id}>{cs.name} ({cs.market.strategyType})</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              <p className="text-[11px] mt-1.5 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                {currentStrat.description || getTemplate(selectedStratId)?.blurb || ""}
+              </p>
+            </div>
+
+            {/* Live Signal on Current Symbol */}
+            <div
+              className="p-3 rounded-xl border flex flex-col gap-2"
+              style={{
+                background: liveEval.tone === "buy" ? "rgba(16, 185, 129, 0.08)" : liveEval.tone === "sell" ? "rgba(239, 68, 68, 0.08)" : "var(--tr-field)",
+                borderColor: liveEval.tone === "buy" ? "rgba(16, 185, 129, 0.3)" : liveEval.tone === "sell" ? "rgba(239, 68, 68, 0.3)" : "var(--tr-line-soft)",
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+                  Live Market Signal · {symbolLabel(tradeSymbol)}
+                </span>
+                <span
+                  className={`trade-badge ${
+                    liveEval.tone === "buy" ? "trade-badge-green" : liveEval.tone === "sell" ? "trade-badge-red" : "trade-badge-neutral"
+                  }`}
+                >
+                  {liveEval.tone === "buy" ? "● BUY SIGNAL" : liveEval.tone === "sell" ? "● SELL SIGNAL" : "○ MONITORING"}
+                </span>
+              </div>
+
+              <div className="text-[12.5px] font-semibold text-[var(--text-primary)]">
+                {liveEval.headline}
+              </div>
+              <div className="text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                {liveEval.detail}
+              </div>
+
+              {liveEval.readouts && liveEval.readouts.length > 0 && (
+                <div className="grid grid-cols-3 gap-1.5 pt-1.5 border-t border-[var(--tr-line-soft)] text-center">
+                  {liveEval.readouts.map((r) => (
+                    <div key={r.label} className="p-1.5 rounded bg-[var(--bg-card)]">
+                      <div className="text-[9.5px] uppercase font-bold text-[var(--text-muted)]">{r.label}</div>
+                      <div className="text-[11.5px] font-bold tnum" style={{ color: r.color || "var(--text-primary)" }}>{r.value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Strategy Targets & Risk/Reward */}
+            <div className="p-3 rounded-xl bg-[var(--tr-field)] border border-[var(--tr-line-soft)] space-y-2">
+              <div className="flex items-center justify-between text-[11.5px]">
+                <span className="font-semibold text-[var(--text-secondary)]">Target (TP)</span>
+                <span className="font-bold text-[var(--green)] tnum">
+                  +{stratTpPct}% {stratTpPrice ? `(${fmtQuote(stratTpPrice)})` : ""}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[11.5px]">
+                <span className="font-semibold text-[var(--text-secondary)]">Stop Loss (SL)</span>
+                <span className="font-bold text-[var(--red)] tnum">
+                  -{stratSlPct}% {stratSlPrice ? `(${fmtQuote(stratSlPrice)})` : ""}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[11.5px] pt-1.5 border-t border-[var(--tr-line-soft)]">
+                <span className="font-semibold text-[var(--text-secondary)]">Risk : Reward</span>
+                <span className="font-bold text-[var(--accent)] tnum">{stratRr} : 1</span>
+              </div>
+            </div>
+
+            {/* Paper Trading Capital */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="trade-label !mb-0" htmlFor="strat-capital">Paper Capital (USD)</label>
+                <span className="text-[11px] font-medium text-[var(--text-muted)]">
+                  Avail: ${paperAccount?.available ? paperAccount.available.toFixed(2) : "10,000.00"}
+                </span>
+              </div>
+              <input
+                id="strat-capital"
+                type="number"
+                min="10"
+                value={stratCapital}
+                onChange={(e) => setStratCapital(e.target.value)}
+                className="trade-input font-semibold"
+              />
+              <div className="desk-qty-pct mt-1.5">
+                {[50, 100, 250, 500, 1000].map((cap) => (
+                  <button
+                    key={cap}
+                    type="button"
+                    data-active={Number(stratCapital) === cap}
+                    onClick={() => setStratCapital(String(cap))}
+                  >
+                    ${cap}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {stratNotice && (
+              <div className="p-2.5 rounded-lg bg-[rgba(16,185,129,0.12)] border border-[rgba(16,185,129,0.3)] text-[12px] text-[var(--green)] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 flex-none" />
+                <span>{stratNotice}</span>
+              </div>
+            )}
+
+            {error && (
+              <p className="flex items-start gap-2 text-[12px]" style={{ color: "var(--red)" }}>
+                <AlertCircle className="w-3.5 h-3.5 mt-px flex-none" />
+                {error}
+              </p>
+            )}
+
+            {/* Action Buttons */}
+            <div className="space-y-2 pt-1">
+              <button
+                type="button"
+                disabled={placing}
+                onClick={executeStrategyPaperTrade}
+                className="trade-btn trade-btn-lg w-full flex items-center justify-center gap-2"
+                style={{
+                  background: stratSide === "sell" ? "linear-gradient(135deg, #ef4444, #b91c1c)" : "linear-gradient(135deg, #10b981, #059669)",
+                  color: "#ffffff",
+                  boxShadow: stratSide === "sell" ? "0 4px 14px rgba(239, 68, 68, 0.35)" : "0 4px 14px rgba(16, 185, 129, 0.35)",
+                }}
+              >
+                <Zap className="w-4 h-4 fill-white" />
+                {placing ? "Executing…" : `⚡ 1-Click Paper Execute (${stratSide.toUpperCase()})`}
+              </button>
+
+              <button
+                type="button"
+                onClick={deployCurrentToPaper}
+                className="trade-btn trade-btn-lg w-full flex items-center justify-center gap-2"
+                style={{
+                  background: "rgba(245, 158, 11, 0.12)",
+                  color: "#f59e0b",
+                  border: "1px solid rgba(245, 158, 11, 0.35)",
+                }}
+              >
+                <Bot className="w-4 h-4" />
+                🤖 Deploy Strategy Bot on Paper
+              </button>
+
+              <button
+                type="button"
+                onClick={() => applyStrategyToTicket(currentStrat.id)}
+                className="trade-btn w-full text-[12px] flex items-center justify-center gap-1.5"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Fill Manual Ticket with Rules <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         ) : (
           <div className="p-3">
@@ -551,37 +992,67 @@ export default function TradePanel({
         )}
       </div>
 
+      {showPaperBook ? (
+        <div className="trade-panel">
+          <div className="trade-panel-head">
+            <span className="trade-panel-title flex items-center gap-2">Paper account <PaperTag /></span>
+            <span className="trade-badge trade-badge-neutral tnum">
+              {paperAccount?.positions.length ?? 0} pos · {openOrders.length} open
+            </span>
+          </div>
+          <div className="p-3">
+            {paperAccount && (
+              <>
+                <div className="pp-mini mb-1.5">
+                  <div>
+                    <span className="pp-label">Paper equity</span>
+                    <b className="tnum">${paperAccount.equity.toFixed(2)}</b>
+                  </div>
+                  <div>
+                    <span className="pp-label">Paper P&amp;L</span>
+                    <b className="tnum" data-tone={moneyTone(paperPnl)}>{signedMoney(paperPnl)}</b>
+                  </div>
+                  <div>
+                    <span className="pp-label">Available</span>
+                    <b className="tnum">${paperAccount.available.toFixed(2)}</b>
+                  </div>
+                </div>
+                <div className="pp-mini mb-3">
+                  <div>
+                    <span className="pp-label">Unrealized</span>
+                    <b className="tnum" data-tone={moneyTone(paperAccount.unrealized_pnl)}>{signedMoney(paperAccount.unrealized_pnl)}</b>
+                  </div>
+                  <div>
+                    <span className="pp-label">Realized</span>
+                    <b className="tnum" data-tone={moneyTone(paperAccount.realized_pnl)}>{signedMoney(paperAccount.realized_pnl)}</b>
+                  </div>
+                  <div>
+                    <span className="pp-label">Return</span>
+                    <b className="tnum" data-tone={moneyTone(paperAccount.return_pct)}>
+                      {`${paperAccount.return_pct > 0.005 ? "+" : ""}${paperAccount.return_pct.toFixed(2)}%`}
+                    </b>
+                  </div>
+                </div>
+              </>
+            )}
+            <button
+              type="button"
+              className="pp-mini-link w-full"
+              onClick={() => document.getElementById("paper-dock")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            >
+              Positions, orders aur Modify — chart ke neeche
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="trade-panel">
         <div className="trade-panel-head">
-          <span className="trade-panel-title">{showPaperBook ? "Paper positions" : "Open positions"}</span>
+          <span className="trade-panel-title flex items-center gap-2">Open positions <LiveTag /></span>
           <span className="trade-badge trade-badge-neutral tnum">{positions.length}</span>
         </div>
         <div className="p-3">
-          {showPaperBook && paperAccount && (
-            <div className="pp-mini mb-3">
-              <div>
-                <span className="pp-label">Equity</span>
-                <b className="tnum">${paperAccount.equity.toFixed(2)}</b>
-              </div>
-              <div>
-                <span className="pp-label">P&amp;L</span>
-                <b className="tnum" data-tone={paperPnl > 0.005 ? "up" : paperPnl < -0.005 ? "down" : "flat"}>
-                  {paperPnl >= 0 ? "+" : "-"}${Math.abs(paperPnl).toFixed(2)}
-                </b>
-              </div>
-              <div>
-                <span className="pp-label">Available</span>
-                <b className="tnum">${paperAccount.available.toFixed(2)}</b>
-              </div>
-            </div>
-          )}
-          {showPaperBook && (
-            <Link href="/trade?tab=trades" className="pp-mini-link mb-2">
-              Poora paper account, history aur stats dekhein
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
-          )}
-          {!showPaperBook && positions.length === 0 && positionsState.kind !== "ready" ? (
+          {positions.length === 0 && positionsState.kind !== "ready" ? (
             <PositionsNotice state={positionsState} />
           ) : positions.length === 0 ? (
             <div className="trade-empty">
@@ -610,29 +1081,8 @@ export default function TradePanel({
                           <span className="trade-badge trade-badge-neutral">—</span>
                         ) : (
                           <span className={`trade-badge ${up ? "trade-badge-green" : "trade-badge-red"} tnum`}>
-                            {up ? "+" : ""}
-                            {hasPnl ? value.toFixed(2) : `${value.toFixed(2)}%`}
-                            {showPaperBook && hasPnl && p.move_pct != null && ` (${p.move_pct >= 0 ? "+" : ""}${p.move_pct.toFixed(2)}%)`}
+                            {hasPnl ? signedMoney(value) : `${up ? "+" : ""}${value.toFixed(2)}%`}
                           </span>
-                        )}
-                        {showPaperBook && (
-                          <button
-                            type="button"
-                            className="trade-btn trade-size-sm"
-                            disabled={placing}
-                            onClick={() =>
-                              void onPlace({
-                                mode: "paper",
-                                symbol: p.symbol,
-                                side: p.side === "long" ? "sell" : "buy",
-                                order_type: "market",
-                                quantity: p.size,
-                              }).catch((err) => setError(err instanceof Error ? err.message : "Position band nahi hui"))
-                            }
-                            aria-label={`${p.symbol} paper position close karein`}
-                          >
-                            Close
-                          </button>
                         )}
                       </span>
                     </div>
@@ -651,47 +1101,7 @@ export default function TradePanel({
           )}
         </div>
       </div>
-
-      <div className="trade-panel">
-        <div className="trade-panel-head">
-          <span className="trade-panel-title">Orders</span>
-          <div className="trade-seg">
-            <button type="button" data-active={book === "open"} onClick={() => setBook("open")} className="trade-seg-btn">
-              Open {openOrders.length > 0 && <span className="tnum">({openOrders.length})</span>}
-            </button>
-            <button type="button" data-active={book === "history"} onClick={() => setBook("history")} className="trade-seg-btn">
-              History
-            </button>
-          </div>
-        </div>
-        <div className="p-3">
-          {shownOrders.length === 0 ? (
-            <div className="trade-empty">
-              <span className="trade-empty-icon"><Inbox className="w-4 h-4" /></span>
-              {book === "open" ? "Abhi koi open order nahi" : "Koi past order nahi"}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {shownOrders.map((o) => (
-                <div key={o.order_id} className="trade-row">
-                  <span className={`trade-badge ${o.side === "buy" ? "trade-badge-green" : "trade-badge-red"}`}>
-                    {o.side}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[12.5px] font-semibold truncate">{symbolLabel(o.symbol)}</div>
-                    <div className="text-[11px] tnum" style={{ color: "var(--text-muted)" }}>
-                      {o.order_type} · {o.quantity ?? o.size ?? 0} @ {o.price ?? o.limit_price ?? "Market"}
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider flex-none" style={{ color: "var(--text-muted)" }}>
-                    {o.status}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

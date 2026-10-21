@@ -7,6 +7,7 @@ import {
   INDICATOR_OPTIONS,
   INTERVAL_CHIPS,
   OPERATOR_OPTIONS,
+  STRATEGY_CATEGORIES,
   STRATEGY_TEMPLATES,
   availableCoins,
   createBlankStrategy,
@@ -25,6 +26,7 @@ import {
   type ConditionGroup,
   type CustomStrategy,
   type IndicatorId,
+  type StrategyCategory,
   type StrategyTemplate,
 } from "@/lib/strategyBuilder";
 import Link from "next/link";
@@ -34,6 +36,7 @@ import {
   ArrowRight,
   Check,
   ExternalLink,
+  FlaskConical,
   GitBranch,
   Info,
   LayoutDashboard,
@@ -42,11 +45,15 @@ import {
   Plus,
   Rocket,
   Save,
+  ShieldCheck,
+  Sigma,
   Trash2,
+  TrendingUp,
   X,
   Zap,
 } from "lucide-react";
 import { fetchCandles, symbolLabel, type Candle } from "@/lib/cryptoApi";
+import StrategySimulator from "@/components/trade/StrategySimulator";
 
 const CandleChart = dynamic(() => import("@/components/trade/CandleChart"), {
   ssr: false,
@@ -274,6 +281,13 @@ function TemplatePicker({
   onPick: (t: StrategyTemplate) => void;
   onBack: () => void;
 }) {
+  const [selectedCat, setSelectedCat] = useState<"all" | StrategyCategory>("all");
+
+  const filtered = useMemo(() => {
+    if (selectedCat === "all") return STRATEGY_TEMPLATES;
+    return STRATEGY_TEMPLATES.filter((t) => t.strategyType === selectedCat);
+  }, [selectedCat]);
+
   return (
     <div className="sb-root space-y-4">
       <div className="trade-panel sb-header">
@@ -282,18 +296,48 @@ function TemplatePicker({
             <ArrowLeft className="w-[17px] h-[17px]" />
           </button>
           <div className="flex-1 min-w-0">
-            <div className="trade-stat-label tracking-[0.1em]">Strategy builder</div>
-            <h2 className="text-[22px] font-extrabold tracking-tight mt-1">Proper strategy kaise banaye?</h2>
+            <div className="trade-stat-label tracking-[0.1em]">Custom Strategy Builder / Simulator</div>
+            <h2 className="text-[22px] font-extrabold tracking-tight mt-1">Select Strategy Type & Template</h2>
             <p className="text-[13px] mt-1.5" style={{ color: "var(--text-secondary)" }}>
-              Ready template se shuru karo — market, entry conditions aur risk pehle se set.
-              Ya blank cockpit kholo aur khud design karo.
+              Options Strategy, Futures Strategy, Hedging Strategy, ya Indicator-Based Strategy choose karein — rules define karein aur simulator mein test karein.
             </p>
           </div>
+        </div>
+
+        {/* Category Filter Tabs */}
+        <div className="flex flex-wrap items-center gap-2 pt-3 border-t mt-3" style={{ borderColor: "var(--border-subtle)" }}>
+          <button
+            type="button"
+            className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-all ${
+              selectedCat === "all" ? "bg-accent text-white font-bold" : "text-muted hover:text-primary hover:bg-[rgba(255,255,255,0.04)]"
+            }`}
+            style={selectedCat === "all" ? { background: "var(--accent)", color: "#fff" } : {}}
+            onClick={() => setSelectedCat("all")}
+          >
+            All Types ({STRATEGY_TEMPLATES.length})
+          </button>
+          {STRATEGY_CATEGORIES.map((cat) => {
+            const count = STRATEGY_TEMPLATES.filter((t) => t.strategyType === cat.id).length;
+            const active = selectedCat === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-all ${
+                  active ? "bg-accent text-white font-bold" : "text-muted hover:text-primary hover:bg-[rgba(255,255,255,0.04)]"
+                }`}
+                style={active ? { background: "var(--accent)", color: "#fff" } : {}}
+                onClick={() => setSelectedCat(cat.id)}
+              >
+                {cat.label} ({count})
+              </button>
+            );
+          })}
         </div>
       </div>
 
       <div className="sb-template-grid">
-        {STRATEGY_TEMPLATES.map((t) => (
+        {filtered.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -311,8 +355,7 @@ function TemplatePicker({
         ))}
       </div>
       <p className="text-[12px] text-center" style={{ color: "var(--text-muted)" }}>
-        Template choose karne ke baad naam, coins, aur numbers tune kar sakte ho — phir Save / Deploy.
-        Symbol default: <b style={{ color: "var(--text-secondary)" }}>{symbolLabel(symbol)}</b>
+        Template pick karne ke baad rules, indicators aur parameters tune karein — phir <b>Simulator</b> tab mein live backtest karein.
       </p>
     </div>
   );
@@ -547,6 +590,7 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
               {(
                 [
                   { id: "cockpit" as const, label: "Cockpit", icon: LayoutDashboard },
+                  { id: "simulator" as const, label: "Simulator", icon: FlaskConical },
                   { id: "flow" as const, label: "Flow", icon: GitBranch },
                   { id: "chart" as const, label: "Chart", icon: LineChart },
                 ] as const
@@ -566,6 +610,15 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
                 );
               })}
             </div>
+            <button
+              type="button"
+              className="trade-btn trade-btn-ghost"
+              onClick={() => setView("simulator")}
+              title="Test & Simulate strategy"
+            >
+              <FlaskConical className="w-4 h-4" style={{ color: "var(--accent)" }} />
+              <span className="hidden lg:inline">Simulator</span>
+            </button>
             <button
               type="button"
               className="trade-btn trade-btn-ghost"
@@ -630,6 +683,22 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
         )}
       </div>
 
+      {view === "simulator" && (
+        <StrategySimulator
+          strategy={strategy}
+          candles={candles}
+          defaultSymbol={defaultSymbol}
+          onTweakRules={() => setView("cockpit")}
+          onDeploy={() => handleSave("live")}
+          onUpdateStrategy={patch}
+          onReloadCandles={async (interval, limit, exchange) => {
+            const sym = strategy.market.symbols[0] ?? defaultSymbol;
+            const res = await fetchCandles({ symbol: sym, interval, limit, exchange });
+            if (res.success && res.candles) setCandles(res.candles);
+          }}
+        />
+      )}
+
       {view === "flow" && (
         <div className="trade-panel p-5">
           <FlowView strategy={strategy} />
@@ -682,17 +751,276 @@ export default function StrategyBuilder({ strategyId, defaultSymbol = "BTCUSDT",
             <div className="sb-col-body space-y-4">
               {marketTab === "instrument" ? (
                 <>
+                  {/* ── 4 Strategy Types Selector ── */}
                   <div>
-                    <FieldLabel tip="Perpetual futures ya options">Type</FieldLabel>
-                    <Seg
-                      value={strategy.market.instrument}
-                      onChange={(instrument) => patch((s) => ({ ...s, market: { ...s.market, instrument } }))}
-                      options={[
-                        { value: "perps", label: "Perps" },
-                        { value: "options", label: "Options" },
-                      ]}
-                    />
+                    <FieldLabel tip="Strategy category determines what rules, execution model, and risk controls are used">
+                      Strategy Type
+                    </FieldLabel>
+                    <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl" style={{ background: "var(--bg-tertiary)" }}>
+                      {STRATEGY_CATEGORIES.map((cat) => {
+                        const active = (strategy.market.strategyType ?? "indicators") === cat.id;
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() =>
+                              patch((s) => ({
+                                ...s,
+                                market: {
+                                  ...s.market,
+                                  strategyType: cat.id,
+                                  instrument: cat.id === "options" ? "options" : "perps",
+                                },
+                              }))
+                            }
+                            className={`px-2.5 py-2 text-left rounded-lg text-[11.5px] transition-all ${
+                              active
+                                ? "bg-accent text-white font-bold shadow-sm"
+                                : "text-muted hover:text-primary hover:bg-[rgba(255,255,255,0.04)]"
+                            }`}
+                            style={active ? { background: "var(--accent)", color: "#fff" } : {}}
+                          >
+                            <div className="font-semibold leading-tight">{cat.label}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
+
+                  {/* ── Options Strategy Specific Parameters ── */}
+                  {strategy.market.strategyType === "options" && (
+                    <div
+                      className="p-3 rounded-xl border space-y-3"
+                      style={{ background: "rgba(59, 130, 246, 0.05)", borderColor: "rgba(59, 130, 246, 0.2)" }}
+                    >
+                      <div className="text-[12px] font-bold flex items-center gap-1.5" style={{ color: "#3b82f6" }}>
+                        <Sigma className="w-3.5 h-3.5" /> Options Rules & Structure
+                      </div>
+                      <div>
+                        <FieldLabel tip="Structure of option legs">Options Structure</FieldLabel>
+                        <select
+                          className="trade-select w-full"
+                          value={strategy.market.optionsConfig?.structure ?? "bull_spread"}
+                          onChange={(e) =>
+                            patch((s) => ({
+                              ...s,
+                              market: {
+                                ...s.market,
+                                optionsConfig: {
+                                  structure: e.target.value as any,
+                                  legType: e.target.value === "iron_condor" ? "both" : "call",
+                                  strikeSelection: s.market.optionsConfig?.strikeSelection ?? "otm",
+                                  targetDelta: s.market.optionsConfig?.targetDelta ?? 0.35,
+                                  expiryPreference: s.market.optionsConfig?.expiryPreference ?? "weekly",
+                                },
+                              },
+                            }))
+                          }
+                        >
+                          <option value="bull_spread">Bull Call Spread (Debit)</option>
+                          <option value="bear_spread">Bear Put Spread (Debit)</option>
+                          <option value="iron_condor">Delta Neutral Iron Condor</option>
+                          <option value="single">Single Leg (Directional Call/Put)</option>
+                          <option value="straddle">Long Straddle (Volatility Breakout)</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <FieldLabel>Strike Selection</FieldLabel>
+                          <select
+                            className="trade-select w-full"
+                            value={strategy.market.optionsConfig?.strikeSelection ?? "otm"}
+                            onChange={(e) =>
+                              patch((s) => ({
+                                ...s,
+                                market: {
+                                  ...s.market,
+                                  optionsConfig: {
+                                    ...s.market.optionsConfig!,
+                                    strikeSelection: e.target.value as any,
+                                  },
+                                },
+                              }))
+                            }
+                          >
+                            <option value="otm">OTM (Delta ~0.35)</option>
+                            <option value="atm">ATM (Delta ~0.50)</option>
+                            <option value="itm">ITM (Delta ~0.70)</option>
+                            <option value="delta">Custom Delta Target</option>
+                          </select>
+                        </div>
+                        <div>
+                          <FieldLabel>Expiry Preference</FieldLabel>
+                          <select
+                            className="trade-select w-full"
+                            value={strategy.market.optionsConfig?.expiryPreference ?? "weekly"}
+                            onChange={(e) =>
+                              patch((s) => ({
+                                ...s,
+                                market: {
+                                  ...s.market,
+                                  optionsConfig: {
+                                    ...s.market.optionsConfig!,
+                                    expiryPreference: e.target.value as any,
+                                  },
+                                },
+                              }))
+                            }
+                          >
+                            <option value="daily">Current Day (0 DTE)</option>
+                            <option value="weekly">Weekly Expiry (Friday)</option>
+                            <option value="monthly">Monthly Expiry</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Futures Strategy Specific Parameters ── */}
+                  {strategy.market.strategyType === "futures" && (
+                    <div
+                      className="p-3 rounded-xl border space-y-3"
+                      style={{ background: "rgba(16, 185, 129, 0.05)", borderColor: "rgba(16, 185, 129, 0.2)" }}
+                    >
+                      <div className="text-[12px] font-bold flex items-center gap-1.5" style={{ color: "var(--green)" }}>
+                        <TrendingUp className="w-3.5 h-3.5" /> Futures & Perps Parameters
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <FieldLabel tip="Order execution type">Order Type</FieldLabel>
+                          <select
+                            className="trade-select w-full"
+                            value={strategy.market.futuresConfig?.orderType ?? "market"}
+                            onChange={(e) =>
+                              patch((s) => ({
+                                ...s,
+                                market: {
+                                  ...s.market,
+                                  futuresConfig: {
+                                    orderType: e.target.value as any,
+                                    liquidationBufferAtr: s.market.futuresConfig?.liquidationBufferAtr ?? 2.5,
+                                    trailingType: s.market.futuresConfig?.trailingType ?? "percent",
+                                  },
+                                },
+                              }))
+                            }
+                          >
+                            <option value="market">Market (Instant Fill)</option>
+                            <option value="limit">Limit (Maker Rebate)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <FieldLabel tip="Liquidation distance buffer">Liq Buffer</FieldLabel>
+                          <select
+                            className="trade-select w-full"
+                            value={strategy.market.futuresConfig?.liquidationBufferAtr ?? 2.5}
+                            onChange={(e) =>
+                              patch((s) => ({
+                                ...s,
+                                market: {
+                                  ...s.market,
+                                  futuresConfig: {
+                                    ...s.market.futuresConfig!,
+                                    liquidationBufferAtr: Number(e.target.value),
+                                  },
+                                },
+                              }))
+                            }
+                          >
+                            <option value={1.5}>1.5× ATR (Aggressive)</option>
+                            <option value={2.5}>2.5× ATR (Standard)</option>
+                            <option value={4.0}>4.0× ATR (Conservative)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Hedging Strategy Specific Parameters ── */}
+                  {strategy.market.strategyType === "hedging" && (
+                    <div
+                      className="p-3 rounded-xl border space-y-3"
+                      style={{ background: "rgba(6, 182, 212, 0.05)", borderColor: "rgba(6, 182, 212, 0.2)" }}
+                    >
+                      <div className="text-[12px] font-bold flex items-center gap-1.5" style={{ color: "#06b6d4" }}>
+                        <ShieldCheck className="w-3.5 h-3.5" /> Hedging & Downside Protection
+                      </div>
+                      <div>
+                        <FieldLabel tip="Hedge mechanism">Hedge Structure</FieldLabel>
+                        <select
+                          className="trade-select w-full"
+                          value={strategy.market.hedgingConfig?.hedgeType ?? "spot_futures"}
+                          onChange={(e) =>
+                            patch((s) => ({
+                              ...s,
+                              market: {
+                                ...s.market,
+                                hedgingConfig: {
+                                  hedgeType: e.target.value as any,
+                                  hedgeRatioPct: s.market.hedgingConfig?.hedgeRatioPct ?? 100,
+                                  rebalanceTriggerPct: s.market.hedgingConfig?.rebalanceTriggerPct ?? 5,
+                                },
+                              },
+                            }))
+                          }
+                        >
+                          <option value="spot_futures">Spot + Short Futures (Delta-Neutral Cash & Carry)</option>
+                          <option value="protective_put">Protective Put (Portfolio Downside Floor)</option>
+                          <option value="covered_call">Covered Call (Yield Enhancement)</option>
+                          <option value="pair_hedge">Pair Hedge (Cross-Asset Beta Arbitrage)</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <FieldLabel tip="Hedge ratio percentage">Hedge Ratio</FieldLabel>
+                          <select
+                            className="trade-select w-full"
+                            value={strategy.market.hedgingConfig?.hedgeRatioPct ?? 100}
+                            onChange={(e) =>
+                              patch((s) => ({
+                                ...s,
+                                market: {
+                                  ...s.market,
+                                  hedgingConfig: {
+                                    ...s.market.hedgingConfig!,
+                                    hedgeRatioPct: Number(e.target.value),
+                                  },
+                                },
+                              }))
+                            }
+                          >
+                            <option value={25}>25% Partial</option>
+                            <option value={50}>50% Half</option>
+                            <option value={75}>75% Strong</option>
+                            <option value={100}>100% Full Delta Neutral</option>
+                          </select>
+                        </div>
+                        <div>
+                          <FieldLabel tip="Rebalance trigger drift">Rebalance Drift</FieldLabel>
+                          <select
+                            className="trade-select w-full"
+                            value={strategy.market.hedgingConfig?.rebalanceTriggerPct ?? 5}
+                            onChange={(e) =>
+                              patch((s) => ({
+                                ...s,
+                                market: {
+                                  ...s.market,
+                                  hedgingConfig: {
+                                    ...s.market.hedgingConfig!,
+                                    rebalanceTriggerPct: Number(e.target.value),
+                                  },
+                                },
+                              }))
+                            }
+                          >
+                            <option value={3}>±3% Tight</option>
+                            <option value={5}>±5% Standard</option>
+                            <option value={10}>±10% Wide</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <FieldLabel>Exchange</FieldLabel>
                     <select

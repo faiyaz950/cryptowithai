@@ -59,7 +59,7 @@ export const CHART_TIMEFRAMES: { value: string; label: string; group: "Minutes" 
   { value: "1M", label: "1 month", group: "Days" },
 ];
 
-export const DEFAULT_TF_FAVORITES = ["1m", "5m", "15m", "1h", "4h", "1d"];
+export const DEFAULT_TF_FAVORITES = ["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"];
 
 /** Toolbar button ka chhota naam: 15m, 1H, 4H, D, W, M. */
 export function tfShort(value: string): string {

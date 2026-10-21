@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, RefreshCw, Sliders, TrendingDown, TrendingUp, Wand2 } from "lucide-react";
+import { ArrowRight, FlaskConical, RefreshCw, Sliders, TrendingDown, TrendingUp, Wand2 } from "lucide-react";
 import type { BacktestParams, Candle } from "@/lib/cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, fetchCandles, symbolLabel, syncStamp } from "@/lib/cryptoApi";
 import {
@@ -352,6 +352,14 @@ function StrategyCard({
         <Link href={href} className="trade-btn trade-btn-quiet strat-open flex-1">
           Open
           <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
+        <Link
+          href={`${href}?paper=1`}
+          className="trade-btn trade-btn-ghost text-emerald-400 font-semibold"
+          title="Deploy to Paper Trading"
+        >
+          <FlaskConical className="w-3.5 h-3.5" />
+          Paper
         </Link>
         <button
           type="button"

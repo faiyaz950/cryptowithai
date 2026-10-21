@@ -19,6 +19,7 @@ import {
   Radar,
   RefreshCw,
   ShieldCheck,
+  Calculator,
   Sigma,
   Sparkles,
   Star,
@@ -27,8 +28,10 @@ import {
   TrendingUp,
   Wand2,
   X,
+  Zap,
 } from "lucide-react";
 import TradePanel, { type LiveTradeState, type PositionsState } from "@/components/trade/TradePanel";
+import PaperOrdersDock, { type DockFocus, type DockTab } from "@/components/trade/PaperOrdersDock";
 import { useAuth } from "@/context/AuthContext";
 import {
   AccountApiError,
@@ -148,7 +151,7 @@ const TABS: { id: Tab; label: string; icon: typeof LineChart }[] = [
 ];
 
 const NAV: {
-  id: Tab | "risk";
+  id: Tab | "risk" | "calculators";
   label: string;
   icon: typeof LineChart;
   /** Apna route rakhne wale sections — tab state ke bajaye navigate hote hain. */
@@ -160,6 +163,7 @@ const NAV: {
   { id: "watchlist", label: "Watchlist", icon: Star },
   { id: "trades", label: "Trades", icon: ListOrdered },
   { id: "risk", label: "Risk Desk", icon: ShieldCheck, href: "/trade/risk" },
+  { id: "calculators", label: "Calculators", icon: Calculator, href: "/trade/calculators" },
   { id: "portfolio", label: "Portfolio", icon: Briefcase },
   { id: "exchanges", label: "Exchanges", icon: Plug },
   { id: "backtest", label: "Backtest", icon: FlaskConical },
@@ -254,12 +258,27 @@ function pairIconColor(symbol: string): string {
   return "linear-gradient(145deg, #00e676, #00c853)";
 }
 
-function changeFromCandles(candles: Candle[], lookback: number): number | null {
+/**
+ * `days` din pehle se ab tak ka % badlav, candle ke *time* se — bar ginti se nahi, warna
+ * weekly/monthly chart par "1W" ka matlab 7 mahine ho jata. Timeframe `days` se bada ho,
+ * ya itni history hi load na ho, to null (screen par "—") — andaza nahi lagate.
+ */
+function changeOverDays(candles: Candle[], days: number, interval: string): number | null {
   if (candles.length < 2) return null;
-  const end = candles.at(-1)?.close;
-  const start = candles[Math.max(0, candles.length - 1 - lookback)]?.close;
-  if (!end || !start) return null;
-  return ((end - start) / start) * 100;
+  if (intervalMinutes(interval) > days * 24 * 60) return null;
+  const last = candles[candles.length - 1];
+  const target = last.time - days * 86_400_000;
+  if (candles[0].time > target) return null;
+  let lo = 0;
+  let hi = candles.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (candles[mid].time <= target) lo = mid;
+    else hi = mid - 1;
+  }
+  const start = candles[lo].close;
+  if (!last.close || !start) return null;
+  return ((last.close - start) / start) * 100;
 }
 
 export default function TradePage() {
@@ -343,6 +362,8 @@ function TradeTerminal() {
   });
   const [placing, setPlacing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [dockTab, setDockTab] = useState<DockTab>("positions");
+  const [dockFocus, setDockFocus] = useState<DockFocus | null>(null);
 
   /**
    * Effective chart source: manual override, warna connected exchange,
@@ -391,7 +412,11 @@ function TradeTerminal() {
             ),
           );
         }
-        if (Array.isArray(saved.tfFavorites)) setTfFavorites(saved.tfFavorites.filter((t: unknown) => typeof t === "string"));
+        if (Array.isArray(saved.tfFavorites)) {
+          const favs: string[] = saved.tfFavorites.filter((t: unknown) => typeof t === "string");
+          // Weekly/Monthly naye aaye — purani saved list mein ek baar jod do, uske baad user ki marzi.
+          setTfFavorites(saved.tfWM === true ? favs : [...new Set([...favs, "1w", "1M"])]);
+        }
         if (typeof saved.showVolume === "boolean") setShowVolume(saved.showVolume);
         if (typeof saved.interval === "string" && CHART_TIMEFRAMES.some((t) => t.value === saved.interval)) setInterval(saved.interval);
       }
@@ -404,7 +429,7 @@ function TradeTerminal() {
   useEffect(() => {
     if (!prefsLoaded) return;
     try {
-      localStorage.setItem(CHART_PREFS_KEY, JSON.stringify({ chartType, indicators, tfFavorites, showVolume, interval }));
+      localStorage.setItem(CHART_PREFS_KEY, JSON.stringify({ chartType, indicators, tfFavorites, tfWM: true, showVolume, interval }));
     } catch {
       /* storage band / full */
     }
@@ -732,6 +757,39 @@ function TradeTerminal() {
     loadBook();
   }, [loadBook]);
 
+  /** Sirf paper orders + account — poll ke liye halka (exchange balances nahi chhuta). */
+  const loadPaper = useCallback(async (): Promise<PaperAccount | null> => {
+    if (!token) return null;
+    const [nextOrders, nextPaper] = await Promise.all([
+      fetchDemoOrders(token).catch(() => null),
+      fetchPaperAccount(token).catch(() => null),
+    ]);
+    if (nextOrders) setOrders(nextOrders);
+    if (nextPaper) setPaperAccount(nextPaper);
+    return nextPaper;
+  }, [token]);
+
+  // Limit fill aur Target/SL server par orders/account padhte waqt hi check hote hain.
+  useEffect(() => {
+    if (!token || tab !== "markets") return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadPaper();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [token, tab, loadPaper]);
+
+  const onPaperChanged = useCallback(
+    async (message: string, order?: DemoOrder) => {
+      setNotice(message);
+      await loadPaper();
+      if (order?.status === "filled") {
+        setDockTab("positions");
+        setDockFocus({ tab: "positions", orderId: order.order_id, symbol: order.symbol, nonce: Date.now() });
+      }
+    },
+    [loadPaper],
+  );
+
   const handlePlace = async (payload: {
     mode: "paper" | "live";
     symbol: string;
@@ -739,6 +797,8 @@ function TradeTerminal() {
     order_type: "market" | "limit";
     quantity: number;
     price?: number | null;
+    stop_loss?: number | null;
+    take_profit?: number | null;
   }) => {
     if (!token) {
       setNotice("Order ke liye sign in karein");
@@ -769,6 +829,7 @@ function TradeTerminal() {
         // Server hi batata hai ki order exchange tak gaya ya paper mein ruka —
         // yahan apna jumla likhne par UI aisi baat keh sakta hai jo hui hi nahi.
         setNotice(res.message || `${payload.side.toUpperCase()} order bhej diya`);
+        await loadBook();
       } else {
         const res = await placeDemoOrder(token, {
           symbol: payload.symbol,
@@ -776,11 +837,21 @@ function TradeTerminal() {
           order_type: payload.order_type,
           quantity: payload.quantity,
           price: payload.price,
+          stop_loss: payload.stop_loss ?? null,
+          take_profit: payload.take_profit ?? null,
         });
         if (!res.success) throw new Error(res.error || "Paper order nahi laga");
         setNotice(res.message || `${payload.side.toUpperCase()} paper order lag gaya`);
+        const acct = await loadPaper();
+        const filled = res.data?.status === "filled";
+        const nextTab: DockTab = !filled
+          ? "open"
+          : acct?.positions.some((p) => p.symbol === payload.symbol)
+            ? "positions"
+            : "history";
+        setDockTab(nextTab);
+        setDockFocus({ tab: nextTab, orderId: res.data?.order_id ?? res.order_id, symbol: payload.symbol, nonce: Date.now() });
       }
-      await loadBook();
     } finally {
       setPlacing(false);
     }
@@ -861,17 +932,12 @@ function TradeTerminal() {
     return Math.min(92, Math.max(8, Math.round(50 + ch * 4)));
   }, [market]);
 
-  const perf = useMemo(() => {
-    const barsPerDay =
-      interval.endsWith("m") ? Math.max(1, Math.round((24 * 60) / Number(interval))) :
-      interval.endsWith("h") ? Math.max(1, Math.round(24 / Number(interval))) : 1;
-    return [
-      { label: "1D", value: market?.change_24h ?? changeFromCandles(candles, barsPerDay) },
-      { label: "1W", value: changeFromCandles(candles, barsPerDay * 7) },
-      { label: "1M", value: changeFromCandles(candles, barsPerDay * 30) },
-      { label: "1Y", value: changeFromCandles(candles, candles.length - 1) },
-    ];
-  }, [candles, interval, market]);
+  const perf = useMemo(() => [
+    { label: "1D", value: market?.change_24h ?? changeOverDays(candles, 1, interval) },
+    { label: "1W", value: changeOverDays(candles, 7, interval) },
+    { label: "1M", value: changeOverDays(candles, 30, interval) },
+    { label: "1Y", value: changeOverDays(candles, 365, interval) },
+  ], [candles, interval, market]);
 
   const activeNav = tab;
 
@@ -1067,6 +1133,19 @@ function TradeTerminal() {
                   </div>
 
                   <div className="desk-pair-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDockTab("strategies");
+                        document.getElementById("paper-dock")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      }}
+                      className="trade-btn trade-size-sm font-semibold flex items-center gap-1.5"
+                      style={{ background: "rgba(245, 158, 11, 0.12)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.35)" }}
+                      title="Strategy Bots on Paper"
+                    >
+                      <Zap className="w-3.5 h-3.5 fill-amber-400" />
+                      <span>Paper Strategy</span>
+                    </button>
                     {!isSpot && (
                       <Link
                         href={`/trade/risk?symbol=${symbol}`}
@@ -1231,6 +1310,29 @@ function TradeTerminal() {
                     )}
                   </section>
 
+                <PaperOrdersDock
+                  orders={orders}
+                  account={paperAccount}
+                  tab={dockTab}
+                  onTab={setDockTab}
+                  focus={dockFocus}
+                  currentKey={orderKey(symbol, chartSource)}
+                  lastPrice={lastPrice}
+                  busy={placing}
+                  onClosePosition={(p) =>
+                    handlePlace({
+                      mode: "paper",
+                      symbol: p.symbol,
+                      side: p.side === "long" ? "sell" : "buy",
+                      order_type: "market",
+                      quantity: p.size,
+                    })
+                  }
+                  onChanged={onPaperChanged}
+                  onPickSymbol={pickSymbol}
+                  candles={candles}
+                />
+
                 <div className="desk-bottom">
                   <div className="trade-panel desk-gauge-wrap">
                     <div className="desk-stat-label w-full text-left mb-1">Market Sentiment</div>
@@ -1296,6 +1398,12 @@ function TradeTerminal() {
                       placing={placing}
                       liveState={liveState}
                       onPlace={handlePlace}
+                      candles={candles}
+                      interval={interval}
+                      onDeployStrategySuccess={() => {
+                        setDockTab("strategies");
+                        document.getElementById("paper-dock")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      }}
                     />
                   </aside>
                 </div>

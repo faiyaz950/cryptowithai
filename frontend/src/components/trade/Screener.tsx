@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertCircle, RefreshCw, Search, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { AlertCircle, ChevronDown, RefreshCw, Search, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import {
   CRYPTO_INTERVALS,
   CRYPTO_SYMBOLS,
@@ -12,8 +12,9 @@ import {
   type Candle,
   syncStamp,
 } from "@/lib/cryptoApi";
-import { buildAiPrompt, scoreSymbol, sortRows, type Bias, type ScreenerRow, type SortKey } from "@/lib/screener";
+import { SCORE_WEIGHTS, buildAiPrompt, scoreSymbol, sortRows, type Bias, type ScreenerRow, type SortKey } from "@/lib/screener";
 import { STRATEGIES } from "@/lib/strategies";
+import { ScoreBreakdown, ScreenerMethod } from "./ScreenerMethod";
 
 interface Props {
   /** Terminal ka chuna hua timeframe — screener wahi se shuru hota hai. */
@@ -58,6 +59,10 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
   const [bias, setBias] = useState<Bias | "all">("all");
   const [sortKey, setSortKey] = useState<SortKey>("strength");
   const [query, setQuery] = useState("");
+  const [openSymbol, setOpenSymbol] = useState<string | null>(null);
+  // Table chaudi hai aur scroll hoti hai — breakdown ko dikhne wali chaudai par pin karte hain.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [viewW, setViewW] = useState(0);
 
   const [data, setData] = useState<{ symbol: string; candles: Candle[] }[]>([]);
   const [failed, setFailed] = useState<{ symbol: string; error: string }[]>([]);
@@ -110,8 +115,20 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
     });
   }, [rows, bias, query]);
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setViewW(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loading, rows.length]);
+
   const bullCount = rows.filter((r) => r.bias === "bullish").length;
   const bearCount = rows.filter((r) => r.bias === "bearish").length;
+
+  const toggleOpen = (symbol: string) => setOpenSymbol((cur) => (cur === symbol ? null : symbol));
 
   const askAi = () => {
     sessionStorage.setItem("arjunai_portfolio_prompt", buildAiPrompt(rows, scannedInterval));
@@ -199,6 +216,8 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
         )}
       </div>
 
+      <ScreenerMethod interval={scannedInterval} bars={BARS} chartInterval={defaultInterval} scannedAt={scannedAt} />
+
       {loading && rows.length === 0 ? (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer rounded-xl h-[72px]" />)}
@@ -233,14 +252,18 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
                           {row.bias !== "neutral" && <Icon className="w-3 h-3" />}
                           {row.bias}
                         </span>
+                        {row.mixed && <MixedTag />}
                       </div>
                     </div>
-                    <Link
-                      href={`/trade/strategies/${bestStrategyFor(row)}?symbol=${row.symbol}&timeframe=${scannedInterval}`}
-                      className="trade-btn trade-btn-ghost trade-size-sm"
-                    >
-                      Run
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <WhyButton open={openSymbol === row.symbol} onClick={() => toggleOpen(row.symbol)} />
+                      <Link
+                        href={`/trade/strategies/${bestStrategyFor(row)}?symbol=${row.symbol}&timeframe=${scannedInterval}`}
+                        className="trade-btn trade-btn-ghost trade-size-sm"
+                      >
+                        Run
+                      </Link>
+                    </div>
                   </div>
                   <div className="trade-screen-card-grid">
                     <div>
@@ -281,13 +304,18 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
                       </div>
                     </div>
                   </div>
+                  {openSymbol === row.symbol && (
+                    <div className="pt-3 mt-3" style={{ borderTop: "1px solid var(--tr-line-soft)" }}>
+                      <ScoreBreakdown row={row} interval={scannedInterval} />
+                    </div>
+                  )}
                 </article>
               );
             })}
           </div>
 
           <div className="trade-panel overflow-hidden trade-table-desktop">
-            <div className="overflow-auto max-h-[70vh]">
+            <div ref={scrollRef} className="overflow-auto max-h-[70vh]">
               <table className="trade-table">
                 <thead>
                   <tr>
@@ -309,7 +337,8 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
                     const color = biasColor(row.bias);
                     const Icon = row.bias === "bearish" ? TrendingDown : TrendingUp;
                     return (
-                      <tr key={row.symbol}>
+                      <Fragment key={row.symbol}>
+                      <tr>
                         <td>
                           <button type="button" onClick={() => onPickSymbol(row.symbol)} className="trade-linkish" title="Markets tab mein kholo">
                             {symbolLabel(row.symbol)}
@@ -322,8 +351,9 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
                             {row.bias !== "neutral" && <Icon className="w-3 h-3" />}
                             {row.bias}
                           </span>
+                          {row.mixed && <MixedTag />}
                         </td>
-                        <td className="trade-num">
+                        <td className="trade-num" title={`Score ${row.score > 0 ? "+" : ""}${row.score} → ${row.bias}`}>
                           <div className="flex items-center justify-end gap-2">
                             <span className="trade-meter" aria-hidden>
                               <span style={{ width: `${row.strength}%`, background: color }} />
@@ -359,14 +389,27 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
                           {fmtPct(row.macdPct)}
                         </td>
                         <td>
-                          <Link
-                            href={`/trade/strategies/${bestStrategyFor(row)}?symbol=${row.symbol}&timeframe=${scannedInterval}`}
-                            className="trade-btn trade-btn-ghost trade-size-sm"
-                          >
-                            Run
-                          </Link>
+                          <span className="flex items-center gap-2">
+                            <WhyButton open={openSymbol === row.symbol} onClick={() => toggleOpen(row.symbol)} />
+                            <Link
+                              href={`/trade/strategies/${bestStrategyFor(row)}?symbol=${row.symbol}&timeframe=${scannedInterval}`}
+                              className="trade-btn trade-btn-ghost trade-size-sm"
+                            >
+                              Run
+                            </Link>
+                          </span>
                         </td>
                       </tr>
+                      {openSymbol === row.symbol && (
+                        <tr>
+                          <td colSpan={11} style={{ background: "var(--tr-field)" }}>
+                            <div style={{ position: "sticky", left: 0, width: viewW ? viewW - 24 : undefined, padding: "4px 0" }}>
+                              <ScoreBreakdown row={row} interval={scannedInterval} />
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -377,9 +420,8 @@ export default function Screener({ defaultInterval, onPickSymbol }: Props) {
       )}
 
       <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-        <b>Strength</b> = strategy agreement (40%) + EMA trend (25%) + MACD momentum (20%) + RSI extreme (15%).
-        Signals wahi hain jo har strategy ke apne page par dikhte hain — screener sirf unhe ek saath chalata hai.
-        Ye analysis hai, trading advice nahi.
+        <b>Strength</b> = |score|. Score = EMA trend ({Math.round(SCORE_WEIGHTS.trend * 100)}%) + MACD momentum ({Math.round(SCORE_WEIGHTS.momentum * 100)}%) + RSI ({Math.round(SCORE_WEIGHTS.rsi * 100)}%) + strategy votes ({Math.round(SCORE_WEIGHTS.strategies * 100)}%),
+        Delta perpetual candles par. Kisi bhi coin ka &quot;Why&quot; dabao — poora hisaab khulta hai. Ye analysis hai, trading advice nahi.
       </p>
     </div>
   );
@@ -390,4 +432,21 @@ function bestStrategyFor(row: ScreenerRow): string {
   const dominant = row.bias === "bearish" ? "sell" : "buy";
   const match = row.signals.find((s) => s.tone === dominant);
   return match?.id ?? STRATEGIES[0].id;
+}
+
+function WhyButton({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-expanded={open} className="trade-btn trade-size-sm">
+      Why
+      <ChevronDown className="w-3 h-3" style={{ transform: open ? "rotate(180deg)" : undefined }} />
+    </button>
+  );
+}
+
+function MixedTag() {
+  return (
+    <span className="trade-badge trade-badge-neutral ml-1" title="Trend aur strategy votes ek doosre ke ulta bol rahe hain">
+      Mixed
+    </span>
+  );
 }

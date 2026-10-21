@@ -174,12 +174,12 @@ export const DEFAULT_MARKET_SOURCES: MarketSourceInfo[] = [
   {
     id: "delta",
     name: "Delta Exchange India",
-    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "1d", "1w"],
+    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "1d", "1w", "1M"],
   },
   {
     id: "coindcx",
     name: "CoinDCX",
-    intervals: ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    intervals: ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"],
   },
   {
     id: "bybit",
@@ -189,7 +189,7 @@ export const DEFAULT_MARKET_SOURCES: MarketSourceInfo[] = [
   {
     id: "coindcx-spot",
     name: "CoinDCX Spot",
-    intervals: ["1m", "15m", "1h", "1d"],
+    intervals: ["1m", "15m", "1h", "1d", "1w", "1M"],
   },
 ];
 
@@ -218,6 +218,9 @@ export interface DemoOrder {
   timestamp?: string;
   size?: number;
   limit_price?: number;
+  /** Paper: order ke saath diya Target/SL — fill par position par lagta hai. */
+  stop_loss?: number | null;
+  take_profit?: number | null;
 }
 
 export interface BacktestTrade {
@@ -399,8 +402,10 @@ export async function placeDemoOrder(
     order_type: "market" | "limit";
     quantity: number;
     price?: number | null;
+    stop_loss?: number | null;
+    take_profit?: number | null;
   },
-): Promise<{ success: boolean; order_id?: string; message?: string; error?: string }> {
+): Promise<{ success: boolean; order_id?: string; message?: string; error?: string; data?: DemoOrder }> {
   return cryptoFetch("/place-order", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -434,6 +439,8 @@ export interface PaperPosition {
   notional: number;
   liquidation_price: number | null;
   opened_at: string | null;
+  stop_loss?: number | null;
+  take_profit?: number | null;
 }
 
 export interface PaperStats {
@@ -474,6 +481,37 @@ export async function cancelPaperOrder(token: string, orderId: string): Promise<
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ order_id: orderId }),
+  });
+}
+
+/** Pending paper order badlo. Jo field na bhejo wo waisa hi rehta; Target/SL ko null = hatao. */
+export async function modifyPaperOrder(
+  token: string,
+  payload: {
+    order_id: string;
+    order_type?: "market" | "limit";
+    quantity?: number;
+    price?: number | null;
+    stop_loss?: number | null;
+    take_profit?: number | null;
+  },
+): Promise<{ success: boolean; message?: string; data?: DemoOrder }> {
+  return cryptoFetch("/paper/orders/modify", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Khuli paper position ka Target/SL. null = hatao. */
+export async function setPaperBracket(
+  token: string,
+  payload: { symbol: string; stop_loss: number | null; take_profit: number | null },
+): Promise<{ success: boolean; message?: string }> {
+  return cryptoFetch("/paper/positions/bracket", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
   });
 }
 

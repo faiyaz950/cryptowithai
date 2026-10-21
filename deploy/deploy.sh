@@ -11,8 +11,9 @@ APP_DIR=/opt/cryptoandai
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "==> Code bhej rahe hain: $TARGET:$APP_DIR"
-ssh "$TARGET" "mkdir -p $APP_DIR"
+ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=20 "$TARGET" "mkdir -p $APP_DIR"
 rsync -az --delete \
+  -e 'ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=20' \
   --exclude '.git' \
   --exclude '.env' \
   --exclude '.env.local' \
@@ -30,7 +31,7 @@ rsync -az --delete \
   "$ROOT/" "$TARGET:$APP_DIR/"
 
 echo "==> Build aur start"
-ssh "$TARGET" bash -s <<EOF
+ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=20 "$TARGET" bash -s <<EOF
 set -euo pipefail
 cd $APP_DIR
 if [ ! -f .env ]; then
@@ -40,6 +41,7 @@ if [ ! -f .env ]; then
 fi
 docker network inspect edge >/dev/null 2>&1 || docker network create edge
 mkdir -p /opt/caddy-sites
+rm -rf frontend/app
 docker compose up -d --build --remove-orphans
 docker image prune -f >/dev/null
 docker compose ps

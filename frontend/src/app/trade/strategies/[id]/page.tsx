@@ -3,7 +3,7 @@
 import { Suspense, use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Pencil, Sparkles } from "lucide-react";
+import { ArrowLeft, FlaskConical, Pencil, Sparkles } from "lucide-react";
 import Logo from "@/components/Logo";
 import StrategyRunner from "@/components/trade/StrategyRunner";
 import { symbolLabel } from "@/lib/cryptoApi";
@@ -180,6 +180,10 @@ function Shell({
               <span className={`trade-badge ${active ? "trade-badge-green" : "trade-badge-neutral"}`}>
                 {active ? <><span className="trade-dot" />Live</> : "Inactive"}
               </span>
+              <Link href="?paper=1" className="trade-btn trade-btn-ghost text-emerald-400 font-semibold" title="Deploy this strategy to Paper Trading">
+                <FlaskConical className="w-4 h-4" />
+                <span className="hidden sm:inline">Deploy Paper</span>
+              </Link>
               {editHref && (
                 <Link href={editHref} className="trade-btn trade-btn-ghost">
                   <Pencil className="w-4 h-4" />

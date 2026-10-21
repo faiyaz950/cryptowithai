@@ -14,10 +14,14 @@ import {
   LineChart,
   Loader2,
   LogIn,
+  Pencil,
   RefreshCw,
+  Target,
   Wallet,
   X,
 } from "lucide-react";
+import PaperOrderEditor, { type PaperEditTarget } from "./PaperOrderEditor";
+import { PaperTag } from "./ModeTag";
 import { useAuth } from "@/context/AuthContext";
 import {
   cancelPaperOrder,
@@ -29,8 +33,14 @@ import {
   type PaperAccount,
   type PaperPosition,
 } from "@/lib/cryptoApi";
+import {
+  CUSTOM_STRATEGIES_CHANGED,
+  listPaperDeployedStrategies,
+  setCustomStrategyStatus,
+  type CustomStrategy,
+} from "@/lib/strategyBuilder";
 
-type Tab = "positions" | "open" | "history";
+type Tab = "positions" | "strategies" | "open" | "history";
 
 const REFRESH_MS = 15_000;
 
@@ -41,7 +51,9 @@ interface Props {
 function usd(n: number | null | undefined, digits = 2): string {
   if (n == null || !Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
-  return `${n < 0 ? "-" : ""}$${abs.toLocaleString("en-US", {
+  // -0.003 -> "$0.00", "-$0.00" nahi.
+  const neg = n < 0 && Number(abs.toFixed(digits)) !== 0;
+  return `${neg ? "-" : ""}$${abs.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })}`;
@@ -60,6 +72,7 @@ function price(n: number | null | undefined): string {
 
 function pct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
+  if (Math.abs(n) < 0.005) return "0.00%";
   return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
 }
 
@@ -107,6 +120,22 @@ export default function PaperDesk({ onPickSymbol }: Props) {
   const [account, setAccount] = useState<PaperAccount | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [editing, setEditing] = useState<PaperEditTarget | null>(null);
+  const [paperStrategies, setPaperStrategies] = useState<CustomStrategy[]>([]);
+
+  const syncPaperStrategies = useCallback(() => {
+    setPaperStrategies(listPaperDeployedStrategies());
+  }, []);
+
+  useEffect(() => {
+    syncPaperStrategies();
+    window.addEventListener(CUSTOM_STRATEGIES_CHANGED, syncPaperStrategies);
+    window.addEventListener("storage", syncPaperStrategies);
+    return () => {
+      window.removeEventListener(CUSTOM_STRATEGIES_CHANGED, syncPaperStrategies);
+      window.removeEventListener("storage", syncPaperStrategies);
+    };
+  }, [syncPaperStrategies]);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -207,7 +236,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
           <div className="pp-title">
             <span className="pp-title-icon"><FlaskConical className="w-4 h-4" /></span>
             <div>
-              <h2>Paper trading account</h2>
+              <h2>Paper trading account <PaperTag className="ml-1.5" /></h2>
               <p>
                 Virtual paisa · asli Delta bhaav · {usd(account?.start_balance ?? 10_000, 0)} se shuru
                 {updatedAt && <> · updated {updatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>}
@@ -226,18 +255,47 @@ export default function PaperDesk({ onPickSymbol }: Props) {
           </div>
         </div>
 
+        <div className="pp-banner" role="note">
+          <PaperTag />
+          <span>
+            Neeche ka saara equity aur P&amp;L <b>virtual paisa</b>{" "}ka hai — exchange par kuch nahi gaya. Asli
+            positions aur P&amp;L ke liye upar <b>Exchange</b> tab dekho.
+          </span>
+        </div>
+
+        {paperStrategies.length > 0 && (
+          <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[12px] my-1">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="font-semibold text-emerald-400">
+                {paperStrategies.length} Deployed Paper {paperStrategies.length > 1 ? "Strategies" : "Strategy"}:
+              </span>
+              <span className="text-muted-foreground hidden sm:inline" style={{ color: "var(--text-muted)" }}>
+                Entry/Exit rules ke according virtual signals monitor ho rahe hain
+              </span>
+            </div>
+            <button
+              type="button"
+              className="trade-btn trade-size-sm trade-btn-ghost text-emerald-400 font-bold"
+              onClick={() => setTab("strategies")}
+            >
+              View Strategies ({paperStrategies.length}) &rarr;
+            </button>
+          </div>
+        )}
+
         {!account && loading ? (
           <div className="pp-skeleton shimmer" />
         ) : account ? (
           <div className="pp-hero-body">
             <div className="pp-equity">
-              <span className="pp-label">Equity</span>
+              <span className="pp-label">Paper equity</span>
               <div className="pp-equity-value tnum">{usd(account.equity)}</div>
               <div className="pp-equity-sub">
                 <Delta value={totalPnl}>
                   {signedUsd(totalPnl)} ({pct(account.return_pct)})
                 </Delta>
-                <span>kul return</span>
+                <span>kul paper P&amp;L</span>
               </div>
               <div className="pp-meter" aria-label={`Margin use ${usedPct.toFixed(0)}%`}>
                 <div className="pp-meter-head">
@@ -255,8 +313,8 @@ export default function PaperDesk({ onPickSymbol }: Props) {
             </div>
 
             <div className="pp-kpis">
-              <Kpi label="Unrealized P&L" value={signedUsd(account.unrealized_pnl)} t={tone(account.unrealized_pnl)} hint={`${positions.length} open position`} />
-              <Kpi label="Realized P&L" value={signedUsd(account.realized_pnl)} t={tone(account.realized_pnl)} hint={`${stats?.closed_trades ?? 0} band trade`} />
+              <Kpi label="Paper P&L · Unrealized" value={signedUsd(account.unrealized_pnl)} t={tone(account.unrealized_pnl)} hint={`${positions.length} open position`} />
+              <Kpi label="Paper P&L · Realized" value={signedUsd(account.realized_pnl)} t={tone(account.realized_pnl)} hint={`${stats?.closed_trades ?? 0} band trade`} />
               <Kpi
                 label="Win rate"
                 value={stats?.win_rate == null ? "—" : `${stats.win_rate.toFixed(0)}%`}
@@ -292,6 +350,9 @@ export default function PaperDesk({ onPickSymbol }: Props) {
             <button type="button" role="tab" aria-selected={tab === "positions"} data-active={tab === "positions"} onClick={() => setTab("positions")} className="trade-seg-btn">
               <Wallet className="w-3.5 h-3.5" /> Positions <span className="tnum">({positions.length})</span>
             </button>
+            <button type="button" role="tab" aria-selected={tab === "strategies"} data-active={tab === "strategies"} onClick={() => setTab("strategies")} className="trade-seg-btn">
+              <FlaskConical className="w-3.5 h-3.5 text-emerald-400" /> Deployed Strategies <span className="tnum">({paperStrategies.length})</span>
+            </button>
             <button type="button" role="tab" aria-selected={tab === "open"} data-active={tab === "open"} onClick={() => setTab("open")} className="trade-seg-btn">
               <Clock className="w-3.5 h-3.5" /> Open orders <span className="tnum">({openOrders.length})</span>
             </button>
@@ -316,7 +377,30 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                     equity={account?.equity ?? 0}
                     busy={busyId === p.symbol}
                     onClose={() => void closePosition(p)}
+                    onBracket={() => setEditing({ kind: "position", position: p })}
                     onChart={() => onPickSymbol?.(p.symbol)}
+                  />
+                ))}
+              </div>
+            ))}
+
+          {tab === "strategies" &&
+            (paperStrategies.length === 0 ? (
+              <Empty icon={<FlaskConical className="w-4 h-4 text-emerald-400" />} title="Koi Paper Strategy Deployed Nahi Hai">
+                Aap <b>My Strategy</b> ya <b>Strategy Builder / Simulator</b> mein jakar ready-made ya custom strategy ko <b>Deploy to Paper Trading</b> kar sakte hain.
+              </Empty>
+            ) : (
+              <div className="space-y-3">
+                {paperStrategies.map((s) => (
+                  <DeployedStrategyCard
+                    key={s.id}
+                    s={s}
+                    onPauseResume={() => {
+                      const nextStatus = s.status === "paused" ? "paper" : "paused";
+                      setCustomStrategyStatus(s.id, nextStatus);
+                      syncPaperStrategies();
+                    }}
+                    onChart={() => onPickSymbol?.(s.paperSettings?.symbol || s.market.symbols[0] || "BTCUSDT")}
                   />
                 ))}
               </div>
@@ -338,6 +422,8 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                       <th className="num">Qty</th>
                       <th className="num">Limit</th>
                       <th className="num">Value</th>
+                      <th className="num">Target</th>
+                      <th className="num">Stop loss</th>
                       <th />
                     </tr>
                   </thead>
@@ -354,7 +440,13 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                         <td className="num">{o.quantity}</td>
                         <td className="num">{price(o.price)}</td>
                         <td className="num">{o.price ? usd(o.price * o.quantity) : "—"}</td>
-                        <td className="num">
+                        <td className="num" data-tone={o.take_profit ? "up" : undefined}>{o.take_profit ? price(o.take_profit) : "—"}</td>
+                        <td className="num" data-tone={o.stop_loss ? "down" : undefined}>{o.stop_loss ? price(o.stop_loss) : "—"}</td>
+                        <td className="num pd-actions">
+                          <button type="button" className="trade-btn trade-size-sm" onClick={() => setEditing({ kind: "order", order: o })}>
+                            <Pencil className="w-3.5 h-3.5" />
+                            Modify
+                          </button>
                           <button
                             type="button"
                             className="trade-btn trade-size-sm"
@@ -389,7 +481,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                       <th className="num">Qty</th>
                       <th className="num">Fill price</th>
                       <th className="num">Value</th>
-                      <th className="num">Realized P&amp;L</th>
+                      <th className="num">Paper realized P&amp;L</th>
                       <th>Status</th>
                     </tr>
                   </thead>
@@ -405,7 +497,9 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                             </button>
                           </td>
                           <td><SideBadge side={o.side} /></td>
-                          <td className="muted cap">{o.order_type}</td>
+                          <td className="muted cap">
+                            {o.order_type === "stop_loss" ? "SL hit" : o.order_type === "take_profit" ? "Target hit" : o.order_type}
+                          </td>
                           <td className="num">{o.quantity}</td>
                           <td className="num">{o.status === "filled" ? price(o.price) : "—"}</td>
                           <td className="num">{o.status === "filled" && o.price ? usd(o.price * o.quantity) : "—"}</td>
@@ -432,6 +526,22 @@ export default function PaperDesk({ onPickSymbol }: Props) {
         fill hota hai jab aap ye page ya orders kholte hain aur bhaav limit cross kar chuka ho. Leverage 1x hai —
         order value available balance se zyada nahi ho sakti.
       </p>
+
+      {editing && (
+        <PaperOrderEditor
+          target={editing}
+          mark={
+            editing.kind === "position"
+              ? editing.position.mark_price
+              : positions.find((p) => p.symbol === editing.order.symbol)?.mark_price
+          }
+          onClose={() => setEditing(null)}
+          onSaved={async (msg) => {
+            flash(msg);
+            await load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -451,12 +561,14 @@ function PositionCard({
   equity,
   busy,
   onClose,
+  onBracket,
   onChart,
 }: {
   p: PaperPosition;
   equity: number;
   busy: boolean;
   onClose: () => void;
+  onBracket: () => void;
   onChart: () => void;
 }) {
   const share = equity > 0 ? Math.min(100, (p.margin / equity) * 100) : 0;
@@ -469,12 +581,19 @@ function PositionCard({
             {p.side === "long" ? "Long" : "Short"}
           </span>
         </button>
-        <button type="button" className="trade-btn trade-size-sm" onClick={onClose} disabled={busy}>
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
-          Close
-        </button>
+        <span className="pd-actions">
+          <button type="button" className="trade-btn trade-size-sm" onClick={onBracket}>
+            <Target className="w-3.5 h-3.5" />
+            Target/SL
+          </button>
+          <button type="button" className="trade-btn trade-size-sm" onClick={onClose} disabled={busy}>
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+            Close
+          </button>
+        </span>
       </header>
 
+      <div className="pp-pnl-label"><PaperTag /> Paper P&amp;L (unrealized)</div>
       <div className="pp-pos-pnl">
         <Delta value={p.unrealized_pnl}>
           <span className="pp-pos-pnl-value tnum">{signedUsd(p.unrealized_pnl)}</span>
@@ -489,6 +608,8 @@ function PositionCard({
         <div><dt>Mark</dt><dd className="tnum">{price(p.mark_price)}</dd></div>
         <div><dt>Margin</dt><dd className="tnum">{usd(p.margin)}</dd></div>
         <div><dt>Opened</dt><dd>{since(p.opened_at)}</dd></div>
+        <div><dt>Target</dt><dd className="tnum" data-tone={p.take_profit ? "up" : undefined}>{p.take_profit ? price(p.take_profit) : "—"}</dd></div>
+        <div><dt>Stop loss</dt><dd className="tnum" data-tone={p.stop_loss ? "down" : undefined}>{p.stop_loss ? price(p.stop_loss) : "—"}</dd></div>
       </dl>
 
       <div className="pp-pos-share">
@@ -529,5 +650,89 @@ function Empty({ icon, title, children }: { icon: React.ReactNode; title: string
       <b>{title}</b>
       <span>{children}</span>
     </div>
+  );
+}
+
+function DeployedStrategyCard({
+  s,
+  onPauseResume,
+  onChart,
+}: {
+  s: CustomStrategy;
+  onPauseResume: () => void;
+  onChart?: () => void;
+}) {
+  const p = s.paperSettings;
+  const isPaused = s.status === "paused";
+  const catBadge =
+    s.market.strategyType === "options"
+      ? "Options"
+      : s.market.strategyType === "futures"
+      ? "Futures"
+      : s.market.strategyType === "hedging"
+      ? "Hedging"
+      : "Indicators";
+
+  return (
+    <article className="p-4 rounded-xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.02)] space-y-3">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-[14px] font-bold">{s.name || "Custom Strategy"}</h3>
+            <span className="trade-badge trade-badge-blue text-[10px] uppercase">{catBadge}</span>
+            <span
+              className={`trade-badge ${
+                isPaused ? "trade-badge-amber" : "trade-badge-green"
+              } text-[10px] inline-flex items-center gap-1`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isPaused ? "bg-amber-400" : "bg-emerald-400 animate-pulse"}`} />
+              {isPaused ? "Paused" : "Paper Active"}
+            </span>
+          </div>
+          <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            Pair: <b>{symbolLabel(p?.symbol || s.market.symbols[0] || "BTCUSDT")}</b> · Timeframe: <b>{p?.timeframe || s.market.interval}</b>
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <Link
+            href={`/trade?tab=builder&edit=${s.id}`}
+            className="trade-btn trade-size-sm trade-btn-ghost"
+            title="Edit rules or backtest in Strategy Builder"
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            Simulator
+          </Link>
+          <button
+            type="button"
+            className="trade-btn trade-size-sm trade-btn-ghost"
+            onClick={onPauseResume}
+          >
+            {isPaused ? "Resume" : "Pause"}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-[var(--border-subtle)] text-[12px]">
+        <div>
+          <div className="trade-stat-label">Allocation</div>
+          <div className="font-bold font-mono mt-0.5">${p?.capitalUsd ?? 1000} ({p?.leverage ?? 1}x)</div>
+        </div>
+        <div>
+          <div className="trade-stat-label">Target / SL</div>
+          <div className="font-bold font-mono mt-0.5 text-emerald-400">
+            +{p?.confirmedTpPct ?? 2.5}% / <span className="text-rose-400">−{p?.confirmedSlPct ?? 1.2}%</span>
+          </div>
+        </div>
+        <div>
+          <div className="trade-stat-label">Execution Mode</div>
+          <div className="font-bold mt-0.5 text-blue-400">Auto Signal Paper</div>
+        </div>
+        <div>
+          <div className="trade-stat-label">Deployed</div>
+          <div className="font-bold mt-0.5">{since(s.deployedAt)}</div>
+        </div>
+      </div>
+    </article>
   );
 }

@@ -45,11 +45,30 @@ class DemoOrder(models.Model):
     # Spot pairs (PEPE/USDT, ADA/BTC) ka bhaav 0.0000004 jaisa hota hai — 8 decimal par wo kat jaata.
     price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     status = models.CharField(max_length=32)
+    # Order ke saath diya Target/SL — fill hote hi position par lag jaata hai.
+    stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    take_profit = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     created_at = models.DateTimeField()
 
     class Meta:
         db_table = "demo_orders"
         ordering = ["-created_at"]
+
+
+class PaperBracket(models.Model):
+    """Khuli paper position ka Target/SL. Ek symbol par ek position, isliye ek hi row."""
+
+    user = models.ForeignKey("UserAccount", on_delete=models.CASCADE, related_name="paper_brackets")
+    symbol = models.CharField(max_length=32)
+    stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    take_profit = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "paper_brackets"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "symbol"], name="uniq_paper_bracket"),
+        ]
 
 
 class UserAccount(models.Model):

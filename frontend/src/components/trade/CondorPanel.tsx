@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, RefreshCw, Waves } from "lucide-react";
 import { fetchIronCondor, optionUnderlying, type CondorResponse, type IronCondor } from "@/lib/cryptoApi";
 import { num, str, type StrategyDef, type StrategyValues } from "@/lib/strategies";
+import PayoffGraph from "@/components/trade/PayoffGraph";
 
 interface Props {
   def: StrategyDef;
@@ -155,6 +156,23 @@ export default function CondorPanel({ def, values }: Props) {
                 shuru. Ye levels strikes se aate hain, expiry par exact hain.
               </p>
             </div>
+
+            {/* ── Payoff Graph ──────────────────────────── */}
+            {condor.spot != null && (
+              <PayoffGraph
+                type="condor"
+                spot={condor.spot}
+                longPutStrike={condor.long_put.strike}
+                shortPutStrike={condor.short_put.strike}
+                shortCallStrike={condor.short_call.strike}
+                longCallStrike={condor.long_call.strike}
+                netCredit={condor.net_credit}
+                maxLoss={condor.max_loss}
+                breakevenLow={condor.breakeven_low}
+                breakevenHigh={condor.breakeven_high}
+                underlying={underlying}
+              />
+            )}
 
             {/* ── Net greeks — yahan ulta hai ───────────── */}
             <div>

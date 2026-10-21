@@ -9,6 +9,7 @@ import {
   type SpreadResponse,
 } from "@/lib/cryptoApi";
 import { num, str, type SignalTone, type StrategyDef, type StrategyValues } from "@/lib/strategies";
+import PayoffGraph from "@/components/trade/PayoffGraph";
 
 interface Props {
   def: StrategyDef;
@@ -142,6 +143,21 @@ export default function SpreadPanel({ def, values, tone }: Props) {
                 </div>
               </div>
             </div>
+
+            {/* ── Payoff Graph ──────────────────────────── */}
+            {spread.spot != null && (
+              <PayoffGraph
+                type="spread"
+                spot={spread.spot}
+                longStrike={spread.long_leg.strike}
+                shortStrike={spread.short_leg.strike}
+                netDebit={spread.net_debit}
+                maxProfit={spread.max_profit}
+                breakeven={spread.breakeven}
+                isCall={isCall}
+                underlying={underlying}
+              />
+            )}
 
             {/* ── Net greeks ────────────────────────────── */}
             <div>
