@@ -240,6 +240,8 @@ export interface BacktestTrade {
   bars_held?: number;
   /** Options backtest: legs + expiry, jaise "+C76000 · 16 Sep". */
   instrument?: string;
+  /** Portfolio backtest mein ye trade kis coin ka hai. */
+  symbol?: string;
   symbols?: string[];
   spot?: number;
   iv?: number;
@@ -293,6 +295,10 @@ export interface BacktestResult {
   /** [time ms, equity] — max ~400 points. */
   equity_curve?: [number, number][];
   open_position?: BacktestOpenPosition | null;
+  /** Portfolio backtest: har coin ka hisaab, aur un sab ke chalu trades. */
+  symbols?: string[];
+  portfolio?: BacktestPortfolioRow[];
+  open_positions?: (BacktestOpenPosition & { symbol: string })[];
   rules?: { channel: number; exit_channel: number; stop_atr: number; ema_fast: number; ema_slow: number; allow_shorts: boolean };
   costs?: { fee_pct_per_side: number; slippage_pct_per_side: number; long_funding_pct_per_8h: number };
   error?: string;
@@ -311,6 +317,18 @@ export interface BacktestStats {
   funding_paid: number;
   exposure_pct: number;
   /** Usi window mein coin khareed ke rakhte to. */
+  buy_hold_pct: number;
+}
+
+export interface BacktestPortfolioRow {
+  symbol: string;
+  capital: number;
+  pnl: number;
+  return_pct: number;
+  max_drawdown_pct: number;
+  profit_factor: number | null;
+  trades: number;
+  win_rate: number;
   buy_hold_pct: number;
 }
 
@@ -334,6 +352,8 @@ export interface BacktestParams {
   exit_channel?: number;
   stop_atr?: number;
   allow_shorts?: boolean;
+  /** Trend Rider portfolio: "BTCUSDT,ETHUSDT,SOLUSDT" — capital barabar baant kar sab par saath. */
+  symbols?: string;
   symbol: string;
   timeframe: string;
   days: number;
@@ -690,6 +710,7 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
     exit_channel: params.exit_channel,
     stop_atr: params.stop_atr,
     allow_shorts: params.allow_shorts,
+    symbols: params.symbols,
   };
   for (const [key, value] of Object.entries(extra)) {
     if (value !== undefined) q.set(key, String(value));

@@ -2205,6 +2205,9 @@ const volCrushCondor: StrategyDef = {
 
 /* ── Trend Rider (research-backed, backend native engine) ─ */
 
+/** Research mein yahi teen saath sabse smooth rahe — portfolio backtest inhi par. */
+const TREND_RIDER_PORTFOLIO = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+
 const TR_UP = "#10b981";
 const TR_DOWN = "#ef4444";
 const TR_STOP = "#f59e0b";
@@ -2240,7 +2243,16 @@ const trendRider: StrategyDef = {
     { key: "stop_atr", label: "Initial stop · ATR ×", kind: "number", group: "signal", min: 0.5, max: 6, step: 0.5 },
     { key: "allow_shorts", label: "Shorts bhi lo (sirf bear regime mein)", kind: "toggle", group: "signal" },
     ...marketFields,
-    { key: "capital", label: "Capital · $", kind: "number", group: "risk", min: 10, step: 10, onCard: true },
+    {
+      key: "capital",
+      label: "Capital · $",
+      kind: "number",
+      group: "risk",
+      min: 10,
+      step: 10,
+      onCard: true,
+      hint: "Portfolio backtest mein ye BTC, ETH aur SOL mein barabar bantta hai.",
+    },
     {
       key: "risk_pct",
       label: "Risk per trade · %",
@@ -2251,6 +2263,17 @@ const trendRider: StrategyDef = {
       step: 0.1,
       onCard: true,
       hint: "Stop lagne par capital ka itna % jaata hai. 1% pro standard hai; 2% par max drawdown ~30% tak gaya.",
+    },
+    {
+      key: "backtest_scope",
+      label: "Backtest kis par",
+      kind: "select",
+      group: "backtest",
+      options: [
+        { value: "portfolio", label: "Portfolio · BTC + ETH + SOL" },
+        { value: "single", label: "Sirf upar chuna coin" },
+      ],
+      hint: "Ek coin kabhi-kabhi saal bhar range mein rehta hai; teeno saath chalane par jo trend kare wahi kamata hai.",
     },
     { key: "days", label: "History · days", kind: "number", group: "backtest", min: 30, max: 700, hint: "365+ din rakho — trend system chhote window mein luck dikhata hai, edge nahi." },
   ],
@@ -2263,6 +2286,7 @@ const trendRider: StrategyDef = {
     allow_shorts: true,
     capital: 1000,
     risk_pct: 1,
+    backtest_scope: "portfolio",
     days: 365,
   },
   analyze(candles, values) {
@@ -2384,6 +2408,7 @@ const trendRider: StrategyDef = {
       exit_channel: num(values, "exit_channel", 15),
       stop_atr: num(values, "stop_atr", 2),
       allow_shorts: bool(values, "allow_shorts"),
+      symbols: str(values, "backtest_scope", "portfolio") === "portfolio" ? TREND_RIDER_PORTFOLIO.join(",") : undefined,
     };
   },
 };

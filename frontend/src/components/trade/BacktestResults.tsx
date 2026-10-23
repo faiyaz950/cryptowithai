@@ -280,14 +280,20 @@ function CapitalResults({
   const wins = Number(result.winning_trades ?? 0);
   const losses = Number(result.losing_trades ?? 0);
   const settled = wins + losses;
-  const winPct = settled > 0 ? (wins / settled) * 100 : 0;
+  // Ginti nahi, paisa — trend system mein haar zyada hoti hain par chhoti, jeet kam par badi.
+  const grossWin = all.reduce((acc, t) => acc + (t.pnl > 0 ? t.pnl : 0), 0);
+  const grossLoss = all.reduce((acc, t) => acc + (t.pnl > 0 ? 0 : -t.pnl), 0);
+  const winMoneyPct = grossWin + grossLoss > 0 ? (grossWin / (grossWin + grossLoss)) * 100 : 0;
   const pnl = s.final_equity - capital;
   const edge = s.return_pct - s.buy_hold_pct;
   const pf = s.profit_factor == null ? "—" : s.profit_factor >= 999 ? "∞" : s.profit_factor.toFixed(2);
   const rules = result.rules;
   const costs = result.costs;
-  const open = result.open_position;
-  const coin = (result.symbol || fallbackSymbol).replace(/USDT?$/, "");
+  const coinOf = (sym?: string) => (sym || fallbackSymbol).replace(/USDT?$/, "");
+  const rows = result.portfolio ?? [];
+  const isPortfolio = rows.length > 1;
+  const coin = isPortfolio ? rows.map((r) => coinOf(r.symbol)).join(" + ") : coinOf(result.symbol);
+  const opens = result.open_positions ?? (result.open_position ? [{ ...result.open_position, symbol: result.symbol || fallbackSymbol }] : []);
   // Trades se nahi, equity curve se — flat hafte bhi tested period ka hissa hain.
   const curve = result.equity_curve ?? [];
   // Saal zaroori — 365 din ka window warna "23 Oct → 23 Oct" padhta hai.
@@ -303,7 +309,11 @@ function CapitalResults({
           <span className="font-semibold" style={{ color: "var(--text-secondary)" }}>Tested period:</span>{" "}
           <span className="tnum">{period}</span>
         </span>
-        <span className="tnum">Capital ${capital.toLocaleString("en-US")} · risk {result.risk_pct}%/trade</span>
+        <span className="tnum">
+          Capital ${capital.toLocaleString("en-US")}
+          {isPortfolio && ` · ${coin} mein barabar ($${(capital / rows.length).toLocaleString("en-US", { maximumFractionDigits: 0 })} har coin)`}
+          {" "}· risk {result.risk_pct}%/trade
+        </span>
         {rules && (
           <span className="tnum">
             Channel {rules.channel}/{rules.exit_channel} · stop {rules.stop_atr}×ATR · EMA {rules.ema_fast}/{rules.ema_slow} · shorts {rules.allow_shorts ? "on" : "off"}
@@ -321,15 +331,15 @@ function CapitalResults({
         <Kpi label="Max drawdown" value={`−${s.max_drawdown_pct.toFixed(2)}%`} color="var(--red)" sub="Peak se sabse gehri girawat" />
         <Kpi label="Profit factor" value={pf} color={s.profit_factor != null && s.profit_factor >= 1 ? "var(--green)" : "var(--red)"} sub={`Avg ${signed(s.avg_r)}R · best ${signed(s.best_r, 1)}R`} />
         <Kpi
-          label={`vs ${coin} buy & hold`}
+          label={isPortfolio ? "vs basket buy & hold" : `vs ${coin} buy & hold`}
           value={`${signed(edge)}%`}
           color={tone(edge)}
-          sub={`${coin} khud ${signed(s.buy_hold_pct)}%`}
+          sub={isPortfolio ? `${coin} barabar rakhte: ${signed(s.buy_hold_pct)}%` : `${coin} khud ${signed(s.buy_hold_pct)}%`}
         />
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi label="Trades" value={String(result.total_trades ?? 0)} sub={`${wins}W · ${losses}L${open ? " · 1 chalu" : ""}`} />
+        <Kpi label="Trades" value={String(result.total_trades ?? 0)} sub={`${wins}W · ${losses}L${opens.length ? ` · ${opens.length} chalu` : ""}`} />
         <Kpi label="Win rate" value={`${result.win_rate ?? 0}%`} sub="Trend system: 30–40% normal" />
         <Kpi label="Fees + funding" value={`$${(s.fees_paid + s.funding_paid).toFixed(2)}`} sub={`fees $${s.fees_paid.toFixed(2)} · funding $${s.funding_paid.toFixed(2)}`} />
         <Kpi label="Time in market" value={`${s.exposure_pct}%`} sub={`${result.days_covered ?? 0} din · ${result.total_candles ?? 0} candles`} />
@@ -353,34 +363,81 @@ function CapitalResults({
         </div>
       )}
 
-      {open && (
-        <div className="trade-panel trade-panel-body flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
+      {isPortfolio && (
+        <div className="trade-panel overflow-hidden">
+          <div className="trade-panel-head">
+            <span className="trade-panel-title">Coin-wise</span>
+            <span className="text-[11.5px] tnum" style={{ color: "var(--text-muted)" }}>
+              Har coin apne hisse par alag chala — jaise har coin ka alag paper bot
+            </span>
+          </div>
+          <div className="overflow-auto">
+            <table className="trade-table">
+              <thead>
+                <tr>
+                  <th>Coin</th>
+                  <th className="trade-num">Capital</th>
+                  <th className="trade-num">P&amp;L $</th>
+                  <th className="trade-num">Return</th>
+                  <th className="trade-num">Max DD</th>
+                  <th className="trade-num">PF</th>
+                  <th className="trade-num">Trades</th>
+                  <th className="trade-num">Win rate</th>
+                  <th className="trade-num">Coin khud</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.symbol}>
+                    <td className="font-semibold">{symbolLabel(r.symbol)}</td>
+                    <td className="trade-num">${r.capital.toLocaleString("en-US", { maximumFractionDigits: 0 })}</td>
+                    <td className="trade-num font-bold" style={{ color: tone(r.pnl) }}>{signed(r.pnl)}</td>
+                    <td className="trade-num" style={{ color: tone(r.return_pct) }}>{signed(r.return_pct)}%</td>
+                    <td className="trade-num" style={{ color: "var(--red)" }}>−{r.max_drawdown_pct.toFixed(2)}%</td>
+                    <td className="trade-num">{r.profit_factor == null ? "—" : r.profit_factor >= 999 ? "∞" : r.profit_factor.toFixed(2)}</td>
+                    <td className="trade-num">{r.trades}</td>
+                    <td className="trade-num">{r.win_rate}%</td>
+                    <td className="trade-num" style={{ color: tone(r.buy_hold_pct) }}>{signed(r.buy_hold_pct)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {opens.map((open) => (
+        <div key={`${open.symbol}-${open.entry_time}`} className="trade-panel trade-panel-body flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
           <span className={`trade-badge ${sideTone(open.side)}`}>{open.side === "buy" ? "LONG chalu" : "SHORT chalu"}</span>
           <span className="tnum" style={{ color: "var(--text-secondary)" }}>
-            Entry {open.entry_price.toFixed(2)} · {fmtTime(open.entry_time)} · stop {open.stop_loss.toFixed(2)} · {open.quantity.toFixed(4)} {coin}
+            {isPortfolio && `${symbolLabel(open.symbol)} · `}Entry {open.entry_price.toFixed(2)} · {fmtTime(open.entry_time)} · stop {open.stop_loss.toFixed(2)} · {open.quantity.toFixed(4)} {coinOf(open.symbol)}
           </span>
           <span className="tnum font-bold" style={{ color: tone(open.unrealized_pnl) }}>
             {signed(open.unrealized_pnl)} $ unrealized
           </span>
         </div>
-      )}
+      ))}
 
       {settled > 0 && (
         <div className="trade-panel trade-panel-body">
           <div className="flex items-center justify-between mb-2.5">
-            <span className="trade-panel-title">Outcome split</span>
+            <span className="trade-panel-title">Outcome split · $</span>
             <span className="text-[12px] tnum" style={{ color: "var(--text-muted)" }}>
               Trailing exits {result.target_hits ?? 0} · Initial SL {result.sl_hits ?? 0}
             </span>
           </div>
           <div className="flex h-2.5 rounded-full overflow-hidden" style={{ background: "var(--tr-line-soft)" }}>
-            <div style={{ width: `${winPct}%`, background: "var(--green)" }} />
-            <div style={{ width: `${100 - winPct}%`, background: "var(--red)", opacity: 0.8 }} />
+            <div style={{ width: `${winMoneyPct}%`, background: "var(--green)" }} />
+            <div style={{ width: `${100 - winMoneyPct}%`, background: "var(--red)", opacity: 0.8 }} />
           </div>
           <div className="flex items-center justify-between mt-2 text-[11.5px] font-semibold tnum">
-            <span style={{ color: "var(--green)" }}>{wins} wins</span>
-            <span style={{ color: "var(--red)" }}>{losses} losses</span>
+            <span style={{ color: "var(--green)" }}>{wins} wins · +${grossWin.toFixed(2)}</span>
+            <span style={{ color: tone(grossWin - grossLoss) }}>Net {signed(grossWin - grossLoss)} $</span>
+            <span style={{ color: "var(--red)" }}>{losses} losses · −${grossLoss.toFixed(2)}</span>
           </div>
+          <p className="text-[11px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+            Bar trades ki ginti nahi, paisa dikhata hai — haar zyada aur chhoti, jeet kam par badi. Win rate {result.win_rate ?? 0}% (ginti se).
+          </p>
         </div>
       )}
 
@@ -388,7 +445,7 @@ function CapitalResults({
         <div className="trade-panel-head">
           <span className="trade-panel-title">Trade log</span>
           <span className="text-[11.5px] tnum" style={{ color: "var(--text-muted)" }}>
-            {symbolLabel(result.symbol || fallbackSymbol)} · {result.strategy} · {result.timeframe ?? fallbackTimeframe} · showing {trades.length}
+            {isPortfolio ? coin : symbolLabel(result.symbol || fallbackSymbol)} · {result.strategy} · {result.timeframe ?? fallbackTimeframe} · showing {trades.length}
           </span>
         </div>
         {trades.length === 0 ? (
@@ -399,6 +456,7 @@ function CapitalResults({
               <thead>
                 <tr>
                   <th>Side</th>
+                  {isPortfolio && <th>Coin</th>}
                   <th>Entry time</th>
                   <th className="trade-num">Entry</th>
                   <th className="trade-num">Exit</th>
@@ -416,6 +474,7 @@ function CapitalResults({
                       <td>
                         <span className={`trade-badge ${sideTone(t.side)}`}>{t.side === "buy" ? "LONG" : "SHORT"}</span>
                       </td>
+                      {isPortfolio && <td className="font-semibold">{coinOf(t.symbol)}</td>}
                       <td style={{ color: "var(--text-muted)" }}>{fmtTime(t.entry_time)}</td>
                       <td className="trade-num">{t.entry_price?.toFixed(2)}</td>
                       <td className="trade-num">{t.exit_price?.toFixed(2)}</td>

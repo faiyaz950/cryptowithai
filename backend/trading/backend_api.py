@@ -4048,24 +4048,15 @@ def _trend_rider_settings(source):
     return capital, risk_pct, params
 
 
-def _trend_rider_backtest(args, symbol, timeframe, days, exchange):
+def _trend_rider_sleeve(symbol, timeframe, tf_min, days, exchange, capital, params):
     """
-    Trend Rider ka backtest — window se pehle EMA 200 warmup ki candles alag se laata hai,
-    sirf band candles par chalta hai, aur P&L capital ke % mein deta hai (fees, slippage,
-    funding ke baad). Rules `trend_rider.py` mein.
+    Ek coin par Trend Rider — window se pehle EMA 200 warmup ki candles alag se laata hai
+    aur sirf band candles par chalta hai. Galti par ValueError (message user ke liye).
     """
-    tf_min = _TF_MINUTES.get(timeframe)
-    if not tf_min:
-        return jsonify({'success': False, 'error': f"Trend Rider {timeframe} par nahi chalti — 15m se 1d tak chuno (4h recommended)."}), 400
-    try:
-        capital, risk_pct, params = _trend_rider_settings(args)
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
-
     warmup_days = math.ceil(trend_rider.WARMUP_BARS * tf_min / 1440) + 1
     hist = client.get_historical_data_batch(symbol=symbol, interval=timeframe, days=days + warmup_days, exchange_name=exchange)
     if not hist or 'dataframe' not in hist or len(hist['dataframe']) == 0:
-        return jsonify({'success': False, 'error': 'Delta se history nahi mili — symbol ya network check karo.'}), 400
+        raise ValueError(f'{symbol}: Delta se history nahi mili — symbol ya network check karo.')
 
     df = hist['dataframe'].sort_values('Open Time').drop_duplicates(subset=['Open Time']).reset_index(drop=True)
     times = np.array([int(pd.Timestamp(t).timestamp() * 1000) for t in df['Open Time']], dtype=np.int64)
@@ -4077,49 +4068,184 @@ def _trend_rider_backtest(args, symbol, timeframe, days, exchange):
     window_bars = int(days * 1440 / tf_min)
     min_warmup = trend_rider.DEFAULTS['ema_slow'] + 10
     if len(df) < min_warmup + 10:
-        return jsonify({'success': False, 'error': f"Itni history nahi mili ({len(df)} candles) — EMA 200 ke liye kam se kam {min_warmup + 10} chahiye."}), 400
+        raise ValueError(f"{symbol}: itni history nahi mili ({len(df)} candles) — EMA 200 ke liye kam se kam {min_warmup + 10} chahiye.")
     start_index = max(len(df) - window_bars, min_warmup)
 
     res = trend_rider.simulate(
         times, df['Open'].to_numpy(), df['High'].to_numpy(), df['Low'].to_numpy(), df['Close'].to_numpy(),
         params=params, capital=capital, start_index=start_index, bar_hours=tf_min / 60,
     )
-    trades = res['trades']
-    stats = res['stats']
-    wins = sum(1 for t in trades if t['pnl'] > 0)
-    covered = (times[-1] - times[start_index]) / 86_400_000 if len(times) > start_index else 0
-    return jsonify({
-        'success': True,
-        'strategy': 'trend-rider',
-        'symbol': symbol,
-        'exchange': exchange,
-        'timeframe': timeframe,
-        'days_requested': days,
-        'days_covered': round(covered, 2),
-        'total_candles': len(df) - start_index,
-        'total_trades': len(trades),
-        'total_signals': len(trades) + (1 if res['open_position'] else 0),
-        'winning_trades': wins,
-        'losing_trades': len(trades) - wins,
-        'sl_hits': sum(1 for t in trades if t['status'] == 'SL_HIT'),
-        'target_hits': sum(1 for t in trades if t['status'] == 'TRAILING_STOP'),
-        'win_rate': round(100 * wins / len(trades), 2) if trades else 0,
-        'total_profit': round(stats['final_equity'] - capital, 2),
-        'lots': None,
-        'sl_points': None,
-        'target_points': None,
-        'trades': trades,
-        'capital': capital,
-        'risk_pct': risk_pct,
-        'stats': stats,
-        'equity_curve': trend_rider.downsample(res['equity']),
-        'open_position': res['open_position'],
-        'rules': {k: res['params'][k] for k in ('channel', 'exit_channel', 'stop_atr', 'ema_fast', 'ema_slow', 'allow_shorts')},
+    res['symbol'] = symbol
+    res['capital'] = capital
+    res['candles'] = len(df) - start_index
+    res['covered_days'] = (times[-1] - times[start_index]) / 86_400_000 if len(times) > start_index else 0
+    return res
+
+
+def _trend_rider_meta(params):
+    return {
+        'rules': {k: params[k] for k in ('channel', 'exit_channel', 'stop_atr', 'ema_fast', 'ema_slow', 'allow_shorts')},
         'costs': {
             'fee_pct_per_side': round(trend_rider.FEE_RATE * 100, 4),
             'slippage_pct_per_side': round(trend_rider.SLIPPAGE * 100, 4),
             'long_funding_pct_per_8h': round(trend_rider.FUNDING_PER_8H * 100, 4),
         },
+    }
+
+
+def _trend_rider_counts(trades):
+    wins = sum(1 for t in trades if t['pnl'] > 0)
+    return {
+        'total_trades': len(trades),
+        'winning_trades': wins,
+        'losing_trades': len(trades) - wins,
+        'sl_hits': sum(1 for t in trades if t['status'] == 'SL_HIT'),
+        'target_hits': sum(1 for t in trades if t['status'] == 'TRAILING_STOP'),
+        'win_rate': round(100 * wins / len(trades), 2) if trades else 0,
+    }
+
+
+def _trend_rider_portfolio(sleeves, capital):
+    """
+    Har coin apne hisse ke capital par alag chalta hai (jaise har coin ka alag paper bot) —
+    portfolio ki equity unka jod hai. Drawdown jode hue curve par, isliye coins ke ek saath
+    na girne ka fayda isi mein dikhta hai.
+    """
+    series = []
+    for s in sleeves:
+        ts = pd.Series([v for _, v in s['equity']], index=[t for t, _ in s['equity']], dtype=float)
+        series.append(ts[~ts.index.duplicated(keep='last')])
+    # Kisi coin ki candle chhoot jaaye to pichhli equity hi maano; window se pehle uska poora hissa.
+    frame = pd.concat(series, axis=1).sort_index().ffill()
+    for col, s in zip(frame.columns, sleeves):
+        frame[col] = frame[col].fillna(s['capital'])
+    total = frame.sum(axis=1)
+    peak = np.maximum.accumulate(np.concatenate([[capital], total.to_numpy()]))[1:]
+    dd = float(((peak - total.to_numpy()) / peak).max()) if len(total) else 0.0
+
+    trades = sorted(
+        ({**t, 'symbol': s['symbol']} for s in sleeves for t in s['trades']),
+        key=lambda t: t['entry_time'],
+    )
+    pnl = np.array([t['pnl'] for t in trades]) if trades else np.array([])
+    gains = float(pnl[pnl > 0].sum()) if len(pnl) else 0.0
+    losses = float(-pnl[pnl < 0].sum()) if len(pnl) else 0.0
+    final = float(total.iloc[-1]) if len(total) else float(capital)
+    sleeve_stats = [s['stats'] for s in sleeves]
+    stats = {
+        'final_equity': round(final, 2),
+        'return_pct': round(100 * (final / capital - 1), 2),
+        'max_drawdown_pct': round(100 * dd, 2),
+        'profit_factor': round(gains / losses, 2) if losses > 0 else (None if gains == 0 else 999.0),
+        'avg_r': round(float(np.mean([t['r_multiple'] for t in trades])), 3) if trades else 0.0,
+        'best_r': round(max(t['r_multiple'] for t in trades), 2) if trades else 0.0,
+        'worst_r': round(min(t['r_multiple'] for t in trades), 2) if trades else 0.0,
+        'fees_paid': round(sum(st['fees_paid'] for st in sleeve_stats), 2),
+        'funding_paid': round(sum(st['funding_paid'] for st in sleeve_stats), 2),
+        'exposure_pct': round(float(np.mean([st['exposure_pct'] for st in sleeve_stats])), 1),
+        # Barabar paisa teeno coins mein daal kar rakh dete to.
+        'buy_hold_pct': round(float(np.mean([st['buy_hold_pct'] for st in sleeve_stats])), 2),
+    }
+    rows = []
+    for s in sleeves:
+        st = s['stats']
+        c = _trend_rider_counts(s['trades'])
+        rows.append({
+            'symbol': s['symbol'],
+            'capital': round(s['capital'], 2),
+            'pnl': round(st['final_equity'] - s['capital'], 2),
+            'return_pct': st['return_pct'],
+            'max_drawdown_pct': st['max_drawdown_pct'],
+            'profit_factor': st['profit_factor'],
+            'trades': c['total_trades'],
+            'win_rate': c['win_rate'],
+            'buy_hold_pct': st['buy_hold_pct'],
+        })
+    curve = [(int(t), float(v)) for t, v in total.items()]
+    return trades, stats, curve, rows
+
+
+def _trend_rider_backtest(args, symbol, timeframe, days, exchange):
+    """
+    Trend Rider ka backtest — P&L capital ke % mein (fees, slippage, funding ke baad).
+    `symbols=BTCUSDT,ETHUSDT,SOLUSDT` diya ho to portfolio: capital barabar baant kar har coin
+    par alag chalata hai aur jodi hui equity, drawdown aur coin-wise hisaab deta hai.
+    Rules `trend_rider.py` mein.
+    """
+    tf_min = _TF_MINUTES.get(timeframe)
+    if not tf_min:
+        return jsonify({'success': False, 'error': f"Trend Rider {timeframe} par nahi chalti — 15m se 1d tak chuno (4h recommended)."}), 400
+    try:
+        capital, risk_pct, params = _trend_rider_settings(args)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    symbols = []
+    for raw in str(args.get('symbols') or '').split(','):
+        s = raw.strip().upper()
+        if s and s not in symbols:
+            symbols.append(s)
+    if len(symbols) > 5:
+        return jsonify({'success': False, 'error': 'Portfolio mein zyada se zyada 5 coins.'}), 400
+    portfolio = len(symbols) >= 2
+    if not portfolio:
+        symbols = [symbol]
+
+    share = capital / len(symbols)
+    try:
+        with ThreadPoolExecutor(max_workers=len(symbols)) as pool:
+            sleeves = list(pool.map(
+                lambda s: _trend_rider_sleeve(s, timeframe, tf_min, days, exchange, share, params), symbols))
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    meta = _trend_rider_meta(sleeves[0]['params'])
+    common = {
+        'success': True,
+        'strategy': 'trend-rider',
+        'exchange': exchange,
+        'timeframe': timeframe,
+        'days_requested': days,
+        'days_covered': round(max(s['covered_days'] for s in sleeves), 2),
+        'total_candles': max(s['candles'] for s in sleeves),
+        'lots': None,
+        'sl_points': None,
+        'target_points': None,
+        'capital': capital,
+        'risk_pct': risk_pct,
+        **meta,
+    }
+
+    if not portfolio:
+        res = sleeves[0]
+        trades = res['trades']
+        return jsonify({
+            **common,
+            **_trend_rider_counts(trades),
+            'symbol': symbol,
+            'total_signals': len(trades) + (1 if res['open_position'] else 0),
+            'total_profit': round(res['stats']['final_equity'] - capital, 2),
+            'trades': trades,
+            'stats': res['stats'],
+            'equity_curve': trend_rider.downsample(res['equity']),
+            'open_position': res['open_position'],
+        })
+
+    trades, stats, curve, rows = _trend_rider_portfolio(sleeves, capital)
+    open_positions = [{**s['open_position'], 'symbol': s['symbol']} for s in sleeves if s['open_position']]
+    return jsonify({
+        **common,
+        **_trend_rider_counts(trades),
+        'symbol': '+'.join(symbols),
+        'symbols': symbols,
+        'total_signals': len(trades) + len(open_positions),
+        'total_profit': round(stats['final_equity'] - capital, 2),
+        'trades': trades,
+        'stats': stats,
+        'equity_curve': trend_rider.downsample(curve),
+        'open_position': None,
+        'open_positions': open_positions,
+        'portfolio': rows,
     })
 
 
