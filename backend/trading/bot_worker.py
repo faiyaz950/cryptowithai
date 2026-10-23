@@ -139,7 +139,9 @@ def run_bot(api, bot, now):
     retry_due = needs_retry and now >= _retry_at.get(bot["id"], 0)
     # Candles ke beech sirf paper ka khula trade dekhna hai (live ka stop exchange par khud chalta hai).
     watch_stop = bot["mode"] != "live" and state["trade_state"] == "open"
-    if not (bar_due or retry_due or watch_stop):
+    # Steady: pehla profit candle ke andar bharna hai — paper aur live dono par tick se.
+    watch_tp1 = state["trade_state"] == "open" and state["tp1_price"] is not None and not state["tp1_done"]
+    if not (bar_due or retry_due or watch_stop or watch_tp1):
         return
 
     client, blocked = make_client(api, bot)
@@ -149,8 +151,19 @@ def run_bot(api, bot, now):
         return
     client.sync()
     if not (bar_due or retry_due):
-        # Paper stop ne position band ki ho to abhi dikhao, agli candle tak nahi.
-        s, events = trend_rider_bot.check_closed(state, client)
+        events = []
+        s = state
+        if watch_stop:
+            # Paper stop ne position band ki ho to abhi dikhao, agli candle tak nahi.
+            s, events = trend_rider_bot.check_closed(s, client)
+        if watch_tp1 and s["trade_state"] == "open":
+            try:
+                s, more = trend_rider_bot.check_first_profit(
+                    s, client, tp1_frac=float(bot["params"].get("tp1_frac") or 0.0), tag=f"cm{bot['id']}")
+            except OrderError as exc:
+                _fail(bot, now, f"Pehla profit book nahi hua: {exc}")
+                more = []
+            events += more
         if events:
             update_strategy_bot(bot["id"], events=events, **s)
         return
@@ -307,8 +320,32 @@ class PaperClient:
         return None
 
     def close(self, side, qty, stop_id, tag):
+        qty = self._open_qty(side, qty)
+        if qty <= 0:
+            return {"price": None}
         order = self._order("sell" if side == "long" else "buy", qty)
         return {"price": order["price"]}
+
+    def reduce(self, side, qty, remaining, stop, stop_id, tag):
+        """Steady: hissa band, baaki position ka stop (bracket) naye level par."""
+        open_qty = self._open_qty(side, qty + remaining)
+        if open_qty <= 0:
+            return {"price": None, "stop_id": None}
+        qty = min(qty, open_qty)
+        order = self._order("sell" if side == "long" else "buy", qty)
+        self.protect(side, open_qty - qty, stop, None)
+        return {"price": order["price"], "stop_id": None}
+
+    def _open_qty(self, side, qty):
+        """
+        Paper mein reduce-only nahi hota — stop abhi-abhi laga ho to bot ka "band karo" order
+        ulti position khol deta. Isliye pehle settle, phir sirf utna jitna usi side mein khula hai.
+        """
+        self.sync()
+        pos = self.position()
+        if not pos or pos["side"] != side:
+            return 0.0
+        return min(qty, pos["qty"])
 
     def cancel_stop(self, stop_id):
         # Paper bracket position flat hote hi `_after_paper_fill` / settle khud hata deta hai.
@@ -416,6 +453,22 @@ class LiveClient:
         if stop_id:
             self.cancel_stop(stop_id)
         return {"price": res.get("reference_price")}
+
+    def reduce(self, side, qty, remaining, stop, stop_id, tag):
+        """
+        Steady: hissa reduce-only market se band. Phir baaki size ka naya stop pehle lagao, purana
+        baad mein hatao — beech mein position kabhi bina stop nahi rehti.
+        """
+        res = self._market("sell" if side == "long" else "buy", qty, True, f"{tag}r")
+        try:
+            new_id = self._place_stop(side, remaining, stop, f"{tag}s")
+        except OrderError as exc:
+            # Naya nahi laga — purana (reduce-only, bada) hi rakho, bas price khiskao.
+            print(f"⚠️ Bot ka chhota stop nahi laga ({exc}) — purana stop hi khiska rahe hain")
+            return {"price": res.get("reference_price"), "stop_id": self.protect(side, remaining, stop, stop_id)}
+        if stop_id:
+            self.cancel_stop(stop_id)
+        return {"price": res.get("reference_price"), "stop_id": new_id}
 
     def cancel_stop(self, stop_id):
         if stop_id and self.adapter.cancel_stop_order(stop_id, self.product) is None:

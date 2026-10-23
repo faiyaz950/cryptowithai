@@ -118,6 +118,8 @@ export interface StrategyDef {
    * hisaab se sirf asli signal par entry leta hai aur stop trail karta hai.
    */
   autoTrade?: boolean;
+  /** Server bot deploy par strategy ke apne extra params (jaise Steady ka tp1). */
+  botParams?: (values: StrategyValues) => Record<string, number | boolean>;
   /**
    * Chart range chhota chuna ho tab bhi kam se kam itni candles laao — EMA 200 jaisi
    * lambi lines ko settle hone ke liye, taaki live signal chart zoom par na badle.
@@ -2220,198 +2222,254 @@ function fmtWhen(timeMs: number): string {
   return new Date(timeMs).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-const trendRider: StrategyDef = {
-  id: "trend-rider",
-  name: "Trend Rider 4H",
-  category: "Trend following · Perp long/short",
-  blurb:
-    "30-candle breakout + EMA 200 regime + trailing stop. 2019–2026 ke data par BTC, ETH, SOL, BNB, XRP paanchon par fees ke baad profitable.",
-  logic:
-    "Market jab trend mein ho tabhi trade, range mein bahar. LONG: 4h candle pichhli 30 candles ke highest high ke upar band ho aur price EMA 200 ke upar ho. SHORT: 30-candle low ke neeche band ho, price EMA 200 ke neeche aur EMA 50 bhi EMA 200 ke neeche (sirf pakka bear market). Entry agli candle ke open par. Stop = signal close se 2× ATR; har band candle par stop pichhli 15 candles ke low (short mein high) tak khiskta hai, kabhi peeche nahi. Size aisa ki stop lagne par capital ka sirf 1% jaaye. Win rate ~30–37% hi rehta hai — chhote loss bahut, par jeet wale trades 5–16R tak chalte hain. Yahi edge hai.",
-  accent: TR_UP,
-  icon: Waves,
-  featured: true,
-  autoTrade: true,
-  // EMA 200 ka seed ~1000 candles mein mit jaata hai — backtest (600 warmup) se signal mel khaata hai.
-  minHistoryBars: 1000,
-  backtestable: true,
-  engineNote:
-    "Backend ka native engine (`trend-rider`) — live signal, backtest aur paper auto-trader teeno same rule. Backtest mein Delta taker fee + 18% GST, 0.02% slippage aur longs par funding (0.01%/8h) kat'ta hai. Research 4h par hui hai: 1h par same rules ka drawdown ~2.5× tha, isliye 4h hi rakho. Trend system ko kam se kam 6–12 mahine par parkho — 30 din mein 2-3 trades hi hote hain.",
-  fields: [
-    { key: "channel", label: "Entry channel · candles", kind: "number", group: "signal", min: 5, max: 200, onCard: true, hint: "Band candle is channel ke high/low ke paar ho to entry." },
-    { key: "exit_channel", label: "Trailing channel · candles", kind: "number", group: "signal", min: 3, max: 200, hint: "Stop pichhli itni candles ke low/high par trail hota hai." },
-    { key: "stop_atr", label: "Initial stop · ATR ×", kind: "number", group: "signal", min: 0.5, max: 6, step: 0.5 },
-    { key: "allow_shorts", label: "Shorts bhi lo (sirf bear regime mein)", kind: "toggle", group: "signal" },
-    ...marketFields,
-    {
-      key: "capital",
-      label: "Capital · $",
-      kind: "number",
-      group: "risk",
-      min: 10,
-      step: 10,
-      onCard: true,
-      hint: "Portfolio backtest mein ye BTC, ETH aur SOL mein barabar bantta hai.",
+/**
+ * Trend Rider aur Steady ek hi engine — Steady bas pehla profit (tp1) book karke stop entry
+ * par le aata hai. Dono ka backtest, live signal aur server bot `trend_rider.py` se.
+ */
+function makeTrendRider(steady: boolean): StrategyDef {
+  const tp1R = (values: StrategyValues) => (steady ? num(values, "tp1_r", 1) : 0);
+  const tp1Frac = (values: StrategyValues) => (steady ? num(values, "tp1_pct", 25) / 100 : 0);
+  return {
+    id: steady ? "trend-rider-steady" : "trend-rider",
+    name: steady ? "Trend Rider Steady 4H" : "Trend Rider 4H",
+    category: steady ? "Trend following · ~50% win rate" : "Trend following · Perp long/short",
+    blurb: steady
+      ? "Trend Rider jaisa hi, par +1R par 25% profit book aur stop entry par. Win rate ~33% se ~50%, drawdown kam, kamai ~¼ kam."
+      : "30-candle breakout + EMA 200 regime + trailing stop. 2019–2026 ke data par BTC, ETH, SOL, BNB, XRP paanchon par fees ke baad profitable.",
+    logic: steady
+      ? "Entry, stop aur trend filter bilkul Trend Rider wale: 4h candle 30-candle high ke upar (EMA 200 ke upar) band ho to LONG, 30-candle low ke neeche (pakke bear market mein) to SHORT; stop 2× ATR, phir 15-candle low/high par trail. Fark ek hai — price entry se 1× risk (1R) aage jaate hi 25% position wahin book, aur stop entry (+fees) par. Isse jo trade thoda bhi chala wo jeet ban jaata hai: 2019–26 par win rate ~50% (BTC 49%, ETH 53%, SOL 53%), drawdown ~12% (Trend Rider ~16%). Badle mein bade trend ka sirf 75% hissa milta hai, isliye kamai ~¼ kam."
+      : "Market jab trend mein ho tabhi trade, range mein bahar. LONG: 4h candle pichhli 30 candles ke highest high ke upar band ho aur price EMA 200 ke upar ho. SHORT: 30-candle low ke neeche band ho, price EMA 200 ke neeche aur EMA 50 bhi EMA 200 ke neeche (sirf pakka bear market). Entry agli candle ke open par. Stop = signal close se 2× ATR; har band candle par stop pichhli 15 candles ke low (short mein high) tak khiskta hai, kabhi peeche nahi. Size aisa ki stop lagne par capital ka sirf 1% jaaye. Win rate ~30–37% hi rehta hai — chhote loss bahut, par jeet wale trades 5–16R tak chalte hain. Yahi edge hai.",
+    accent: steady ? "#0ea5e9" : TR_UP,
+    icon: steady ? Shield : Waves,
+    featured: true,
+    autoTrade: true,
+    // EMA 200 ka seed ~1000 candles mein mit jaata hai — backtest (600 warmup) se signal mel khaata hai.
+    minHistoryBars: 1000,
+    backtestable: true,
+    engineNote:
+      (steady
+        ? "Backend ka native engine (`trend-rider`, tp1 ke saath) — backtest pehla profit us candle ke andar 1R par bharta hai; server bot candles ke beech har 20s par dekhta hai aur usi ke paas book karta hai, stop phir entry + fees par. "
+        : "Backend ka native engine (`trend-rider`) — live signal, backtest aur paper auto-trader teeno same rule. ") +
+      "Backtest mein Delta taker fee + 18% GST, 0.02% slippage aur longs par funding (0.01%/8h) kat'ta hai. Research 4h par hui hai: 1h par same rules ka drawdown ~2.5× tha, isliye 4h hi rakho. Trend system ko kam se kam 6–12 mahine par parkho — 30 din mein 2-3 trades hi hote hain.",
+    botParams: (values): Record<string, number | boolean> =>
+      steady ? { tp1_r: tp1R(values), tp1_frac: tp1Frac(values) } : {},
+    fields: [
+      { key: "channel", label: "Entry channel · candles", kind: "number", group: "signal", min: 5, max: 200, onCard: true, hint: "Band candle is channel ke high/low ke paar ho to entry." },
+      { key: "exit_channel", label: "Trailing channel · candles", kind: "number", group: "signal", min: 3, max: 200, hint: "Stop pichhli itni candles ke low/high par trail hota hai." },
+      { key: "stop_atr", label: "Initial stop · ATR ×", kind: "number", group: "signal", min: 0.5, max: 6, step: 0.5 },
+      ...(steady
+        ? ([
+            { key: "tp1_r", label: "Pehla profit · R", kind: "number", group: "signal", min: 0.5, max: 5, step: 0.25, onCard: true, hint: "Entry se itne guna risk aage pehla hissa book. Research: 1R." },
+            { key: "tp1_pct", label: "Pehle profit par book · %", kind: "number", group: "signal", min: 5, max: 90, step: 5, hint: "25% par sabse santulit raha; zyada book karne se win rate wahi, kamai kam." },
+          ] satisfies StrategyField[])
+        : []),
+      { key: "allow_shorts", label: "Shorts bhi lo (sirf bear regime mein)", kind: "toggle", group: "signal" },
+      ...marketFields,
+      {
+        key: "capital",
+        label: "Capital · $",
+        kind: "number",
+        group: "risk",
+        min: 10,
+        step: 10,
+        onCard: true,
+        hint: "Portfolio backtest mein ye BTC, ETH aur SOL mein barabar bantta hai.",
+      },
+      {
+        key: "risk_pct",
+        label: "Risk per trade · %",
+        kind: "number",
+        group: "risk",
+        min: 0.1,
+        max: 5,
+        step: 0.1,
+        onCard: true,
+        hint: "Stop lagne par capital ka itna % jaata hai. 1% pro standard hai; 2% par max drawdown ~30% tak gaya.",
+      },
+      {
+        key: "backtest_scope",
+        label: "Backtest kis par",
+        kind: "select",
+        group: "backtest",
+        options: [
+          { value: "portfolio", label: "Portfolio · BTC + ETH + SOL" },
+          { value: "single", label: "Sirf upar chuna coin" },
+        ],
+        hint: "Ek coin kabhi-kabhi saal bhar range mein rehta hai; teeno saath chalane par jo trend kare wahi kamata hai.",
+      },
+      { key: "days", label: "History · days", kind: "number", group: "backtest", min: 30, max: 700, hint: "365+ din rakho — trend system chhote window mein luck dikhata hai, edge nahi." },
+    ],
+    defaults: {
+      symbol: "BTCUSDT",
+      timeframe: "4h",
+      channel: 30,
+      exit_channel: 15,
+      stop_atr: 2,
+      allow_shorts: true,
+      capital: 1000,
+      risk_pct: 1,
+      backtest_scope: "portfolio",
+      days: 365,
+      ...(steady ? { tp1_r: 1, tp1_pct: 25 } : {}),
     },
-    {
-      key: "risk_pct",
-      label: "Risk per trade · %",
-      kind: "number",
-      group: "risk",
-      min: 0.1,
-      max: 5,
-      step: 0.1,
-      onCard: true,
-      hint: "Stop lagne par capital ka itna % jaata hai. 1% pro standard hai; 2% par max drawdown ~30% tak gaya.",
-    },
-    {
-      key: "backtest_scope",
-      label: "Backtest kis par",
-      kind: "select",
-      group: "backtest",
-      options: [
-        { value: "portfolio", label: "Portfolio · BTC + ETH + SOL" },
-        { value: "single", label: "Sirf upar chuna coin" },
-      ],
-      hint: "Ek coin kabhi-kabhi saal bhar range mein rehta hai; teeno saath chalane par jo trend kare wahi kamata hai.",
-    },
-    { key: "days", label: "History · days", kind: "number", group: "backtest", min: 30, max: 700, hint: "365+ din rakho — trend system chhote window mein luck dikhata hai, edge nahi." },
-  ],
-  defaults: {
-    symbol: "BTCUSDT",
-    timeframe: "4h",
-    channel: 30,
-    exit_channel: 15,
-    stop_atr: 2,
-    allow_shorts: true,
-    capital: 1000,
-    risk_pct: 1,
-    backtest_scope: "portfolio",
-    days: 365,
-  },
-  analyze(candles, values) {
-    const symbol = str(values, "symbol", "BTCUSDT");
-    const timeframe = str(values, "timeframe", "4h");
-    const intervalMs = intervalMinutes(timeframe) * 60_000;
-    const params = {
-      channel: Math.max(5, Math.round(num(values, "channel", 30))),
-      exitChannel: Math.max(3, Math.round(num(values, "exit_channel", 15))),
-      stopAtr: num(values, "stop_atr", 2),
-      allowShorts: bool(values, "allow_shorts"),
-      emaFast: 50,
-      emaSlow: 200,
-    };
-    const capital = num(values, "capital", 1000);
-    const riskPct = num(values, "risk_pct", 1);
-    const overlays: ChartOverlay[] = [
-      { key: TREND_KEYS.upper, label: `${params.channel}-candle high`, color: TR_UP },
-      { key: TREND_KEYS.lower, label: `${params.channel}-candle low`, color: TR_DOWN },
-      { key: emaKey(params.emaSlow), label: `EMA ${params.emaSlow}`, color: THIRD_COLOR },
-      { key: TREND_KEYS.stop, label: "Active stop", color: TR_STOP },
-    ];
-    if (candles.length < params.emaSlow + params.channel + 10) {
-      return {
-        ...emptyAnalysis(candles, overlays),
-        signal: {
-          headline: "Zyada history chahiye",
-          detail: `EMA ${params.emaSlow} aur ${params.channel}-candle channel ke liye kam se kam ${params.emaSlow + params.channel + 10} candles chahiye — chart history badhao.`,
+    analyze(candles, values) {
+      const symbol = str(values, "symbol", "BTCUSDT");
+      const timeframe = str(values, "timeframe", "4h");
+      const intervalMs = intervalMinutes(timeframe) * 60_000;
+      const params = {
+        channel: Math.max(5, Math.round(num(values, "channel", 30))),
+        exitChannel: Math.max(3, Math.round(num(values, "exit_channel", 15))),
+        stopAtr: num(values, "stop_atr", 2),
+        allowShorts: bool(values, "allow_shorts"),
+        emaFast: 50,
+        emaSlow: 200,
+        tp1R: tp1R(values),
+        tp1Frac: tp1Frac(values),
+      };
+      const capital = num(values, "capital", 1000);
+      const riskPct = num(values, "risk_pct", 1);
+      const overlays: ChartOverlay[] = [
+        { key: TREND_KEYS.upper, label: `${params.channel}-candle high`, color: TR_UP },
+        { key: TREND_KEYS.lower, label: `${params.channel}-candle low`, color: TR_DOWN },
+        { key: emaKey(params.emaSlow), label: `EMA ${params.emaSlow}`, color: THIRD_COLOR },
+        { key: TREND_KEYS.stop, label: "Active stop", color: TR_STOP },
+      ];
+      if (candles.length < params.emaSlow + params.channel + 10) {
+        return {
+          ...emptyAnalysis(candles, overlays),
+          signal: {
+            headline: "Zyada history chahiye",
+            detail: `EMA ${params.emaSlow} aur ${params.channel}-candle channel ke liye kam se kam ${params.emaSlow + params.channel + 10} candles chahiye — chart history badhao.`,
+            tone: "neutral",
+            readouts: [],
+          },
+        };
+      }
+
+      const r = replayTrendRider(candles, params, intervalMs);
+      const coin = coinOf(symbol);
+      const last = candles[candles.length - 1];
+      const lastAtr = r.atr ?? 0;
+
+      let signal: LiveSignal;
+      let desired: AutoTradeState["desired"] = null;
+      if (r.position) {
+        const p = r.position;
+        const long = p.side === "long";
+        const move = ((last.close - p.entryPrice) / p.entryPrice) * 100 * (long ? 1 : -1);
+        desired = { side: p.side, entryTime: p.entryTime, stop: p.stop };
+        const booked = steady && p.tp1Done;
+        signal = {
+          headline: booked
+            ? `${long ? "LONG" : "SHORT"} chalu — ${Math.round(tp1Frac(values) * 100)}% book, stop ${price(p.stop)}`
+            : `${long ? "LONG" : "SHORT"} chalu — trailing stop ${price(p.stop)}`,
+          detail:
+            `Entry ${price(p.entryPrice)} (${fmtWhen(p.entryTime)}), abhi ${move >= 0 ? "+" : ""}${move.toFixed(2)}%. ` +
+            (steady && p.tp1Price != null && !p.tp1Done
+              ? `Pehla profit ${price(p.tp1Price)} par — wahan ${Math.round(tp1Frac(values) * 100)}% book aur stop entry par. `
+              : booked
+                ? "Pehla profit book ho chuka — ab ye trade loss mein nahi ja sakta (gap ko chhod kar). "
+                : "") +
+            `Stop har band candle par pichhli ${params.exitChannel} candles ke ${long ? "low" : "high"} tak khiskta hai — kabhi ${long ? "neeche" : "upar"} nahi.`,
+          tone: long ? "buy" : "sell",
+          readouts: [],
+        };
+      } else if (r.pending) {
+        const p = r.pending;
+        const long = p.side === "long";
+        const entry = p.entryPrice ?? last.close;
+        const qty = trendRiderQuantity(capital, riskPct, entry, p.stop);
+        desired = { side: p.side, entryTime: p.entryTime, stop: p.stop };
+        signal = {
+          headline: long ? `BUY — ${params.channel}-candle breakout confirm` : `SELL — ${params.channel}-candle breakdown (bear regime)`,
+          detail:
+            `Band candle ne channel ${long ? "upar" : "neeche"} toda. Entry ${price(entry)} ke paas, stop ${price(p.stop)}` +
+            (steady && p.tp1Price != null ? `, pehla profit ${price(p.tp1Price)}` : "") +
+            `. $${capital.toLocaleString("en-US")} par ${riskPct}% risk = ${qty.toFixed(4)} ${coin}.`,
+          tone: long ? "buy" : "sell",
+          entry: true,
+          readouts: [],
+        };
+      } else if (r.regime === "bull") {
+        signal = {
+          headline: "Flat — breakout ka intezaar",
+          detail: `4h candle ${price(r.upper)} ke upar band ho to LONG. Range mein bahar baithna hi is system ki taqat hai — false breakouts yahin se aate hain.`,
           tone: "neutral",
           readouts: [],
+        };
+      } else if (r.regime === "bear" && params.allowShorts) {
+        signal = {
+          headline: "Flat — bear regime, breakdown ka intezaar",
+          detail: `4h candle ${price(r.lower)} ke neeche band ho to SHORT. Long tab tak band jab tak price EMA ${params.emaSlow} ke upar na aaye.`,
+          tone: "neutral",
+          readouts: [],
+        };
+      } else {
+        signal = {
+          headline: "Flat — koi saaf trend nahi",
+          detail: `Price EMA ${params.emaSlow} ke neeche hai par EMA 50 abhi upar — na long, na short. Aise market mein cash hi position hai.`,
+          tone: "neutral",
+          readouts: [],
+        };
+      }
+
+      const stopDist = params.stopAtr * lastAtr;
+      const refPrice = r.position?.entryPrice ?? last.close;
+      const refStop = r.position?.stop ?? r.pending?.stop ?? refPrice - stopDist;
+      const sizeQty = trendRiderQuantity(capital, riskPct, refPrice, refStop);
+      const regimeLabel = r.regime === "bull" ? "Bull · longs on" : r.regime === "bear" ? (params.allowShorts ? "Bear · shorts on" : "Bear · shorts off") : "Neutral · flat";
+      signal.readouts = [
+        { label: "Regime", value: regimeLabel, color: r.regime === "bull" ? "var(--green)" : r.regime === "bear" ? "var(--red)" : undefined },
+        { label: "Long trigger", value: price(r.upper), color: TR_UP },
+        { label: "Short trigger", value: price(r.lower), color: TR_DOWN },
+        { label: `EMA ${params.emaSlow}`, value: price(r.emaSlow), color: THIRD_COLOR },
+        {
+          label: r.position ? "Active stop" : "Stop distance",
+          value: r.position ? price(r.position.stop) : `${price(stopDist)} (${((stopDist / last.close) * 100).toFixed(2)}%)`,
+          color: TR_STOP,
         },
-      };
-    }
+        { label: `Size · ${riskPct}% risk`, value: `${sizeQty.toFixed(4)} ${coin} (~$${(sizeQty * refPrice).toFixed(0)})` },
+        ...(steady
+          ? [
+              {
+                label: `Pehla profit · ${Math.round(tp1Frac(values) * 100)}%`,
+                value: r.position
+                  ? r.position.tp1Done
+                    ? "Book ho gaya ✓"
+                    : price(r.position.tp1Price)
+                  : r.pending?.tp1Price != null
+                    ? price(r.pending.tp1Price)
+                    : `+${price(tp1R(values) * stopDist)} (${tp1R(values)}R)`,
+                color: "#0ea5e9",
+              },
+            ]
+          : []),
+        { label: "Pair", value: `${symbolLabel(symbol)} · ${timeframe.toUpperCase()}` },
+      ];
 
-    const r = replayTrendRider(candles, params, intervalMs);
-    const coin = coinOf(symbol);
-    const last = candles[candles.length - 1];
-    const lastAtr = r.atr ?? 0;
+      return { candles: r.candles, overlays, signal, autoTrade: { desired, intervalMs } };
+    },
+    toBacktest(values) {
+      return {
+        ...baseParams(values),
+        strategy: "trend-rider",
+        timeframe: str(values, "timeframe", "4h"),
+        days: num(values, "days", 365),
+        capital: num(values, "capital", 1000),
+        risk_pct: num(values, "risk_pct", 1),
+        channel: num(values, "channel", 30),
+        exit_channel: num(values, "exit_channel", 15),
+        stop_atr: num(values, "stop_atr", 2),
+        allow_shorts: bool(values, "allow_shorts"),
+        symbols: str(values, "backtest_scope", "portfolio") === "portfolio" ? TREND_RIDER_PORTFOLIO.join(",") : undefined,
+        ...(steady ? { tp1_r: tp1R(values), tp1_frac: tp1Frac(values) } : {}),
+      };
+    },
+  };
+}
 
-    let signal: LiveSignal;
-    let desired: AutoTradeState["desired"] = null;
-    if (r.position) {
-      const p = r.position;
-      const long = p.side === "long";
-      const move = ((last.close - p.entryPrice) / p.entryPrice) * 100 * (long ? 1 : -1);
-      desired = { side: p.side, entryTime: p.entryTime, stop: p.stop };
-      signal = {
-        headline: `${long ? "LONG" : "SHORT"} chalu — trailing stop ${price(p.stop)}`,
-        detail: `Entry ${price(p.entryPrice)} (${fmtWhen(p.entryTime)}), abhi ${move >= 0 ? "+" : ""}${move.toFixed(2)}%. Stop har band candle par pichhli ${params.exitChannel} candles ke ${long ? "low" : "high"} tak khiskta hai — kabhi ${long ? "neeche" : "upar"} nahi.`,
-        tone: long ? "buy" : "sell",
-        readouts: [],
-      };
-    } else if (r.pending) {
-      const p = r.pending;
-      const long = p.side === "long";
-      const entry = p.entryPrice ?? last.close;
-      const qty = trendRiderQuantity(capital, riskPct, entry, p.stop);
-      desired = { side: p.side, entryTime: p.entryTime, stop: p.stop };
-      signal = {
-        headline: long ? `BUY — ${params.channel}-candle breakout confirm` : `SELL — ${params.channel}-candle breakdown (bear regime)`,
-        detail: `Band candle ne channel ${long ? "upar" : "neeche"} toda. Entry ${price(entry)} ke paas, stop ${price(p.stop)}. $${capital.toLocaleString("en-US")} par ${riskPct}% risk = ${qty.toFixed(4)} ${coin}.`,
-        tone: long ? "buy" : "sell",
-        entry: true,
-        readouts: [],
-      };
-    } else if (r.regime === "bull") {
-      signal = {
-        headline: "Flat — breakout ka intezaar",
-        detail: `4h candle ${price(r.upper)} ke upar band ho to LONG. Range mein bahar baithna hi is system ki taqat hai — false breakouts yahin se aate hain.`,
-        tone: "neutral",
-        readouts: [],
-      };
-    } else if (r.regime === "bear" && params.allowShorts) {
-      signal = {
-        headline: "Flat — bear regime, breakdown ka intezaar",
-        detail: `4h candle ${price(r.lower)} ke neeche band ho to SHORT. Long tab tak band jab tak price EMA ${params.emaSlow} ke upar na aaye.`,
-        tone: "neutral",
-        readouts: [],
-      };
-    } else {
-      signal = {
-        headline: "Flat — koi saaf trend nahi",
-        detail: `Price EMA ${params.emaSlow} ke neeche hai par EMA 50 abhi upar — na long, na short. Aise market mein cash hi position hai.`,
-        tone: "neutral",
-        readouts: [],
-      };
-    }
-
-    const stopDist = params.stopAtr * lastAtr;
-    const refPrice = r.position?.entryPrice ?? last.close;
-    const refStop = r.position?.stop ?? r.pending?.stop ?? refPrice - stopDist;
-    const sizeQty = trendRiderQuantity(capital, riskPct, refPrice, refStop);
-    const regimeLabel = r.regime === "bull" ? "Bull · longs on" : r.regime === "bear" ? (params.allowShorts ? "Bear · shorts on" : "Bear · shorts off") : "Neutral · flat";
-    signal.readouts = [
-      { label: "Regime", value: regimeLabel, color: r.regime === "bull" ? "var(--green)" : r.regime === "bear" ? "var(--red)" : undefined },
-      { label: "Long trigger", value: price(r.upper), color: TR_UP },
-      { label: "Short trigger", value: price(r.lower), color: TR_DOWN },
-      { label: `EMA ${params.emaSlow}`, value: price(r.emaSlow), color: THIRD_COLOR },
-      {
-        label: r.position ? "Active stop" : "Stop distance",
-        value: r.position ? price(r.position.stop) : `${price(stopDist)} (${((stopDist / last.close) * 100).toFixed(2)}%)`,
-        color: TR_STOP,
-      },
-      { label: `Size · ${riskPct}% risk`, value: `${sizeQty.toFixed(4)} ${coin} (~$${(sizeQty * refPrice).toFixed(0)})` },
-      { label: "Pair", value: `${symbolLabel(symbol)} · ${timeframe.toUpperCase()}` },
-    ];
-
-    return { candles: r.candles, overlays, signal, autoTrade: { desired, intervalMs } };
-  },
-  toBacktest(values) {
-    return {
-      ...baseParams(values),
-      strategy: "trend-rider",
-      timeframe: str(values, "timeframe", "4h"),
-      days: num(values, "days", 365),
-      capital: num(values, "capital", 1000),
-      risk_pct: num(values, "risk_pct", 1),
-      channel: num(values, "channel", 30),
-      exit_channel: num(values, "exit_channel", 15),
-      stop_atr: num(values, "stop_atr", 2),
-      allow_shorts: bool(values, "allow_shorts"),
-      symbols: str(values, "backtest_scope", "portfolio") === "portfolio" ? TREND_RIDER_PORTFOLIO.join(",") : undefined,
-    };
-  },
-};
+const trendRider = makeTrendRider(false);
+const trendRiderSteady = makeTrendRider(true);
 
 /* ── Capital-Based Strategies (₹3k to ₹50k) ───────────── */
 
@@ -2963,6 +3021,7 @@ const cryptoPortfolio50k: StrategyDef = {
 
 export const STRATEGIES: StrategyDef[] = [
   trendRider,
+  trendRiderSteady,
   donchianBreakout20k,
   emaAdx10k,
   rsiReversion3k,

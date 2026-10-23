@@ -33,7 +33,8 @@ import numpy as np
 
 import trend_rider
 
-STATE_KEYS = ("entry_time", "trade_state", "side", "quantity", "entry_price", "stop_loss", "stop_order_id")
+STATE_KEYS = ("entry_time", "trade_state", "side", "quantity", "entry_price", "stop_loss", "stop_order_id",
+              "tp1_price", "tp1_done")
 
 
 class OrderError(Exception):
@@ -87,8 +88,12 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
     times = np.asarray(times, dtype=np.int64)
     o, h, l, c = (np.asarray(x, dtype=float) for x in (o, h, l, c))
     n = int(np.searchsorted(times, now_ms - bar_ms, side="right"))
+    steady = bool(p.get("tp1_r")) and 0 < float(p.get("tp1_frac") or 0) < 1
     out = {"position": None, "pending": None, "forming": None, "equity": float(capital),
-           "trades": [], "last_closed": None, "stale": False, "error": None}
+           "trades": [], "last_closed": None, "stale": False, "error": None,
+           # Steady: pehla profit kitne R par aur kitna hissa (0 = Steady band).
+           "tp1_r": float(p["tp1_r"]) if steady else 0.0,
+           "tp1_frac": float(p["tp1_frac"]) if steady else 0.0}
 
     if n < len(times) and times[n] <= now_ms:
         out["forming"] = {"time": int(times[n]), "open": float(o[n]), "high": float(h[n]), "low": float(l[n])}
@@ -117,6 +122,8 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
             "entry_price": float(pos["entry_price"]),
             "stop": float(pos["stop_loss"]),
             "initial_stop": float(pos["initial_stop"]),
+            "tp1_price": float(pos["tp1_price"]) if pos.get("tp1_price") is not None else None,
+            "tp1_done": bool(pos.get("tp1_done")),
         }
         return out
 
@@ -126,12 +133,30 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
         ind = trend_rider.indicators(oc, hc, lc, cc, p)
         if ind["long"][k] or ind["short"][k]:
             d = 1 if ind["long"][k] else -1
+            stop = float(cc[k] - d * p["stop_atr"] * ind["atr"][k])
+            entry_time = int(tc[k]) + bar_ms
+            tp1 = None
+            forming = out["forming"]
+            if steady and forming and forming["time"] == entry_time:
+                # simulate jaisa: entry candle ka open + slippage se tp1.
+                tp1 = _tp1_level(forming["open"] * (1 + d * trend_rider.SLIPPAGE), stop, out["tp1_r"])
             out["pending"] = {
                 "side": "long" if d > 0 else "short",
-                "entry_time": int(tc[k]) + bar_ms,
-                "stop": float(cc[k] - d * p["stop_atr"] * ind["atr"][k]),
+                "entry_time": entry_time,
+                "stop": stop,
+                "tp1_price": tp1,
             }
     return out
+
+
+def _tp1_level(fill, stop, tp1_r):
+    """Entry se tp1_r x risk aage — `trend_rider.simulate` ka tp1."""
+    return fill + tp1_r * (fill - stop)
+
+
+def _breakeven(side, entry):
+    """Steady ke baad ka stop: entry + dono taraf ki fees/slippage — `simulate` jaisa."""
+    return entry * (1 + _dir(side) * 2 * (trend_rider.FEE_RATE + trend_rider.SLIPPAGE))
 
 
 def entry_quantity(equity, risk_pct, side, price, stop, max_leverage=None):
@@ -175,9 +200,11 @@ def reconcile(state, plan_, client, *, now_ms, bar_ms, risk_pct, allow_entries=T
     s = {k: state.get(k) for k in STATE_KEYS}
     s["trade_state"] = s["trade_state"] or ""
     s["stop_order_id"] = s["stop_order_id"] or ""
+    s["tp1_done"] = bool(s["tp1_done"])
     events = []
     ctx = {"client": client, "now_ms": now_ms, "bar_ms": bar_ms, "risk_pct": risk_pct,
-           "allow_entries": allow_entries, "claim": claim, "tag": tag, "plan": plan_}
+           "allow_entries": allow_entries, "claim": claim, "tag": tag, "plan": plan_,
+           "tp1_frac": float(plan_.get("tp1_frac") or 0.0)}
     desired = plan_.get("position") or plan_.get("pending")
     try:
         if desired and s["entry_time"] == desired["entry_time"]:
@@ -219,7 +246,7 @@ def close_trade(state, client, *, why, now_ms, tag="bot"):
 
 def _skip(s, desired, events, why):
     s.update(entry_time=desired["entry_time"], trade_state="skipped", side=desired["side"], quantity=None,
-             entry_price=None, stop_loss=desired["stop"], stop_order_id="")
+             entry_price=None, stop_loss=desired["stop"], stop_order_id="", tp1_price=None, tp1_done=False)
     events.append(why)
 
 
@@ -244,8 +271,13 @@ def _enter(s, desired, ctx, events, *, claimed):
         _skip(s, desired, events, "Quantity 0 bani — capital/risk badhao (ya contract size se chhota order)")
         return
 
+    tp1_r = ctx["plan"].get("tp1_r") or 0.0
+    tp1 = desired.get("tp1_price")
+    if tp1_r and tp1 is None:
+        # Entry candle ka open plan mein nahi tha — abhi ke bhaav se wahi formula.
+        tp1 = _tp1_level(mark * (1 + d * trend_rider.SLIPPAGE), stop, tp1_r)
     s.update(entry_time=desired["entry_time"], trade_state="entering", side=side, quantity=qty,
-             entry_price=None, stop_loss=stop, stop_order_id="")
+             entry_price=None, stop_loss=stop, stop_order_id="", tp1_price=tp1, tp1_done=False)
     if not claimed and ctx["claim"] is not None:
         fields = {k: s[k] for k in STATE_KEYS if k != "entry_time"}
         if not ctx["claim"](desired["entry_time"], fields):
@@ -267,6 +299,8 @@ def _resume_entry(s, desired, ctx, events):
     if pos and pos["side"] == s["side"]:
         qty = min(pos["qty"], s["quantity"]) if s["quantity"] else pos["qty"]
         s.update(trade_state="open", quantity=qty)
+        if s.get("tp1_price") is None and desired.get("tp1_price") is not None:
+            s["tp1_price"] = desired["tp1_price"]
         s["stop_order_id"] = client.protect(s["side"], qty, desired["stop"], s["stop_order_id"] or None) or ""
         s["stop_loss"] = desired["stop"]
         events.append(f"Pichhli entry lag chuki thi — {s['side'].upper()} {_fmt_qty(qty)} sambhali, stop {_fmt_px(desired['stop'])}")
@@ -288,8 +322,18 @@ def _manage(s, desired, ctx, events):
         s.update(trade_state="closed", stop_order_id="")
         events.append(f"Position band mili — stop {_fmt_px(s['stop_loss'])} lag chuka (ya haath se band hui)")
         return
+    if desired.get("tp1_done") and not s["tp1_done"]:
+        # Candles ke beech wali tick chook gayi — candle band hone par hissa book karo.
+        _take_first_profit(s, client, ctx["tp1_frac"], events, ctx["tag"])
+        if s["trade_state"] != "open":
+            return
+    if desired.get("tp1_price") is not None:
+        s["tp1_price"] = desired["tp1_price"]
     new, old = desired["stop"], s["stop_loss"]
     d = _dir(s["side"])
+    if s["tp1_done"] and old is not None:
+        # Hissa book hone ke baad stop kabhi dheela nahi — bot ka breakeven backtest se thoda alag ho sakta hai.
+        new = max(new, old) if d > 0 else min(new, old)
     mark = client.mark()
     if mark and d * (mark - new) <= 0:
         # Naya stop abhi ke bhaav ke paar — backtest agli candle ke open par (gap) nikalta.
@@ -314,3 +358,51 @@ def _flatten(s, ctx, events, why):
             client.cancel_stop(s["stop_order_id"])
         events.append(f"{why} — position pehle hi band thi (stop lag chuka)")
     s.update(trade_state="closed", stop_order_id="")
+
+
+def check_first_profit(state, client, *, tp1_frac, tag="bot"):
+    """
+    Candles ke beech wali tick (Steady) — price pehle profit ke level tak pahuncha to hissa
+    abhi book karo aur stop entry par. Backtest ise candle ke andar tp1 par bharta hai; tick
+    usi ke paas bharti hai. Returns (state, events). Order fail par OrderError.
+    """
+    s = {k: state.get(k) for k in STATE_KEYS}
+    s["tp1_done"] = bool(s["tp1_done"])
+    if s["trade_state"] != "open" or s["tp1_done"] or s["tp1_price"] is None or not tp1_frac:
+        return s, []
+    mark = client.mark()
+    if not mark or _dir(s["side"]) * (mark - s["tp1_price"]) < 0:
+        return s, []
+    events = []
+    _take_first_profit(s, client, tp1_frac, events, tag)
+    return s, events
+
+
+def _take_first_profit(s, client, tp1_frac, events, tag):
+    side = s["side"]
+    pos = client.position()
+    if not pos or pos["side"] != side:
+        if s["stop_order_id"]:
+            client.cancel_stop(s["stop_order_id"])
+        s.update(trade_state="closed", stop_order_id="")
+        events.append(f"Position band mili — stop {_fmt_px(s['stop_loss'])} lag chuka (ya haath se band hui)")
+        return
+    qty = min(pos["qty"], s["quantity"]) if s["quantity"] else pos["qty"]
+    d = _dir(side)
+    be = _breakeven(side, s["entry_price"] or client.mark())
+    old = s["stop_loss"]
+    new_stop = be if old is None else (max(old, be) if d > 0 else min(old, be))
+    part = client.round_qty(qty * tp1_frac)
+    if part <= 0 or part >= qty:
+        # Position itni chhoti ki hissa nahi banta (jaise 1 contract) — poori rakho, stop entry par.
+        s["stop_order_id"] = client.protect(side, qty, new_stop, s["stop_order_id"] or None) or ""
+        s.update(tp1_done=True, stop_loss=new_stop)
+        events.append(f"Pehla profit level {_fmt_px(s['tp1_price'])} aaya — size chhota, hissa nahi bana; "
+                      f"stop entry {_fmt_px(new_stop)} par")
+        return
+    res = client.reduce(side, part, qty - part, new_stop, s["stop_order_id"] or None,
+                        f"{tag}-p{int(s['entry_time'] or 0) // 60000}")
+    s.update(tp1_done=True, quantity=qty - part, stop_loss=new_stop,
+             stop_order_id=res.get("stop_id") or s["stop_order_id"] or "")
+    events.append(f"Pehla profit: {_fmt_qty(part)} @ ~{_fmt_px(res.get('price'))} book, "
+                  f"stop entry {_fmt_px(new_stop)} par")

@@ -356,7 +356,7 @@ BOT_ACTIVE_STATUSES = ("running", "paused")
 # Bot ka event log row par hi rehta hai — bas itne aakhri.
 BOT_EVENTS_KEEP = 60
 
-_BOT_DECIMALS = ("capital", "risk_pct", "quantity", "entry_price", "stop_loss")
+_BOT_DECIMALS = ("capital", "risk_pct", "quantity", "entry_price", "stop_loss", "tp1_price")
 
 
 def _fl(v: Any) -> Optional[float]:
@@ -384,6 +384,8 @@ def _bot_dict(b: Any) -> Dict[str, Any]:
         "entry_price": _fl(b.entry_price),
         "stop_loss": _fl(b.stop_loss),
         "stop_order_id": b.stop_order_id,
+        "tp1_price": _fl(b.tp1_price),
+        "tp1_done": bool(b.tp1_done),
         "last_bar_time": b.last_bar_time,
         "last_run_at": b.last_run_at.isoformat() if b.last_run_at else None,
         "last_error": b.last_error,

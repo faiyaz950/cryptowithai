@@ -242,6 +242,8 @@ export interface BacktestTrade {
   instrument?: string;
   /** Portfolio backtest mein ye trade kis coin ka hai. */
   symbol?: string;
+  /** Steady: is trade mein pehla profit book hua. */
+  tp1_hit?: boolean;
   symbols?: string[];
   spot?: number;
   iv?: number;
@@ -354,6 +356,9 @@ export interface BacktestParams {
   allow_shorts?: boolean;
   /** Trend Rider portfolio: "BTCUSDT,ETHUSDT,SOLUSDT" — capital barabar baant kar sab par saath. */
   symbols?: string;
+  /** Steady: pehla profit kitne R par aur kitna hissa (0–1). */
+  tp1_r?: number;
+  tp1_frac?: number;
   symbol: string;
   timeframe: string;
   days: number;
@@ -610,6 +615,9 @@ export interface StrategyBot {
   entry_price: number | null;
   stop_loss: number | null;
   stop_order_id: string;
+  /** Steady: pehle profit ka level aur kya wo hissa book ho chuka. */
+  tp1_price: number | null;
+  tp1_done: boolean;
   last_bar_time: number | null;
   last_run_at: string | null;
   last_error: string;
@@ -644,6 +652,8 @@ export async function deployStrategyBot(
     exit_channel: number;
     stop_atr: number;
     allow_shorts: boolean;
+    tp1_r?: number;
+    tp1_frac?: number;
     mode: "paper" | "live";
     confirm_live?: boolean;
     exchange_account_id?: number;
@@ -711,6 +721,8 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
     stop_atr: params.stop_atr,
     allow_shorts: params.allow_shorts,
     symbols: params.symbols,
+    tp1_r: params.tp1_r,
+    tp1_frac: params.tp1_frac,
   };
   for (const [key, value] of Object.entries(extra)) {
     if (value !== undefined) q.set(key, String(value));

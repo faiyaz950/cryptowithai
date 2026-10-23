@@ -480,6 +480,11 @@ function CapitalResults({
                       <td className="trade-num">{t.exit_price?.toFixed(2)}</td>
                       <td>
                         <span className={`trade-badge ${up ? "trade-badge-green" : "trade-badge-red"}`}>{prettyStatus(t.status)}</span>
+                        {t.tp1_hit && (
+                          <span className="trade-badge trade-badge-blue ml-1.5" title="Pehla profit book hua, phir stop entry par">
+                            TP1 ✓
+                          </span>
+                        )}
                       </td>
                       <td className="trade-num" style={{ color: "var(--text-muted)" }}>{t.quantity?.toFixed(4) ?? "—"}</td>
                       <td className="trade-num" style={{ color: up ? "var(--green)" : "var(--red)" }}>

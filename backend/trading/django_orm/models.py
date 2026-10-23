@@ -106,6 +106,9 @@ class StrategyBot(models.Model):
     stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     # Live mode mein exchange par pada stop order.
     stop_order_id = models.CharField(max_length=64, blank=True, default="")
+    # Steady: pehle profit ka level aur kya wo hissa book ho chuka (har nayi entry par reset).
+    tp1_price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    tp1_done = models.BooleanField(default=False)
 
     # Aakhri band candle (open time, ms) jiske baad poora reconcile chala.
     last_bar_time = models.BigIntegerField(null=True, blank=True)

@@ -17,6 +17,10 @@ export interface TrendRiderParams {
   allowShorts: boolean;
   emaFast: number;
   emaSlow: number;
+  /** Steady: entry se itne R aage pehla profit (null/0 = band). */
+  tp1R?: number | null;
+  /** Steady: pehle profit par kitna hissa book (0–1). */
+  tp1Frac?: number;
 }
 
 export const TREND_RIDER_DEFAULTS: TrendRiderParams = {
@@ -30,6 +34,8 @@ export const TREND_RIDER_DEFAULTS: TrendRiderParams = {
 
 /** Backend jaisa — entry par slippage ke baad bhi stop sahi taraf ho tabhi trade. */
 const SLIPPAGE = 0.0002;
+/** Delta taker + GST — Steady ka breakeven stop dono taraf ki fees cover karta hai. */
+const FEE_RATE = 0.0005 * 1.18;
 /** Backend ki tarah risk ke hisaab se size, par notional capital ke 3x se upar nahi. */
 export const TREND_RIDER_MAX_LEVERAGE = 3;
 
@@ -43,6 +49,9 @@ export interface TrendRiderPosition {
   /** Abhi lagu stop — agli candle par isi se exit. */
   stop: number;
   initialStop: number;
+  /** Steady: pehle profit ka level (null = Steady band). */
+  tp1Price: number | null;
+  tp1Done: boolean;
 }
 
 export interface TrendRiderTrade {
@@ -53,6 +62,7 @@ export interface TrendRiderTrade {
   exitPrice: number;
   initialStop: number;
   status: "SL_HIT" | "TRAILING_STOP";
+  tp1Hit: boolean;
 }
 
 /** Aakhri band candle par signal aaya — entry chalu candle ke open par. */
@@ -62,6 +72,8 @@ export interface TrendRiderPending {
   /** Chalu candle ka open, agar chalu candle aa chuki hai. */
   entryPrice: number | null;
   stop: number;
+  /** Steady: open pata ho to pehle profit ka level. */
+  tp1Price: number | null;
 }
 
 export interface TrendRiderReplay {
@@ -150,6 +162,14 @@ export function replayTrendRider(
   const stopDuring: (number | null)[] = new Array(n).fill(null);
   const trades: TrendRiderTrade[] = [];
   let pos: TrendRiderPosition | null = null;
+  // Slippage ke baad wala fill — backend tp1 aur breakeven isi se nikalta hai.
+  let fill = 0;
+
+  const tp1R = params.tp1R || 0;
+  const tp1Frac = params.tp1Frac ?? 0;
+  const steady = tp1R > 0 && tp1Frac > 0 && tp1Frac < 1;
+  // entry + d·tp1R·risk, jahan risk = d·(entry − stop) — dono d milkar kat jaate hain.
+  const tp1From = (filled: number, stop: number) => filled + tp1R * (filled - stop);
 
   for (let i = start; i <= lastClosed; i++) {
     const k = i - 1;
@@ -161,7 +181,16 @@ export function replayTrendRider(
         const stop = c[k] - d * params.stopAtr * ak;
         const filled = o[i] * (1 + d * SLIPPAGE);
         if (d * (filled - stop) > 0) {
-          pos = { side, entryTime: candles[i].time, entryPrice: o[i], stop, initialStop: stop };
+          fill = filled;
+          pos = {
+            side,
+            entryTime: candles[i].time,
+            entryPrice: o[i],
+            stop,
+            initialStop: stop,
+            tp1Price: steady ? tp1From(filled, stop) : null,
+            tp1Done: false,
+          };
         }
       }
     }
@@ -181,9 +210,16 @@ export function replayTrendRider(
         exitPrice: gapped ? o[i] : pos.stop,
         initialStop: pos.initialStop,
         status: moved ? "TRAILING_STOP" : "SL_HIT",
+        tp1Hit: pos.tp1Done,
       });
       pos = null;
       continue;
+    }
+    // Steady: stop ke baad dekha (backend jaisa) — pehla profit book, stop entry + fees par.
+    if (pos.tp1Price != null && !pos.tp1Done && (d > 0 ? h[i] >= pos.tp1Price : l[i] <= pos.tp1Price)) {
+      pos.tp1Done = true;
+      const be = fill * (1 + d * 2 * (FEE_RATE + SLIPPAGE));
+      pos.stop = d > 0 ? Math.max(pos.stop, be) : Math.min(pos.stop, be);
     }
     const tv = d > 0 ? trailLong[i] : trailShort[i];
     if (finite(tv)) pos.stop = d > 0 ? Math.max(pos.stop, tv) : Math.min(pos.stop, tv);
@@ -196,11 +232,13 @@ export function replayTrendRider(
     if (side && finite(ak)) {
       const d = side === "long" ? 1 : -1;
       const forming = lastClosed + 1 < n ? candles[lastClosed + 1] : null;
+      const stop = c[lastClosed] - d * params.stopAtr * ak;
       pending = {
         side,
         entryTime: candles[lastClosed].time + intervalMs,
         entryPrice: forming ? forming.open : null,
-        stop: c[lastClosed] - d * params.stopAtr * ak,
+        stop,
+        tp1Price: steady && forming ? tp1From(forming.open * (1 + d * SLIPPAGE), stop) : null,
       };
     }
   }

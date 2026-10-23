@@ -4037,8 +4037,15 @@ def _trend_rider_settings(source):
             'risk_pct': risk_pct,
             'allow_shorts': str(source.get('allow_shorts', 'true')).lower() == 'true',
         }
+        # Steady: pehla profit tp1_r R par, tp1_frac hissa. 0 / khaali = band (normal Trend Rider).
+        tp1_r = float(source.get('tp1_r') or 0)
+        if tp1_r:
+            params['tp1_r'] = tp1_r
+            params['tp1_frac'] = float(source.get('tp1_frac', trend_rider.DEFAULTS['tp1_frac']))
     except (TypeError, ValueError):
         raise ValueError('Trend Rider ke parameters number hone chahiye.')
+    if params.get('tp1_r') and not (0.5 <= params['tp1_r'] <= 5 and 0.05 <= params['tp1_frac'] <= 0.9):
+        raise ValueError('Pehla profit 0.5–5R par aur 5–90% hissa rakho.')
     if capital <= 0 or not (0 < risk_pct <= 5):
         raise ValueError('Capital 0 se zyada aur risk 0–5% ke beech hona chahiye.')
     if not (5 <= params['channel'] <= 200) or not (3 <= params['exit_channel'] <= params['channel']):
@@ -4292,8 +4299,11 @@ def deploy_bot():
         data = request.get_json(silent=True) or {}
         user_id = g.user['id']
         strategy = str(data.get('strategy') or 'trend-rider').strip().lower()
-        if strategy != 'trend-rider':
-            return jsonify({'success': False, 'error': 'Server bot abhi sirf Trend Rider chalata hai.'}), 400
+        if strategy not in ('trend-rider', 'trend-rider-steady'):
+            return jsonify({'success': False, 'error': 'Server bot abhi sirf Trend Rider (aur Steady) chalata hai.'}), 400
+        if strategy == 'trend-rider-steady' and not data.get('tp1_r'):
+            # Steady ka matlab hi pehla profit hai — research wala default.
+            data = {**data, 'tp1_r': 1.0, 'tp1_frac': data.get('tp1_frac', trend_rider.DEFAULTS['tp1_frac'])}
         symbol = _spot_key(str(data.get('symbol') or '').strip().upper())
         if not symbol:
             return jsonify({'success': False, 'error': 'symbol chahiye'}), 400

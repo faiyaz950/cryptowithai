@@ -13,6 +13,9 @@ Rules (sirf band candles par):
   Stop  : signal close -/+ stop_atr x ATR(14); har candle close par stop ko pichhli
           `exit_channel` candles ke low (long) / high (short) tak khiskao — kabhi peeche nahi
   Size  : stop lagne par equity ka risk_pct% hi jaaye, max_leverage tak cap
+  Steady (tp1_r diya ho): price entry se tp1_r x risk aage jaaye to us candle ke andar tp1_frac
+          hissa wahin book, aur stop entry (+fees) par — baaki hissa upar wale trail se chalta hai.
+          Win rate ~33% se ~50%, kamai ~25% kam (research: 25% @ 1R).
 
 Frontend (`frontend/src/lib/trendRider.ts`) yahi replay chalata hai — live signal aur
 backtest ek hi rule par rehne chahiye, isliye dono files saath badalni hain.
@@ -38,6 +41,9 @@ DEFAULTS = {
     "risk_pct": 1.0,
     "max_leverage": 3.0,
     "allow_shorts": True,
+    # Steady: pehla profit kitne R par (None = band), aur kitna hissa.
+    "tp1_r": None,
+    "tp1_frac": 0.25,
 }
 
 # EMA 200 ko settle hone ke liye backtest window se pehle itni candles chahiye — 600 par
@@ -143,6 +149,8 @@ def simulate(times, o, h, l, c, params=None, capital=1000.0, start_index=0, bar_
     ind = indicators(o, h, l, c, p)
     risk = p["risk_pct"] / 100.0
     fund_per_bar = FUNDING_PER_8H * bar_hours / 8.0
+    tp1_r = p.get("tp1_r") or None
+    tp1_frac = float(p.get("tp1_frac") or 0.0)
 
     eq = float(capital)
     trades = []
@@ -164,6 +172,22 @@ def simulate(times, o, h, l, c, params=None, capital=1000.0, start_index=0, bar_
         trades.append(_trade_dict(pos, times[i], px, status))
         pos = None
 
+    def take_first_profit():
+        """Steady: tp1 par hissa book (us candle ke andar), stop entry + dono taraf ki fees par."""
+        nonlocal eq, fees_paid
+        d = pos["dir"]
+        q = pos["qty"] * tp1_frac
+        px = pos["tp1"] * (1 - d * SLIPPAGE)
+        gross = d * q * (px - pos["entry"])
+        fee = FEE_RATE * q * px
+        eq += gross - fee
+        fees_paid += fee
+        pos["pnl"] += gross - fee
+        pos["qty"] -= q
+        pos["tp1_done"] = True
+        be = pos["entry"] * (1 + d * 2 * (FEE_RATE + SLIPPAGE))
+        pos["stop"] = max(pos["stop"], be) if d > 0 else min(pos["stop"], be)
+
     start = max(int(start_index), 1)
     for i in range(start, n):
         # ---- entry: pichhli band candle ka signal, is candle ke open par ----
@@ -178,8 +202,10 @@ def simulate(times, o, h, l, c, params=None, capital=1000.0, start_index=0, bar_
                 fee = FEE_RATE * qty * entry
                 eq -= fee
                 fees_paid += fee
-                pos = {"dir": d, "entry": entry, "stop": stop, "init_stop": stop, "qty": qty,
-                       "risk_amt": qty * dist, "entry_time": int(times[i]), "pnl": -fee, "bars": 0}
+                pos = {"dir": d, "entry": entry, "stop": stop, "init_stop": stop, "qty": qty, "qty0": qty,
+                       "risk_amt": qty * dist, "entry_time": int(times[i]), "pnl": -fee, "bars": 0,
+                       "tp1": entry + d * tp1_r * dist if tp1_r and 0 < tp1_frac < 1 else None,
+                       "tp1_done": False}
 
         if pos is not None:
             d = pos["dir"]
@@ -195,6 +221,10 @@ def simulate(times, o, h, l, c, params=None, capital=1000.0, start_index=0, bar_
             elif (d > 0 and l[i] <= pos["stop"]) or (d < 0 and h[i] >= pos["stop"]):
                 close_pos(i, pos["stop"], _stop_status(pos))
             else:
+                # Stop pehle dekha (pessimistic) — dono ek candle mein ho to stop maana.
+                if pos["tp1"] is not None and not pos["tp1_done"] and (
+                        (d > 0 and h[i] >= pos["tp1"]) or (d < 0 and l[i] <= pos["tp1"])):
+                    take_first_profit()
                 # candle close par trailing stop update — agli candle se lagu
                 tv = ind["trail_long"][i] if d > 0 else ind["trail_short"][i]
                 if math.isfinite(tv):
@@ -215,6 +245,9 @@ def simulate(times, o, h, l, c, params=None, capital=1000.0, start_index=0, bar_
             "stop_loss": pos["stop"],
             "initial_stop": pos["init_stop"],
             "quantity": pos["qty"],
+            "initial_quantity": pos["qty0"],
+            "tp1_price": pos["tp1"],
+            "tp1_done": pos["tp1_done"],
             "unrealized_pnl": mtm_pnl,
             "mark_price": float(c[-1]),
         }
@@ -243,8 +276,9 @@ def _trade_dict(pos, exit_time, exit_px, status):
         "entry_price": round(pos["entry"], 4),
         "exit_price": round(exit_px, 4),
         "stop_loss": round(pos["init_stop"], 4),
-        "target": None,
-        "quantity": pos["qty"],
+        "target": pos["tp1"],
+        "quantity": pos["qty0"],
+        "tp1_hit": pos["tp1_done"],
         "pnl": round(pos["pnl"], 4),
         "pnl_points": round(d * (exit_px - pos["entry"]), 4),
         "r_multiple": round(pos["pnl"] / pos["risk_amt"], 3) if pos["risk_amt"] > 0 else 0.0,

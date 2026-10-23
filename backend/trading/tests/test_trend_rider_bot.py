@@ -61,6 +61,12 @@ class FakeClient:
     def cancel_stop(self, stop_id):
         self.calls.append(("cancel", stop_id))
 
+    def reduce(self, side, qty, remaining, stop, stop_id, tag):
+        self.calls.append(("reduce", side, qty, remaining, stop))
+        self.pos = {"side": side, "qty": remaining}
+        self.stop = stop
+        return {"price": self.mark_price, "stop_id": stop_id or "S3"}
+
     def kinds(self):
         return [c[0] for c in self.calls]
 
@@ -69,14 +75,16 @@ def empty_state():
     return {k: None for k in bot.STATE_KEYS}
 
 
-def open_state(entry_time, side="long", qty=1.0, stop=95.0):
+def open_state(entry_time, side="long", qty=1.0, stop=95.0, tp1_price=None, tp1_done=False):
     return {"entry_time": entry_time, "trade_state": "open", "side": side, "quantity": qty,
-            "entry_price": 100.0, "stop_loss": stop, "stop_order_id": "S1"}
+            "entry_price": 100.0, "stop_loss": stop, "stop_order_id": "S1",
+            "tp1_price": tp1_price, "tp1_done": tp1_done}
 
 
-def make_plan(position=None, pending=None, forming=None, equity=1000.0):
+def make_plan(position=None, pending=None, forming=None, equity=1000.0, tp1_r=0.0, tp1_frac=0.0):
     return {"position": position, "pending": pending, "forming": forming, "equity": equity,
-            "trades": [], "last_closed": None, "stale": False, "error": None}
+            "trades": [], "last_closed": None, "stale": False, "error": None,
+            "tp1_r": tp1_r, "tp1_frac": tp1_frac}
 
 
 def run(state, plan, client, now_ms, **kw):
@@ -289,6 +297,93 @@ def synthetic_candles(n=2000, seed=7):
     return times, o, h, l, c
 
 
+class SteadyTest(unittest.TestCase):
+    """Steady: pehla profit (tp1) par hissa book, stop entry par — ek hi baar."""
+    entry_t = T0 + 10 * BAR
+    be = bot._breakeven("long", 100.0)
+
+    def test_tick_books_first_profit_once(self):
+        client = FakeClient(mark=106.0, position={"side": "long", "qty": 1.0})
+        state = open_state(self.entry_t, tp1_price=105.0)
+        s, events = bot.check_first_profit(state, client, tp1_frac=0.25)
+        self.assertEqual(client.kinds(), ["reduce"])
+        _, side, part, remaining, stop = client.calls[0]
+        self.assertAlmostEqual(part, 0.25)
+        self.assertAlmostEqual(remaining, 0.75)
+        self.assertAlmostEqual(stop, self.be)
+        self.assertTrue(s["tp1_done"])
+        self.assertAlmostEqual(s["quantity"], 0.75)
+        self.assertAlmostEqual(s["stop_loss"], self.be)
+        self.assertIn("Pehla profit", events[0])
+        # Agli tick — dobara book nahi.
+        s2, events2 = bot.check_first_profit(s, client, tp1_frac=0.25)
+        self.assertEqual(client.kinds(), ["reduce"])
+        self.assertEqual(events2, [])
+
+    def test_tick_waits_below_first_profit(self):
+        client = FakeClient(mark=104.0, position={"side": "long", "qty": 1.0})
+        s, events = bot.check_first_profit(open_state(self.entry_t, tp1_price=105.0), client, tp1_frac=0.25)
+        self.assertEqual(client.calls, [])
+        self.assertFalse(s["tp1_done"])
+
+    def test_short_first_profit(self):
+        client = FakeClient(mark=94.0, position={"side": "short", "qty": 2.0})
+        state = open_state(self.entry_t, side="short", qty=2.0, stop=105.0, tp1_price=95.0)
+        s, _ = bot.check_first_profit(state, client, tp1_frac=0.25)
+        self.assertAlmostEqual(client.calls[0][2], 0.5)
+        self.assertAlmostEqual(s["stop_loss"], bot._breakeven("short", 100.0))
+        self.assertLess(s["stop_loss"], 105.0)
+
+    def test_candle_close_catches_missed_first_profit(self):
+        client = FakeClient(mark=103.0, position={"side": "long", "qty": 1.0})
+        plan = make_plan(position={"side": "long", "entry_time": self.entry_t, "entry_price": 100.0,
+                                   "stop": 100.25, "initial_stop": 95.0, "tp1_price": 105.0, "tp1_done": True},
+                         tp1_r=1.0, tp1_frac=0.25)
+        s, events, ok = run(open_state(self.entry_t, tp1_price=105.0), plan, client, self.entry_t + 2 * BAR + 30_000)
+        self.assertTrue(ok)
+        self.assertEqual(client.kinds().count("reduce"), 1)
+        self.assertTrue(s["tp1_done"])
+        self.assertAlmostEqual(s["stop_loss"], max(100.25, self.be))
+        run(s, plan, client, self.entry_t + 3 * BAR + 30_000)
+        self.assertEqual(client.kinds().count("reduce"), 1)
+
+    def test_stop_never_loosens_after_first_profit(self):
+        client = FakeClient(mark=103.0, position={"side": "long", "qty": 0.75})
+        state = open_state(self.entry_t, qty=0.75, stop=100.4, tp1_price=105.0, tp1_done=True)
+        plan = make_plan(position={"side": "long", "entry_time": self.entry_t, "entry_price": 100.0,
+                                   "stop": 100.2, "initial_stop": 95.0, "tp1_price": 105.0, "tp1_done": True},
+                         tp1_r=1.0, tp1_frac=0.25)
+        s, _, _ = run(state, plan, client, self.entry_t + 2 * BAR + 30_000)
+        self.assertAlmostEqual(s["stop_loss"], 100.4)
+        self.assertEqual(client.calls[-1], ("protect", 100.4))
+
+    def test_stopped_before_first_profit_tick(self):
+        client = FakeClient(mark=106.0, position=None)
+        s, events = bot.check_first_profit(open_state(self.entry_t, tp1_price=105.0), client, tp1_frac=0.25)
+        self.assertEqual(s["trade_state"], "closed")
+        self.assertNotIn("reduce", client.kinds())
+
+    def test_too_small_to_split_moves_stop_only(self):
+        client = FakeClient(mark=106.0, position={"side": "long", "qty": 0.000003})
+        s, events = bot.check_first_profit(open_state(self.entry_t, qty=0.000003, tp1_price=105.0), client,
+                                           tp1_frac=0.25)
+        self.assertEqual(client.kinds(), ["protect"])
+        self.assertTrue(s["tp1_done"])
+        self.assertAlmostEqual(s["stop_loss"], self.be)
+
+    def test_new_entry_resets_first_profit(self):
+        client = FakeClient(mark=100.0)
+        state = dict(open_state(self.entry_t, tp1_price=105.0, tp1_done=True), trade_state="closed")
+        new_t = self.entry_t + 5 * BAR
+        plan = make_plan(pending={"side": "long", "entry_time": new_t, "stop": 95.0, "tp1_price": 105.1},
+                         tp1_r=1.0, tp1_frac=0.25)
+        s, _, ok = run(state, plan, client, new_t + 30_000)
+        self.assertTrue(ok)
+        self.assertEqual(s["trade_state"], "open")
+        self.assertFalse(s["tp1_done"])
+        self.assertAlmostEqual(s["tp1_price"], 105.1)
+
+
 class ExchangeSim(FakeClient):
     """
     Walk-forward ke liye exchange: stop exchange par pada rehta hai aur har candle ke
@@ -302,8 +397,12 @@ class ExchangeSim(FakeClient):
 
     def enter(self, side, qty, stop, tag):
         res = super().enter(side, qty, stop, tag)
-        self.open_trade = {"side": side, "entry_time": self.now_bar, "qty": qty, "init_stop": stop}
+        self.open_trade = {"side": side, "entry_time": self.now_bar, "qty": qty, "init_stop": stop, "tp1": False}
         return res
+
+    def reduce(self, side, qty, remaining, stop, stop_id, tag):
+        self.open_trade["tp1"] = True
+        return super().reduce(side, qty, remaining, stop, stop_id, tag)
 
     def close(self, side, qty, stop_id, tag):
         self._exit(self.now_bar, self.mark_price, "strategy")
@@ -330,15 +429,22 @@ class ExchangeSim(FakeClient):
         self.stop = None
 
 
-def walk_forward(times, o, h, l, c, start_i, skip_bars=()):
-    """Har candle khulne ke 30s baad worker ki tarah plan + reconcile. `skip_bars`: worker band tha."""
-    params = dict(trend_rider.DEFAULTS)
+def walk_forward(times, o, h, l, c, start_i, skip_bars=(), extra=None):
+    """Har candle khulne ke 30s baad worker ki tarah plan + reconcile. `skip_bars`: worker band tha.
+    Steady (`extra` mein tp1) par candle ke beech wali tick bhi: stop na laga ho aur price tp1 chhoo
+    le to wahin hissa book — backtest jaisa (stop pehle, phir tp1)."""
+    params = dict(trend_rider.DEFAULTS, **(extra or {}))
     ex = ExchangeSim()
     state = empty_state()
     start_time = int(times[start_i]) + 3_600_000  # deploy candle ke beech mein
     for i in range(start_i, len(times)):
         if i > start_i:
             ex.run_bar(int(times[i - 1]), o[i - 1], h[i - 1], l[i - 1])
+            tp1 = state.get("tp1_price")
+            if (ex.pos and state.get("trade_state") == "open" and tp1 is not None and not state.get("tp1_done")
+                    and (h[i - 1] >= tp1 if state["side"] == "long" else l[i - 1] <= tp1)):
+                ex.mark_price = tp1
+                state, _ = bot.check_first_profit(state, ex, tp1_frac=params["tp1_frac"])
         if i in skip_bars:
             continue
         now = int(times[i]) + 30_000
@@ -401,6 +507,44 @@ class BacktestParityTest(unittest.TestCase):
         want = [(t["entry_time"], t["exit_time"]) for t in sim if t is not victim]
         got = [(t["entry_time"], t["exit_time"]) for t in ex.trades]
         self.assertEqual(got[:len(want)], want)
+
+
+class SteadyParityTest(unittest.TestCase):
+    """Steady bot: wahi trades, wahi pehla-profit, wahi exits jo `simulate(tp1_r=1, tp1_frac=0.25)`."""
+    extra = {"tp1_r": 1.0, "tp1_frac": 0.25}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = synthetic_candles()
+        cls.start_i = 700
+        cls.ex = walk_forward(*cls.data, cls.start_i, extra=cls.extra)
+        t, o, h, l, c = (x[:-1] for x in cls.data)
+        cls.sim = trend_rider.simulate(t, o, h, l, c, params=cls.extra, capital=1000.0,
+                                       start_index=cls.start_i, bar_hours=4.0)
+
+    def test_first_profit_happens_often_enough(self):
+        hits = sum(1 for t in self.sim["trades"] if t["tp1_hit"])
+        self.assertGreaterEqual(hits, 4)
+
+    def test_same_trades_and_first_profits_as_backtest(self):
+        sim = self.sim["trades"]
+        self.assertEqual(len(self.ex.trades), len(sim))
+        for s, b in zip(sim, self.ex.trades):
+            self.assertEqual(b["entry_time"], s["entry_time"])
+            self.assertEqual(b["exit_time"], s["exit_time"])
+            self.assertEqual(b["tp1"], s["tp1_hit"])
+            self.assertAlmostEqual(b["qty"], s["quantity"], delta=2e-6)
+            d = 1 if b["side"] == "long" else -1
+            self.assertAlmostEqual(b["exit_raw"] * (1 - d * trend_rider.SLIPPAGE), s["exit_price"], places=3)
+
+    def test_open_position_matches(self):
+        pos = self.sim["open_position"]
+        if pos is None:
+            self.assertIsNone(self.ex.open_trade)
+        else:
+            self.assertEqual(self.ex.open_trade["entry_time"], pos["entry_time"])
+            self.assertEqual(self.ex.open_trade["tp1"], pos["tp1_done"])
+            self.assertAlmostEqual(self.ex.stop, pos["stop_loss"], places=6)
 
 
 if __name__ == "__main__":

@@ -365,6 +365,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
       exit_channel: num(values, "exit_channel", 15),
       stop_atr: num(values, "stop_atr", 2),
       allow_shorts: bool(values, "allow_shorts"),
+      ...def.botParams?.(values),
       mode: "paper",
     });
     syncUrl();
@@ -764,7 +765,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className={serverBot.params.tp1_r ? "grid grid-cols-2 lg:grid-cols-5 gap-3" : "grid grid-cols-2 lg:grid-cols-4 gap-3"}>
                     <div className="trade-stat">
                       <div className="trade-stat-label">Trade</div>
                       <div className="trade-stat-value" style={{ color: botTradeLabel(serverBot).color ?? "var(--text-primary)" }}>
@@ -789,6 +790,20 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                         {serverBot.trade_state === "open" && serverBot.quantity != null ? serverBot.quantity.toFixed(6) : "—"}
                       </div>
                     </div>
+                    {serverBot.params.tp1_r ? (
+                      <div className="trade-stat">
+                        <div className="trade-stat-label">
+                          Pehla profit · {Math.round(Number(serverBot.params.tp1_frac ?? 0.25) * 100)}%
+                        </div>
+                        <div className="trade-stat-value" style={{ color: "#0ea5e9" }}>
+                          {serverBot.trade_state !== "open"
+                            ? "—"
+                            : serverBot.tp1_done
+                              ? "Book ho gaya ✓"
+                              : fmtPx(serverBot.tp1_price)}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <p className="text-[11.5px] tnum" style={{ color: "var(--text-muted)" }}>
