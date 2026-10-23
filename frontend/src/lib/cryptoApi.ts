@@ -234,6 +234,10 @@ export interface BacktestTrade {
   pnl: number;
   pnl_points: number;
   status: string;
+  /** Trend Rider: coin quantity aur risk ke multiple mein nateeja. */
+  quantity?: number;
+  r_multiple?: number;
+  bars_held?: number;
   /** Options backtest: legs + expiry, jaise "+C76000 · 16 Sep". */
   instrument?: string;
   symbols?: string[];
@@ -282,11 +286,54 @@ export interface BacktestResult {
     target_points: number;
   } | null;
   options?: OptionsBacktestInfo;
+  /** Trend Rider: capital ke hisaab se poora hisaab (fees, slippage, funding ke baad). */
+  capital?: number;
+  risk_pct?: number;
+  stats?: BacktestStats;
+  /** [time ms, equity] — max ~400 points. */
+  equity_curve?: [number, number][];
+  open_position?: BacktestOpenPosition | null;
+  rules?: { channel: number; exit_channel: number; stop_atr: number; ema_fast: number; ema_slow: number; allow_shorts: boolean };
+  costs?: { fee_pct_per_side: number; slippage_pct_per_side: number; long_funding_pct_per_8h: number };
   error?: string;
 }
 
+export interface BacktestStats {
+  final_equity: number;
+  return_pct: number;
+  max_drawdown_pct: number;
+  /** null = koi trade nahi; 999 = koi loss nahi. */
+  profit_factor: number | null;
+  avg_r: number;
+  best_r: number;
+  worst_r: number;
+  fees_paid: number;
+  funding_paid: number;
+  exposure_pct: number;
+  /** Usi window mein coin khareed ke rakhte to. */
+  buy_hold_pct: number;
+}
+
+export interface BacktestOpenPosition {
+  side: "buy" | "sell";
+  entry_time: number;
+  entry_price: number;
+  stop_loss: number;
+  initial_stop: number;
+  quantity: number;
+  unrealized_pnl: number;
+  mark_price: number;
+}
+
 export interface BacktestParams {
-  strategy: "ema-crossover" | "range-breakout";
+  strategy: "ema-crossover" | "range-breakout" | "trend-rider";
+  /** Trend Rider: capital ($) aur har trade ka risk (%) — P&L inhi par banta hai. */
+  capital?: number;
+  risk_pct?: number;
+  channel?: number;
+  exit_channel?: number;
+  stop_atr?: number;
+  allow_shorts?: boolean;
   symbol: string;
   timeframe: string;
   days: number;
@@ -515,6 +562,104 @@ export async function setPaperBracket(
   });
 }
 
+/* ── Server strategy bots — backend worker chalata hai, browser band ho tab bhi ── */
+
+export interface StrategyBotEvent {
+  at: string;
+  text: string;
+}
+
+export interface StrategyBot {
+  id: number;
+  strategy: string;
+  symbol: string;
+  timeframe: string;
+  capital: number;
+  risk_pct: number;
+  params: Record<string, number | boolean>;
+  mode: "paper" | "live";
+  exchange_account_id: number | null;
+  /** paused = naya trade nahi, chalu trade ka stop/exit chalta rehta hai. */
+  status: "running" | "paused" | "stopped";
+  started_at: string;
+  /** Abhi wale trade ki entry candle (ms) — trade ki pehchaan. */
+  entry_time: number | null;
+  trade_state: "" | "entering" | "open" | "closed" | "skipped";
+  side: "" | "long" | "short";
+  quantity: number | null;
+  entry_price: number | null;
+  stop_loss: number | null;
+  stop_order_id: string;
+  last_bar_time: number | null;
+  last_run_at: string | null;
+  last_error: string;
+  /** Sabse naya pehle. */
+  events: StrategyBotEvent[];
+  created_at: string | null;
+  updated_at: string | null;
+  bar_minutes: number | null;
+}
+
+export interface StrategyBotsResponse {
+  success: boolean;
+  data: StrategyBot[];
+  live_orders_enabled: boolean;
+  /** false = server par worker nahi chal raha (BOT_WORKER=0 ya serverless) — bot trade nahi karega. */
+  worker_running: boolean;
+}
+
+export async function fetchStrategyBots(token: string): Promise<StrategyBotsResponse> {
+  return cryptoFetch("/bots", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export async function deployStrategyBot(
+  token: string,
+  payload: {
+    strategy: string;
+    symbol: string;
+    timeframe: string;
+    capital: number;
+    risk_pct: number;
+    channel: number;
+    exit_channel: number;
+    stop_atr: number;
+    allow_shorts: boolean;
+    mode: "paper" | "live";
+    confirm_live?: boolean;
+    exchange_account_id?: number;
+  },
+): Promise<{ success: boolean; message?: string; data: StrategyBot }> {
+  return cryptoFetch("/bots", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function setStrategyBotStatus(
+  token: string,
+  botId: number,
+  action: "pause" | "resume",
+): Promise<{ success: boolean; data: StrategyBot }> {
+  return cryptoFetch(`/bots/${botId}/${action}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+/** `flatten` true = chalu position abhi market par band; false = position aur stop waise hi rehne do. */
+export async function stopStrategyBot(
+  token: string,
+  botId: number,
+  flatten: boolean,
+): Promise<{ success: boolean; data: StrategyBot }> {
+  return cryptoFetch(`/bots/${botId}/stop`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ flatten }),
+  });
+}
+
 
 export async function runBacktest(params: BacktestParams): Promise<BacktestResult> {
   const q = new URLSearchParams({
@@ -538,6 +683,17 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
     range_timezone: params.range_timezone,
     exchange: "delta",
   });
+  const extra = {
+    capital: params.capital,
+    risk_pct: params.risk_pct,
+    channel: params.channel,
+    exit_channel: params.exit_channel,
+    stop_atr: params.stop_atr,
+    allow_shorts: params.allow_shorts,
+  };
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined) q.set(key, String(value));
+  }
   return cryptoFetch<BacktestResult>(`/backtest?${q}`);
 }
 

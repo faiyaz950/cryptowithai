@@ -215,7 +215,8 @@ class DeltaExchangeClient:
             if method == 'POST':
                 return requests.post(url, headers=headers, json=body, timeout=AUTH_TIMEOUT)
             if method == 'DELETE':
-                return requests.delete(url, headers=headers, timeout=AUTH_TIMEOUT)
+                # `DELETE /v2/orders` id body mein leta hai; bina body wale calls par json=None kuch nahi bhejta.
+                return requests.delete(url, headers=headers, json=body, timeout=AUTH_TIMEOUT)
             return requests.request(method, url, headers=headers, json=body, timeout=AUTH_TIMEOUT)
 
         def parse_server_time_candidates(response_text):
@@ -643,6 +644,50 @@ class DeltaExchangeClient:
         """Order cancel karta hai"""
         endpoint = f"/v2/orders/{order_id}"
         return self._make_request('DELETE', endpoint)
+
+    def place_stop_order(self, symbol, side, quantity, stop_price, client_order_id=None,
+                         trigger_method="last_traded_price"):
+        """
+        Stop-market order (`stop_order_type: stop_loss_order`) — hamesha reduce_only, yaani ye
+        sirf position band kar sakta hai, kabhi nayi nahi kholta. Exchange par pada rehta hai,
+        isliye hamara server band ho tab bhi position bachi rehti hai.
+
+        Trigger `last_traded_price` par: backtest ka stop candle ke low/high (traded price) se
+        lagta hai, mark price se nahi.
+        """
+        body = {
+            'product_symbol': self._delta_symbol(symbol),
+            'size': int(quantity),
+            'side': side,
+            'order_type': 'market_order',
+            'stop_order_type': 'stop_loss_order',
+            'stop_price': str(stop_price),
+            'stop_trigger_method': trigger_method,
+            'reduce_only': True,
+        }
+        if client_order_id:
+            body['client_order_id'] = str(client_order_id)[:64]
+        return self._make_request('POST', "/v2/orders", body=body)
+
+    def edit_stop_order(self, order_id, symbol, stop_price):
+        """`PUT /v2/orders` — pade hue stop order ka stop_price badlo (trailing stop)."""
+        body = {'id': int(order_id), 'product_symbol': self._delta_symbol(symbol), 'stop_price': str(stop_price)}
+        product_id = self._get_product_id(symbol)
+        if product_id is not None:
+            body['product_id'] = product_id
+        return self._make_request('PUT', "/v2/orders", body=body)
+
+    def cancel_order_by_id(self, order_id, symbol):
+        """Documented `DELETE /v2/orders` — id aur product_id body mein."""
+        body = {'id': int(order_id)}
+        product_id = self._get_product_id(symbol)
+        if product_id is not None:
+            body['product_id'] = product_id
+        return self._make_request('DELETE', "/v2/orders", body=body)
+
+    def get_order(self, order_id):
+        """Ek order ki abhi ki haalat (stop order trigger se pehle `pending` rehta hai)."""
+        return self._make_request('GET', f"/v2/orders/{order_id}")
 
 
 class CryptoAPIClient:

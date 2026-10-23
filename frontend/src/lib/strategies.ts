@@ -1,6 +1,6 @@
 import { Activity, BarChart3, Boxes, Crosshair, Flame, Gauge, Layers, Shield, Target, TrendingUp, Waves, Zap, type LucideIcon } from "lucide-react";
 import type { BacktestParams, Candle } from "./cryptoApi";
-import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, intervalMinutes } from "./cryptoApi";
+import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, intervalMinutes, symbolLabel } from "./cryptoApi";
 import {
   adx,
   atr,
@@ -15,6 +15,7 @@ import {
   rsi,
   vwap,
 } from "./indicators";
+import { TREND_KEYS, replayTrendRider, trendRiderQuantity } from "./trendRider";
 
 const RANGE_COLOR = "#0891b2";
 
@@ -68,11 +69,27 @@ export interface ChartOverlay {
   color: string;
 }
 
+/**
+ * Strategy is waqt kis position mein honi chahiye — sirf band candles se nikla.
+ * Paper auto-trader isi ko account se milata hai (entry, trailing stop, exit).
+ */
+export interface AutoTradeState {
+  desired: {
+    side: "long" | "short";
+    /** Entry candle ka open time (ms) — ek trade ki pehchaan. */
+    entryTime: number;
+    stop: number;
+  } | null;
+  intervalMs: number;
+}
+
 export interface StrategyAnalysis {
   /** Chart ke liye candles — indicator values fields mein attach ho chuki hain. */
   candles: Candle[];
   overlays: ChartOverlay[];
   signal: LiveSignal;
+  /** Sirf `autoTrade` wali strategies bharti hain. */
+  autoTrade?: AutoTradeState;
 }
 
 export interface StrategyDef {
@@ -96,6 +113,16 @@ export interface StrategyDef {
    * galat number dikhane se behtar hai kuch na dikhana.
    */
   backtestable?: boolean;
+  /**
+   * Paper deploy par turant order nahi lagta — auto-trader `analysis.autoTrade` ke
+   * hisaab se sirf asli signal par entry leta hai aur stop trail karta hai.
+   */
+  autoTrade?: boolean;
+  /**
+   * Chart range chhota chuna ho tab bhi kam se kam itni candles laao — EMA 200 jaisi
+   * lambi lines ko settle hone ke liye, taaki live signal chart zoom par na badle.
+   */
+  minHistoryBars?: number;
   /** Range regime par iron condor ke chaar legs chunne hain? */
   optionCondor?: boolean;
   /** Signal aane par debit spread ke dono legs chunne hain? */
@@ -2176,7 +2203,746 @@ const volCrushCondor: StrategyDef = {
   },
 };
 
+/* ── Trend Rider (research-backed, backend native engine) ─ */
+
+const TR_UP = "#10b981";
+const TR_DOWN = "#ef4444";
+const TR_STOP = "#f59e0b";
+
+function coinOf(symbol: string): string {
+  return symbol.replace(/USDT?$/, "") || symbol;
+}
+
+function fmtWhen(timeMs: number): string {
+  return new Date(timeMs).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+const trendRider: StrategyDef = {
+  id: "trend-rider",
+  name: "Trend Rider 4H",
+  category: "Trend following · Perp long/short",
+  blurb:
+    "30-candle breakout + EMA 200 regime + trailing stop. 2019–2026 ke data par BTC, ETH, SOL, BNB, XRP paanchon par fees ke baad profitable.",
+  logic:
+    "Market jab trend mein ho tabhi trade, range mein bahar. LONG: 4h candle pichhli 30 candles ke highest high ke upar band ho aur price EMA 200 ke upar ho. SHORT: 30-candle low ke neeche band ho, price EMA 200 ke neeche aur EMA 50 bhi EMA 200 ke neeche (sirf pakka bear market). Entry agli candle ke open par. Stop = signal close se 2× ATR; har band candle par stop pichhli 15 candles ke low (short mein high) tak khiskta hai, kabhi peeche nahi. Size aisa ki stop lagne par capital ka sirf 1% jaaye. Win rate ~30–37% hi rehta hai — chhote loss bahut, par jeet wale trades 5–16R tak chalte hain. Yahi edge hai.",
+  accent: TR_UP,
+  icon: Waves,
+  featured: true,
+  autoTrade: true,
+  // EMA 200 ka seed ~1000 candles mein mit jaata hai — backtest (600 warmup) se signal mel khaata hai.
+  minHistoryBars: 1000,
+  backtestable: true,
+  engineNote:
+    "Backend ka native engine (`trend-rider`) — live signal, backtest aur paper auto-trader teeno same rule. Backtest mein Delta taker fee + 18% GST, 0.02% slippage aur longs par funding (0.01%/8h) kat'ta hai. Research 4h par hui hai: 1h par same rules ka drawdown ~2.5× tha, isliye 4h hi rakho. Trend system ko kam se kam 6–12 mahine par parkho — 30 din mein 2-3 trades hi hote hain.",
+  fields: [
+    { key: "channel", label: "Entry channel · candles", kind: "number", group: "signal", min: 5, max: 200, onCard: true, hint: "Band candle is channel ke high/low ke paar ho to entry." },
+    { key: "exit_channel", label: "Trailing channel · candles", kind: "number", group: "signal", min: 3, max: 200, hint: "Stop pichhli itni candles ke low/high par trail hota hai." },
+    { key: "stop_atr", label: "Initial stop · ATR ×", kind: "number", group: "signal", min: 0.5, max: 6, step: 0.5 },
+    { key: "allow_shorts", label: "Shorts bhi lo (sirf bear regime mein)", kind: "toggle", group: "signal" },
+    ...marketFields,
+    { key: "capital", label: "Capital · $", kind: "number", group: "risk", min: 10, step: 10, onCard: true },
+    {
+      key: "risk_pct",
+      label: "Risk per trade · %",
+      kind: "number",
+      group: "risk",
+      min: 0.1,
+      max: 5,
+      step: 0.1,
+      onCard: true,
+      hint: "Stop lagne par capital ka itna % jaata hai. 1% pro standard hai; 2% par max drawdown ~30% tak gaya.",
+    },
+    { key: "days", label: "History · days", kind: "number", group: "backtest", min: 30, max: 700, hint: "365+ din rakho — trend system chhote window mein luck dikhata hai, edge nahi." },
+  ],
+  defaults: {
+    symbol: "BTCUSDT",
+    timeframe: "4h",
+    channel: 30,
+    exit_channel: 15,
+    stop_atr: 2,
+    allow_shorts: true,
+    capital: 1000,
+    risk_pct: 1,
+    days: 365,
+  },
+  analyze(candles, values) {
+    const symbol = str(values, "symbol", "BTCUSDT");
+    const timeframe = str(values, "timeframe", "4h");
+    const intervalMs = intervalMinutes(timeframe) * 60_000;
+    const params = {
+      channel: Math.max(5, Math.round(num(values, "channel", 30))),
+      exitChannel: Math.max(3, Math.round(num(values, "exit_channel", 15))),
+      stopAtr: num(values, "stop_atr", 2),
+      allowShorts: bool(values, "allow_shorts"),
+      emaFast: 50,
+      emaSlow: 200,
+    };
+    const capital = num(values, "capital", 1000);
+    const riskPct = num(values, "risk_pct", 1);
+    const overlays: ChartOverlay[] = [
+      { key: TREND_KEYS.upper, label: `${params.channel}-candle high`, color: TR_UP },
+      { key: TREND_KEYS.lower, label: `${params.channel}-candle low`, color: TR_DOWN },
+      { key: emaKey(params.emaSlow), label: `EMA ${params.emaSlow}`, color: THIRD_COLOR },
+      { key: TREND_KEYS.stop, label: "Active stop", color: TR_STOP },
+    ];
+    if (candles.length < params.emaSlow + params.channel + 10) {
+      return {
+        ...emptyAnalysis(candles, overlays),
+        signal: {
+          headline: "Zyada history chahiye",
+          detail: `EMA ${params.emaSlow} aur ${params.channel}-candle channel ke liye kam se kam ${params.emaSlow + params.channel + 10} candles chahiye — chart history badhao.`,
+          tone: "neutral",
+          readouts: [],
+        },
+      };
+    }
+
+    const r = replayTrendRider(candles, params, intervalMs);
+    const coin = coinOf(symbol);
+    const last = candles[candles.length - 1];
+    const lastAtr = r.atr ?? 0;
+
+    let signal: LiveSignal;
+    let desired: AutoTradeState["desired"] = null;
+    if (r.position) {
+      const p = r.position;
+      const long = p.side === "long";
+      const move = ((last.close - p.entryPrice) / p.entryPrice) * 100 * (long ? 1 : -1);
+      desired = { side: p.side, entryTime: p.entryTime, stop: p.stop };
+      signal = {
+        headline: `${long ? "LONG" : "SHORT"} chalu — trailing stop ${price(p.stop)}`,
+        detail: `Entry ${price(p.entryPrice)} (${fmtWhen(p.entryTime)}), abhi ${move >= 0 ? "+" : ""}${move.toFixed(2)}%. Stop har band candle par pichhli ${params.exitChannel} candles ke ${long ? "low" : "high"} tak khiskta hai — kabhi ${long ? "neeche" : "upar"} nahi.`,
+        tone: long ? "buy" : "sell",
+        readouts: [],
+      };
+    } else if (r.pending) {
+      const p = r.pending;
+      const long = p.side === "long";
+      const entry = p.entryPrice ?? last.close;
+      const qty = trendRiderQuantity(capital, riskPct, entry, p.stop);
+      desired = { side: p.side, entryTime: p.entryTime, stop: p.stop };
+      signal = {
+        headline: long ? `BUY — ${params.channel}-candle breakout confirm` : `SELL — ${params.channel}-candle breakdown (bear regime)`,
+        detail: `Band candle ne channel ${long ? "upar" : "neeche"} toda. Entry ${price(entry)} ke paas, stop ${price(p.stop)}. $${capital.toLocaleString("en-US")} par ${riskPct}% risk = ${qty.toFixed(4)} ${coin}.`,
+        tone: long ? "buy" : "sell",
+        entry: true,
+        readouts: [],
+      };
+    } else if (r.regime === "bull") {
+      signal = {
+        headline: "Flat — breakout ka intezaar",
+        detail: `4h candle ${price(r.upper)} ke upar band ho to LONG. Range mein bahar baithna hi is system ki taqat hai — false breakouts yahin se aate hain.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else if (r.regime === "bear" && params.allowShorts) {
+      signal = {
+        headline: "Flat — bear regime, breakdown ka intezaar",
+        detail: `4h candle ${price(r.lower)} ke neeche band ho to SHORT. Long tab tak band jab tak price EMA ${params.emaSlow} ke upar na aaye.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Flat — koi saaf trend nahi",
+        detail: `Price EMA ${params.emaSlow} ke neeche hai par EMA 50 abhi upar — na long, na short. Aise market mein cash hi position hai.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    const stopDist = params.stopAtr * lastAtr;
+    const refPrice = r.position?.entryPrice ?? last.close;
+    const refStop = r.position?.stop ?? r.pending?.stop ?? refPrice - stopDist;
+    const sizeQty = trendRiderQuantity(capital, riskPct, refPrice, refStop);
+    const regimeLabel = r.regime === "bull" ? "Bull · longs on" : r.regime === "bear" ? (params.allowShorts ? "Bear · shorts on" : "Bear · shorts off") : "Neutral · flat";
+    signal.readouts = [
+      { label: "Regime", value: regimeLabel, color: r.regime === "bull" ? "var(--green)" : r.regime === "bear" ? "var(--red)" : undefined },
+      { label: "Long trigger", value: price(r.upper), color: TR_UP },
+      { label: "Short trigger", value: price(r.lower), color: TR_DOWN },
+      { label: `EMA ${params.emaSlow}`, value: price(r.emaSlow), color: THIRD_COLOR },
+      {
+        label: r.position ? "Active stop" : "Stop distance",
+        value: r.position ? price(r.position.stop) : `${price(stopDist)} (${((stopDist / last.close) * 100).toFixed(2)}%)`,
+        color: TR_STOP,
+      },
+      { label: `Size · ${riskPct}% risk`, value: `${sizeQty.toFixed(4)} ${coin} (~$${(sizeQty * refPrice).toFixed(0)})` },
+      { label: "Pair", value: `${symbolLabel(symbol)} · ${timeframe.toUpperCase()}` },
+    ];
+
+    return { candles: r.candles, overlays, signal, autoTrade: { desired, intervalMs } };
+  },
+  toBacktest(values) {
+    return {
+      ...baseParams(values),
+      strategy: "trend-rider",
+      timeframe: str(values, "timeframe", "4h"),
+      days: num(values, "days", 365),
+      capital: num(values, "capital", 1000),
+      risk_pct: num(values, "risk_pct", 1),
+      channel: num(values, "channel", 30),
+      exit_channel: num(values, "exit_channel", 15),
+      stop_atr: num(values, "stop_atr", 2),
+      allow_shorts: bool(values, "allow_shorts"),
+    };
+  },
+};
+
+/* ── Capital-Based Strategies (₹3k to ₹50k) ───────────── */
+
+/**
+ * In strategies ka apna backend engine nahi hai — backtest EMA crossover engine par
+ * chalta hai. Note mein wahi likho jo engine sach mein karta hai, taaki backtest ka
+ * number is strategy ki logic ka saboot na samjha jaye.
+ */
+function emaEngineNote(rule: string, missing: string): string {
+  return `Backtest is strategy ki apni logic par nahi chalta — backend ke EMA crossover engine par chalta hai: ${rule}. Long aur short dono, exit sirf fixed SL/target points par, 11:00–14:00 IST entries block (default ON), aur fees/slippage shaamil nahi. P&L = points × lots × 0.001 coin, capital par nahi. ${missing} Isliye backtest ka nateeja upar wali live logic ka saboot nahi hai.`;
+}
+
+/** Paanchon ka live signal isi tarah chalta hai — Logic text ke aakhir mein yahi sach. */
+const CAPITAL_LIVE_CAVEAT =
+  " Signal chalu (adhoori) candle par check hota hai, isliye candle band hone se pehle badal sakta hai. Sirf BUY signal aata hai (short nahi), aur exit ka koi rule nahi chalta — jo SL/target readouts dikhte hain wo har refresh par abhi ke price se dobara bante hain, sirf reference levels hain.";
+
+const donchianBreakout20k: StrategyDef = {
+  id: "donchian-breakout-20k",
+  name: "Donchian Breakout (₹20,000)",
+  category: "Capital · ₹20k · 4h Breakout",
+  blurb:
+    "Live signal: 4H par 20-candle high ka breakout, 1.5× volume aur strong body ke saath, EMA 200 ke upar. Backtest approximate hai — EMA crossover engine par chalta hai.",
+  logic:
+    "Live signal (default 4H): close pichhli candle se pehle ki 20 candles (Channel lookback) ke highest high ke upar ho, volume pichhli 20 candles ke average ka 1.5× se zyada ho, candle green ho aur body uski range ke aadhe se badi ho, aur price EMA 200 ke upar ho — tab BUY. 'SL ref' = close − 3× ATR (Trail ATR multiple)." +
+    CAPITAL_LIVE_CAVEAT,
+  accent: "#10b981",
+  icon: TrendingUp,
+  featured: true,
+  engineNote: emaEngineNote(
+    "EMA 20 jab EMA 50 aur EMA 200 dono ke upar cross kare to BUY, dono ke neeche to SELL",
+    "Donchian channel, volume filter, 3× ATR trailing stop, 1% risk sizing aur 3% daily loss limit backtest mein nahi hain.",
+  ),
+  fields: [
+    { key: "lookback", label: "Channel lookback", kind: "number", group: "signal", min: 10, max: 100, onCard: true },
+    { key: "trail_atr", label: "Trail ATR multiple", kind: "number", group: "signal", min: 1, max: 5, step: 0.5, onCard: true },
+    ...marketFields,
+    ...riskFields,
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "4h",
+    lookback: 20,
+    trail_atr: 3.0,
+    sl_points: 600,
+    target_points: 1800,
+  },
+  analyze(candles, values) {
+    const lookback = num(values, "lookback", 20);
+    const trailMult = num(values, "trail_atr", 3.0);
+    const ema200Period = 200;
+
+    const overlays: ChartOverlay[] = [
+      { key: "donchian_high", label: `Donchian High ${lookback}`, color: "#10b981" },
+      { key: emaKey(ema200Period), label: `EMA ${ema200Period}`, color: THIRD_COLOR },
+    ];
+    if (candles.length < Math.max(lookback + 2, 50)) return emptyAnalysis(candles, overlays);
+
+    const decoratedEma = attachEma(candles, [ema200Period]);
+    const highs = decoratedEma.map((c) => c.high);
+    const atrSeries = atr(decoratedEma, 14);
+
+    const decorated = decoratedEma.map((c, i) => {
+      let hh = c.high;
+      if (i >= lookback) {
+        let maxH = -Infinity;
+        for (let j = i - lookback; j < i; j++) {
+          if (highs[j] > maxH) maxH = highs[j];
+        }
+        hh = maxH;
+      }
+      return { ...c, donchian_high: hh, atr: atrSeries[i] };
+    });
+
+    const last = decorated[decorated.length - 1];
+    const prev = decorated[decorated.length - 2];
+    const prevHigh20 = prev.donchian_high as number;
+    const ema200Val = (last as Candle)[emaKey(ema200Period)] as number;
+
+    const avgVol = averageVolume(decorated, 20) ?? 1;
+    const currentVol = last.volume ?? 0;
+    const volOk = currentVol > 1.5 * avgVol;
+
+    const candleRange = last.high - last.low;
+    const bodySize = last.close - last.open;
+    const isStrongBody = candleRange > 0 && bodySize > 0.5 * candleRange;
+
+    const isBreakout = last.close > prevHigh20 && last.close > ema200Val && volOk && isStrongBody;
+    const lastAtr = atrSeries[atrSeries.length - 1] ?? 0;
+    const suggestedSl = last.close - trailMult * lastAtr;
+
+    let signal: LiveSignal;
+    if (isBreakout) {
+      signal = {
+        headline: `BUY — ${lookback}-candle channel breakout`,
+        detail: `Price ${price(last.close)} ne ${lookback}-bar high (${price(prevHigh20)}) tode, volume ${(currentVol / avgVol).toFixed(1)}x average hai.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (last.close > ema200Val) {
+      signal = {
+        headline: "Uptrend — Breakout ka intezaar",
+        detail: `Price EMA 200 ke upar hai, Donchian High ${price(prevHigh20)} ke break hone ka intezaar hai.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Bearish/Neutral — Below EMA 200",
+        detail: "Price macro EMA 200 ke neeche hai, Donchian entries paused hain.",
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Price", value: price(last.close) },
+      { label: "Donchian High", value: price(prevHigh20), color: "#10b981" },
+      { label: `EMA ${ema200Period}`, value: price(ema200Val), color: THIRD_COLOR },
+      { label: "Volume Ratio", value: `${(currentVol / (avgVol || 1)).toFixed(2)}x`, color: volOk ? "var(--green)" : undefined },
+      { label: "ATR", value: price(lastAtr) },
+      { label: `SL ref (${trailMult}× ATR)`, value: price(suggestedSl), color: "var(--red)" },
+    ];
+
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), ema9: 20, ema21: 50, ema50: 200 };
+  },
+};
+
+const emaAdx10k: StrategyDef = {
+  id: "ema-adx-10k",
+  name: "EMA + ADX (₹10,000)",
+  category: "Capital · ₹10k · 1h Momentum",
+  blurb:
+    "Live signal: EMA 20/50 golden cross + ADX > 25 + price EMA 200 ke upar. 2× ATR trailing stop sirf suggested level hai. Backtest approximate — EMA crossover engine par.",
+  logic:
+    "Live signal (default 1H): fast EMA (default 20) jab slow EMA (default 50) ko neeche se upar cross kare, ADX(14) threshold (default 25) se upar ho, aur price EMA 200 ke upar ho — tab BUY. Cross ke baad jab tak fast > slow aur price EMA 200 ke upar hai, 'Bullish Trend Active' dikhta hai. 'SL ref' = close − 2× ATR." +
+    CAPITAL_LIVE_CAVEAT,
+  accent: "#3b82f6",
+  icon: Zap,
+  engineNote: emaEngineNote(
+    "fast EMA jab slow EMA aur EMA 200 dono ke upar cross kare to BUY, dono ke neeche to SELL",
+    "ADX filter, 2× ATR trailing stop, 1% risk sizing aur 72-bar max holding backtest mein nahi hain.",
+  ),
+  fields: [
+    { key: "fast", label: "Fast EMA", kind: "number", group: "signal", min: 5, max: 50, onCard: true },
+    { key: "slow", label: "Slow EMA", kind: "number", group: "signal", min: 20, max: 100, onCard: true },
+    { key: "adx_thresh", label: "ADX Threshold", kind: "number", group: "signal", min: 15, max: 40, onCard: true },
+    ...marketFields,
+    ...riskFields,
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "1h",
+    fast: 20,
+    slow: 50,
+    adx_thresh: 25,
+    sl_points: 500,
+    target_points: 1500,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "fast", 20);
+    const slow = num(values, "slow", 50);
+    const adxThresh = num(values, "adx_thresh", 25);
+    const ema200Period = 200;
+
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+      { key: emaKey(ema200Period), label: `EMA ${ema200Period}`, color: THIRD_COLOR },
+    ];
+    if (candles.length < Math.max(slow + 2, 60)) return emptyAnalysis(candles, overlays);
+
+    const decorated = attachEma(candles, [fast, slow, ema200Period]);
+    const adxPoints = adx(candles, 14);
+    const atrPoints = atr(candles, 14);
+
+    const last = decorated[decorated.length - 1];
+    const prev = decorated[decorated.length - 2];
+    const fNow = last[emaKey(fast)] as number;
+    const sNow = last[emaKey(slow)] as number;
+    const fPrev = prev[emaKey(fast)] as number;
+    const sPrev = prev[emaKey(slow)] as number;
+    const ema200Val = (last as Candle)[emaKey(ema200Period)] as number;
+
+    const lastAdx = adxPoints[adxPoints.length - 1]?.adx ?? null;
+    const lastAtr = atrPoints[atrPoints.length - 1] ?? 0;
+
+    const cross = crossDirection(fPrev, fNow, sPrev, sNow);
+    const adxStrong = lastAdx != null && lastAdx > adxThresh;
+    const isAboveEma200 = last.close > ema200Val;
+
+    let signal: LiveSignal;
+    if (cross === "up" && adxStrong && isAboveEma200) {
+      signal = {
+        headline: `BUY — EMA ${fast}/${slow} golden cross + strong ADX`,
+        detail: `Fresh crossover confirm hua. ADX ${lastAdx.toFixed(1)} (> ${adxThresh}) strong momentum dikha raha hai.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (fNow > sNow && isAboveEma200) {
+      signal = {
+        headline: "Bullish Trend Active",
+        detail: `${adxStrong ? `Trend strong hai (ADX ${lastAdx?.toFixed(1)}).` : `Trend chal raha hai lekin ADX kamzor hai (${lastAdx?.toFixed(1) ?? "—"}).`} Ye signal exit nahi deta — stop khud manage karein.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "No Momentum Signal",
+        detail: "EMA crossover ya ADX criteria abhi meet nahi ho raha.",
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: `EMA ${fast}`, value: price(fNow), color: FAST_COLOR },
+      { label: `EMA ${slow}`, value: price(sNow), color: SLOW_COLOR },
+      { label: "ADX (14)", value: lastAdx != null ? lastAdx.toFixed(1) : "—", color: adxStrong ? "var(--green)" : undefined },
+      { label: "ATR", value: price(lastAtr) },
+      { label: "SL ref (2× ATR)", value: price(last.close - 2 * lastAtr), color: "var(--red)" },
+      { label: "Price", value: price(last.close) },
+    ];
+
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    const fast = num(values, "fast", 20);
+    const slow = num(values, "slow", 50);
+    return { ...baseParams(values), ema9: fast, ema21: slow, ema50: 200 };
+  },
+};
+
+const rsiReversion3k: StrategyDef = {
+  id: "rsi-reversion-3k",
+  name: "RSI Reversion (₹3,000)",
+  category: "Capital · ₹3k · 15m Reversion",
+  blurb:
+    "Live signal: uptrend (EMA 200 ke upar) mein RSI < 25 ka dip, volume spike ke saath; 20-SMA suggested target. Backtest approximate — EMA crossover engine par.",
+  logic:
+    "Live signal (default 15m): RSI(14) oversold level (default 25) se neeche ho, price EMA 200 ke upar ho, aur volume pichhli 20 candles ke average ka Volume Multiplier (default 1.5×) se zyada ho — tab BUY. 'Target ref' = 20-SMA, 'SL ref' = close − 1.5× ATR." +
+    CAPITAL_LIVE_CAVEAT,
+  accent: "#f59e0b",
+  icon: Gauge,
+  engineNote: emaEngineNote(
+    "EMA 9 jab EMA 21 aur EMA 50 dono ko cross kare, aur entry tabhi jab RSI(14) 25 se neeche ya 60 se upar ho",
+    "Dip-buy logic, volume spike, 20-SMA take-profit, 1.5× ATR stop aur 1% risk sizing backtest mein nahi hain.",
+  ),
+  fields: [
+    { key: "rsi_thresh", label: "RSI Oversold Level", kind: "number", group: "signal", min: 15, max: 35, onCard: true },
+    { key: "vol_mult", label: "Volume Multiplier", kind: "number", group: "signal", min: 1.0, max: 3.0, step: 0.1, onCard: true },
+    ...marketFields,
+    ...riskFields,
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "15m",
+    rsi_thresh: 25,
+    vol_mult: 1.5,
+    sl_points: 300,
+    target_points: 600,
+  },
+  analyze(candles, values) {
+    const rsiThresh = num(values, "rsi_thresh", 25);
+    const volMult = num(values, "vol_mult", 1.5);
+    const ema200Period = 200;
+
+    const overlays: ChartOverlay[] = [
+      { key: "mid_sma20", label: "20 SMA (target ref)", color: "#f59e0b" },
+      { key: emaKey(ema200Period), label: `EMA ${ema200Period}`, color: THIRD_COLOR },
+    ];
+    if (candles.length < Math.max(ema200Period + 2, 60)) return emptyAnalysis(candles, overlays);
+
+    const decoratedEma = attachEma(candles, [ema200Period]);
+    const closes = decoratedEma.map((c) => c.close);
+    const rsiSeries = rsi(closes, 14);
+    const atrSeries = atr(decoratedEma, 14);
+
+    const decorated = decoratedEma.map((c, i) => {
+      let sma20 = c.close;
+      if (i >= 19) {
+        let sum = 0;
+        for (let j = i - 19; j <= i; j++) sum += closes[j];
+        sma20 = sum / 20;
+      }
+      return { ...c, rsi: rsiSeries[i], mid_sma20: sma20, atr: atrSeries[i] };
+    });
+
+    const last = decorated[decorated.length - 1];
+    const lastRsi = rsiSeries[rsiSeries.length - 1] ?? 50;
+    const lastAtr = atrSeries[atrSeries.length - 1] ?? 0;
+    const ema200Val = (last as Candle)[emaKey(ema200Period)] as number;
+    const midVal = last.mid_sma20 as number;
+
+    const avgVol = averageVolume(decorated, 20) ?? 1;
+    const currentVol = last.volume ?? 0;
+    const volOk = currentVol > volMult * avgVol;
+
+    const isOversoldUptrend = lastRsi < rsiThresh && last.close > ema200Val && volOk;
+
+    let signal: LiveSignal;
+    if (isOversoldUptrend) {
+      signal = {
+        headline: "BUY — Oversold Dip Reversion",
+        detail: `RSI ${lastRsi.toFixed(1)} (< ${rsiThresh}) in uptrend with ${(currentVol / avgVol).toFixed(1)}x volume. Target ref (20 SMA): ${price(midVal)}.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (last.close > midVal) {
+      signal = {
+        headline: "Above Mean — Waiting for Pullback",
+        detail: "Price 20-MA ke upar hai. Naye dip ka intezaar karein.",
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Neutral / In Range",
+        detail: `RSI ${lastRsi.toFixed(1)}. Oversold trigger < ${rsiThresh} ka intezaar hai.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Price", value: price(last.close) },
+      { label: "RSI (14)", value: lastRsi.toFixed(1), color: lastRsi < rsiThresh ? "var(--green)" : undefined },
+      { label: "Target ref (20 SMA)", value: price(midVal), color: "#f59e0b" },
+      { label: "SL ref (1.5× ATR)", value: price(last.close - 1.5 * lastAtr), color: "var(--red)" },
+      { label: "Volume Ratio", value: `${(currentVol / (avgVol || 1)).toFixed(2)}x` },
+    ];
+
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), use_rsi_filter: true, rsi_period: 14, rsi_oversold: 25 };
+  },
+};
+
+const bollingerRsi5k: StrategyDef = {
+  id: "bollinger-rsi-5k",
+  name: "Bollinger + RSI (₹5,000)",
+  category: "Capital · ₹5k · 15m Bounce",
+  blurb:
+    "Live signal: close lower Bollinger Band ke neeche + RSI < 30 + price EMA 200 ke upar. Backtest approximate — EMA crossover engine par.",
+  logic:
+    "Live signal (default 15m): close lower Bollinger Band (Band Period ka SMA − 2 standard deviation, default 20) ke neeche ho, RSI(14) oversold level (default 30) se neeche ho, aur price EMA 200 ke upar ho — tab BUY. 'Target ref' = middle band (SMA). Crash/volatility filter abhi nahi hai." +
+    CAPITAL_LIVE_CAVEAT,
+  accent: "#8b5cf6",
+  icon: Target,
+  engineNote: emaEngineNote(
+    "EMA 9 jab EMA 21 aur EMA 50 dono ko cross kare, aur entry tabhi jab RSI(14) 30 se neeche ya 60 se upar ho",
+    "Bollinger Band, middle-band target aur crash-candle filter backtest mein nahi hain (crash filter live signal mein bhi abhi nahi hai).",
+  ),
+  fields: [
+    { key: "period", label: "Band Period", kind: "number", group: "signal", min: 10, max: 50, onCard: true },
+    { key: "rsi_thresh", label: "RSI Oversold", kind: "number", group: "signal", min: 20, max: 40, onCard: true },
+    ...marketFields,
+    ...riskFields,
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "15m",
+    period: 20,
+    rsi_thresh: 30,
+    sl_points: 350,
+    target_points: 700,
+  },
+  analyze(candles, values) {
+    const period = num(values, "period", 20);
+    const rsiThresh = num(values, "rsi_thresh", 30);
+    const ema200Period = 200;
+
+    const overlays: ChartOverlay[] = [
+      { key: "bb_mid", label: `BB Mid (SMA ${period})`, color: "#8b5cf6" },
+      { key: "bb_lower", label: "BB Lower", color: "var(--red)" },
+      { key: emaKey(ema200Period), label: `EMA ${ema200Period}`, color: THIRD_COLOR },
+    ];
+    if (candles.length < Math.max(period + 2, 60)) return emptyAnalysis(candles, overlays);
+
+    const decoratedEma = attachEma(candles, [ema200Period]);
+    const closes = decoratedEma.map((c) => c.close);
+    const rsiSeries = rsi(closes, 14);
+    const atrSeries = atr(decoratedEma, 14);
+
+    const decorated = decoratedEma.map((c, i) => {
+      let mid = c.close;
+      let lower = c.close;
+      if (i >= period - 1) {
+        let sum = 0;
+        for (let j = i - period + 1; j <= i; j++) sum += closes[j];
+        mid = sum / period;
+        let sumSq = 0;
+        for (let j = i - period + 1; j <= i; j++) sumSq += (closes[j] - mid) ** 2;
+        const sd = Math.sqrt(sumSq / period);
+        lower = mid - 2 * sd;
+      }
+      return { ...c, bb_mid: mid, bb_lower: lower, rsi: rsiSeries[i], atr: atrSeries[i] };
+    });
+
+    const last = decorated[decorated.length - 1];
+    const lastRsi = rsiSeries[rsiSeries.length - 1] ?? 50;
+    const lastAtr = atrSeries[atrSeries.length - 1] ?? 0;
+    const midVal = last.bb_mid as number;
+    const lowerVal = last.bb_lower as number;
+    const ema200Val = (last as Candle)[emaKey(ema200Period)] as number;
+
+    const isLowerBandTouch = last.close < lowerVal && lastRsi < rsiThresh && last.close > ema200Val;
+
+    let signal: LiveSignal;
+    if (isLowerBandTouch) {
+      signal = {
+        headline: "BUY — Lower Bollinger Band Oversold Bounce",
+        detail: `Price ${price(last.close)} Lower Band (${price(lowerVal)}) ke neeche slip hua. RSI: ${lastRsi.toFixed(1)}. Target Mid: ${price(midVal)}.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (last.close < lowerVal) {
+      signal = {
+        headline: "Band Penetration — Checking RSI",
+        detail: `Price lower band ke neeche hai, RSI ${lastRsi.toFixed(1)} (< ${rsiThresh}) confirm hone par buy trigger hoga.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Inside Normal Volatility Bands",
+        detail: "Price normal range mein trade ho raha hai.",
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Price", value: price(last.close) },
+      { label: "BB Lower", value: price(lowerVal), color: "var(--red)" },
+      { label: "BB Mid (target ref)", value: price(midVal), color: "#8b5cf6" },
+      { label: "RSI", value: lastRsi.toFixed(1), color: lastRsi < rsiThresh ? "var(--green)" : undefined },
+      { label: "ATR", value: price(lastAtr) },
+    ];
+
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), use_rsi_filter: true, rsi_period: 14, rsi_oversold: 30 };
+  },
+};
+
+const cryptoPortfolio50k: StrategyDef = {
+  id: "crypto-portfolio-50k",
+  name: "Multi-Asset Basket (₹50,000)",
+  category: "Capital · ₹50k · 1h Portfolio",
+  blurb:
+    "Live signal: chune hue ek symbol par EMA 20/50 golden cross, price EMA 200 ke upar. BTC/ETH/SOL basket abhi na live signal mein lagu hai na backtest mein — backtest EMA crossover engine par.",
+  logic:
+    "Live signal sirf chune hue ek symbol par chalta hai (default BTC/USD, 1H): EMA 20 jab EMA 50 ko neeche se upar cross kare aur price EMA 200 ke upar ho — tab BUY; uske baad jab tak EMA 20 > EMA 50 aur price EMA 200 ke upar hai, 'Uptrend active' dikhta hai. BTC/ETH/SOL basket, BTC trend filter aur mean-reversion blend abhi implement nahi hain. Capital aur Risk % se sirf 'Risk budget' readout banta hai (capital × risk%) — position size ya stop ye strategy tay nahi karti." +
+    CAPITAL_LIVE_CAVEAT,
+  accent: "#06b6d4",
+  icon: Boxes,
+  featured: true,
+  engineNote: emaEngineNote(
+    "EMA 20 jab EMA 50 aur EMA 200 dono ke upar cross kare to BUY, dono ke neeche to SELL — sirf chune hue ek symbol par",
+    "BTC/ETH/SOL basket, BTC trend filter, aur Capital / Risk % fields backtest mein use nahi hote.",
+  ),
+  fields: [
+    ...marketFields,
+    { key: "capital", label: "Capital Allocation", kind: "number", group: "risk", min: 10000, max: 500000, onCard: true },
+    { key: "risk_per_trade", label: "Risk % per trade", kind: "number", group: "risk", min: 0.1, max: 2.0, step: 0.1, onCard: true },
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    symbol: "BTCUSDT",
+    timeframe: "1h",
+    capital: 50000,
+    risk_per_trade: 0.7,
+    sl_points: 600,
+    target_points: 1500,
+  },
+  analyze(candles, values) {
+    const ema200Period = 200;
+    const capital = num(values, "capital", 50000);
+    const riskPct = num(values, "risk_per_trade", 0.7);
+    const riskBudget = `₹${((capital * riskPct) / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(20), label: "EMA 20", color: FAST_COLOR },
+      { key: emaKey(50), label: "EMA 50", color: SLOW_COLOR },
+      { key: emaKey(ema200Period), label: `EMA ${ema200Period}`, color: THIRD_COLOR },
+    ];
+    if (candles.length < Math.max(ema200Period + 2, 60)) return emptyAnalysis(candles, overlays);
+
+    const decorated = attachEma(candles, [20, 50, ema200Period]);
+    const last = decorated[decorated.length - 1];
+    const prev = decorated[decorated.length - 2];
+    const fNow = last[emaKey(20)] as number;
+    const sNow = last[emaKey(50)] as number;
+    const fPrev = prev[emaKey(20)] as number;
+    const sPrev = prev[emaKey(50)] as number;
+    const ema200Val = last[emaKey(ema200Period)] as number;
+
+    const isTrendBullish = fNow > sNow && last.close > ema200Val;
+    const cross = crossDirection(fPrev, fNow, sPrev, sNow);
+
+    let signal: LiveSignal;
+    if (cross === "up" && last.close > ema200Val) {
+      signal = {
+        headline: "BUY — EMA 20/50 golden cross (EMA 200 ke upar)",
+        detail: `Risk budget ${riskBudget} (₹${capital.toLocaleString("en-IN")} ka ${riskPct}%). Position size aur stop khud tay karein — ye signal nahi deta.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (isTrendBullish) {
+      signal = {
+        headline: "Uptrend active",
+        detail: "EMA 20 EMA 50 ke upar aur price EMA 200 ke upar. Ye signal exit nahi deta — stop khud manage karein.",
+        tone: "buy",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Golden cross ka intezaar",
+        detail: "EMA 20 ka EMA 50 ke upar cross (price EMA 200 ke upar rehte hue) abhi nahi hua.",
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    signal.readouts = [
+      { label: "Price", value: price(last.close) },
+      { label: "EMA 20", value: price(fNow), color: FAST_COLOR },
+      { label: "EMA 50", value: price(sNow), color: SLOW_COLOR },
+      { label: "EMA 200", value: price(ema200Val), color: THIRD_COLOR },
+      { label: `Risk budget · ${riskPct}%`, value: riskBudget },
+      { label: "Trend Status", value: isTrendBullish ? "Bullish" : "Neutral", color: isTrendBullish ? "var(--green)" : undefined },
+    ];
+
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return { ...baseParams(values), ema9: 20, ema21: 50, ema50: 200 };
+  },
+};
+
 export const STRATEGIES: StrategyDef[] = [
+  trendRider,
+  donchianBreakout20k,
+  emaAdx10k,
+  rsiReversion3k,
+  bollingerRsi5k,
+  cryptoPortfolio50k,
   emaCrossover,
   rsiDivergence,
   macdStrategy,

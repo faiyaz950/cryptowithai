@@ -11,10 +11,13 @@ import {
   Check,
   FlaskConical,
   Info,
+  Pause,
   Play,
   Power,
   RefreshCw,
   RotateCcw,
+  Server,
+  Square,
   X,
   Zap,
 } from "lucide-react";
@@ -26,16 +29,22 @@ import { useAuth } from "@/context/AuthContext";
 import {
   CHART_RANGES,
   CRYPTO_INTERVALS,
+  MAX_CHART_CANDLES,
   CRYPTO_SYMBOLS,
   barsForDays,
   candlesSpanDays,
+  deployStrategyBot,
   fetchCandles,
+  fetchStrategyBots,
   maxDaysForInterval,
   placeDemoOrder,
   runBacktest,
+  setStrategyBotStatus,
+  stopStrategyBot,
   symbolLabel,
   type BacktestResult,
   type Candle,
+  type StrategyBot,
   syncStamp,
 } from "@/lib/cryptoApi";
 import {
@@ -75,6 +84,8 @@ interface Props {
 
 /** Live monitor kitni der mein refresh ho. */
 const POLL_MS = 60_000;
+/** Server bot ki haalat kitni der mein dobara padho — bot khud server par chalta hai, ye sirf dikhana hai. */
+const BOT_POLL_MS = 30_000;
 
 const GROUPS: { id: StrategyField["group"]; label: string }[] = [
   { id: "signal", label: "Signal parameters" },
@@ -94,6 +105,28 @@ function shortInterval(value: string): string {
 
 function fmtDay(timeMs: number): string {
   return new Date(timeMs).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function fmtPx(value: number | null): string {
+  return value == null ? "—" : value.toLocaleString("en-US", { maximumSignificantDigits: 6 });
+}
+
+/** Bot ka abhi ka trade ek line mein. */
+function botTradeLabel(bot: StrategyBot): { text: string; color?: string } {
+  const side = bot.side === "long" ? "LONG" : bot.side === "short" ? "SHORT" : "";
+  const color = bot.side === "long" ? "var(--green)" : bot.side === "short" ? "var(--red)" : undefined;
+  switch (bot.trade_state) {
+    case "open":
+      return { text: `${side} chalu`, color };
+    case "entering":
+      return { text: `${side} entry lag rahi hai`, color };
+    case "closed":
+      return { text: "Flat — pichhla trade band" };
+    case "skipped":
+      return { text: "Flat — pichhla signal chhoda" };
+    default:
+      return { text: "Flat — signal ka intezaar" };
+  }
 }
 
 export default function StrategyRunner({ def, initialValues, onActiveChange, autoBacktest }: Props) {
@@ -171,12 +204,83 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     setValues((prev) => ({ ...prev, [key]: value }));
   };
 
+  /* ── Server bot (sirf autoTrade strategies) ──────────── */
+
+  const [serverBots, setServerBots] = useState<StrategyBot[]>([]);
+  const [botWorkerRunning, setBotWorkerRunning] = useState(true);
+  const [botBusy, setBotBusy] = useState(false);
+  const [botError, setBotError] = useState<string | null>(null);
+  /** Badhao to bot list turant dobara aati hai (deploy / pause / stop ke baad). */
+  const [botsVersion, setBotsVersion] = useState(0);
+  const refreshBots = () => setBotsVersion((v) => v + 1);
+
+  useEffect(() => {
+    if (!def.autoTrade || !token) return;
+    let cancelled = false;
+    const load = () => {
+      fetchStrategyBots(token)
+        .then((res) => {
+          if (cancelled) return;
+          setServerBots(res.data ?? []);
+          setBotWorkerRunning(res.worker_running);
+          setBotError(null);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setBotError(err instanceof Error ? err.message : "Bot ki haalat nahi mili");
+        });
+    };
+    load();
+    const id = window.setInterval(load, BOT_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [def.autoTrade, token, botsVersion]);
+
+  // Ek symbol par ek hi chalu bot hota hai (paper book ek position rakhta hai).
+  const serverBot = useMemo(
+    () =>
+      serverBots.find(
+        (b) => b.strategy === def.id && b.symbol === symbol.toUpperCase() && b.status !== "stopped",
+      ) ?? null,
+    [serverBots, def.id, symbol],
+  );
+  const paperActive = def.autoTrade ? serverBot !== null : isPaperActive;
+
+  const botAction = async (run: () => Promise<unknown>, line: string) => {
+    setBotBusy(true);
+    setBotError(null);
+    try {
+      await run();
+      log(line);
+      refreshBots();
+    } catch (err) {
+      setBotError(err instanceof Error ? err.message : "Bot action fail");
+    } finally {
+      setBotBusy(false);
+    }
+  };
+
+  const stopBot = (flatten: boolean) => {
+    if (!serverBot || !token) return;
+    const open = serverBot.trade_state === "open" || serverBot.trade_state === "entering";
+    if (flatten && open && !window.confirm("Bot stop karke khuli position abhi market par band karein?")) return;
+    void botAction(
+      () => stopStrategyBot(token, serverBot.id, flatten),
+      flatten ? "Server bot stop — position band" : "Server bot stop — position aur stop waise hi chhode",
+    );
+  };
+
   /* ── Live data ───────────────────────────────────────── */
 
   const loadCandles = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchCandles({ symbol, interval: timeframe, limit: barsForDays(chartDays, timeframe) });
+      const res = await fetchCandles({
+        symbol,
+        interval: timeframe,
+        limit: Math.max(barsForDays(chartDays, timeframe), Math.min(def.minHistoryBars ?? 0, MAX_CHART_CANDLES)),
+      });
       if (!res.success) throw new Error(res.error || "Candle data nahi mili");
       setCandles(res.candles ?? []);
       setLiveError(null);
@@ -188,7 +292,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     } finally {
       setLoading(false);
     }
-  }, [symbol, timeframe, chartDays]);
+  }, [symbol, timeframe, chartDays, def.minHistoryBars]);
 
   useEffect(() => {
     void loadCandles();
@@ -244,10 +348,39 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     log("Live monitor OFF");
   };
 
+  /**
+   * autoTrade strategy ka bot server par chalta hai — har band candle par backend worker
+   * strategy ko paper account se milata hai, browser band ho tab bhi. Order deploy par nahi,
+   * agle signal par lagta hai.
+   */
+  const deployServerBot = async () => {
+    if (!token) throw new Error("Bot deploy karne ke liye pehle login karo");
+    const res = await deployStrategyBot(token, {
+      strategy: def.id,
+      symbol,
+      timeframe,
+      capital: num(values, "capital", 1000),
+      risk_pct: num(values, "risk_pct", 1),
+      channel: num(values, "channel", 30),
+      exit_channel: num(values, "exit_channel", 15),
+      stop_atr: num(values, "stop_atr", 2),
+      allow_shorts: bool(values, "allow_shorts"),
+      mode: "paper",
+    });
+    syncUrl();
+    refreshBots();
+    log(`Server bot deploy — ${symbolLabel(symbol)} · ${timeframe} (bot #${res.data.id})`);
+  };
+
   const handleDeployToPaper = async () => {
     setDeploying(true);
     setDeployError(null);
     try {
+      if (def.autoTrade) {
+        await deployServerBot();
+        setDeploySuccess(true);
+        return;
+      }
       const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
       const slPoints = num(values, "sl_points", 400);
       const targetPoints = num(values, "target_points", 800);
@@ -406,10 +539,17 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                 color: "#fff",
                 fontWeight: 700,
               }}
+              disabled={Boolean(def.autoTrade && paperActive)}
               onClick={() => setDeployModalOpen(true)}
             >
-              <FlaskConical className="w-4 h-4" />
-              {isPaperActive ? "Paper Active · Re-Deploy" : "Deploy to Paper Trading"}
+              {def.autoTrade ? <Server className="w-4 h-4" /> : <FlaskConical className="w-4 h-4" />}
+              {def.autoTrade
+                ? paperActive
+                  ? "Server bot chal raha hai"
+                  : "Deploy paper bot"
+                : isPaperActive
+                ? "Paper Active · Re-Deploy"
+                : "Deploy to Paper Trading"}
             </button>
 
             {active ? (
@@ -574,6 +714,168 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
           </div>
         </section>
 
+        {def.autoTrade && (
+          <section className="trade-panel">
+            <div className="trade-panel-head">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="trade-panel-title">Server bot</span>
+                {serverBot && (
+                  <span className="text-[11.5px] tnum" style={{ color: "var(--text-muted)" }}>
+                    #{serverBot.id} · {symbolLabel(serverBot.symbol)} · {shortInterval(serverBot.timeframe)}
+                  </span>
+                )}
+              </div>
+              {serverBot ? (
+                <div className="flex items-center gap-2">
+                  <span className={`trade-badge ${serverBot.mode === "live" ? "trade-badge-red" : "trade-badge-blue"}`}>
+                    {serverBot.mode === "live" ? "LIVE" : "PAPER"}
+                  </span>
+                  {serverBot.status === "running" ? (
+                    <span className="trade-badge trade-badge-green">
+                      <span className="trade-dot" />
+                      Running
+                    </span>
+                  ) : (
+                    <span className="trade-badge trade-badge-amber">Paused</span>
+                  )}
+                </div>
+              ) : (
+                <span className="trade-badge trade-badge-neutral">Off</span>
+              )}
+            </div>
+
+            <div className="trade-panel-body space-y-3">
+              {!botWorkerRunning && (
+                <p className="flex items-start gap-2 text-[12.5px]" style={{ color: "var(--amber)" }}>
+                  <AlertTriangle className="w-4 h-4 mt-px flex-none" />
+                  Server par bot worker band hai (BOT_WORKER=0 ya serverless deploy) — bot abhi trade nahi karega.
+                </p>
+              )}
+
+              {!token ? (
+                <div className="trade-empty">
+                  <span className="trade-empty-icon"><Server className="w-4 h-4" /></span>
+                  Login karo — bot tumhare paper account par chalta hai.
+                </div>
+              ) : !serverBot ? (
+                <div className="trade-empty">
+                  <span className="trade-empty-icon"><Server className="w-4 h-4" /></span>
+                  Koi bot nahi chal raha. Deploy karo — server har band candle par strategy chalayega, browser band ho tab bhi.
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="trade-stat">
+                      <div className="trade-stat-label">Trade</div>
+                      <div className="trade-stat-value" style={{ color: botTradeLabel(serverBot).color ?? "var(--text-primary)" }}>
+                        {botTradeLabel(serverBot).text}
+                      </div>
+                    </div>
+                    <div className="trade-stat">
+                      <div className="trade-stat-label">Entry</div>
+                      <div className="trade-stat-value">
+                        {serverBot.trade_state === "open" ? fmtPx(serverBot.entry_price) : "—"}
+                      </div>
+                    </div>
+                    <div className="trade-stat">
+                      <div className="trade-stat-label">Stop</div>
+                      <div className="trade-stat-value" style={{ color: "#f59e0b" }}>
+                        {serverBot.trade_state === "open" ? fmtPx(serverBot.stop_loss) : "—"}
+                      </div>
+                    </div>
+                    <div className="trade-stat">
+                      <div className="trade-stat-label">Size</div>
+                      <div className="trade-stat-value">
+                        {serverBot.trade_state === "open" && serverBot.quantity != null ? serverBot.quantity.toFixed(6) : "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-[11.5px] tnum" style={{ color: "var(--text-muted)" }}>
+                    ${serverBot.capital.toLocaleString("en-US")} · {serverBot.risk_pct}% risk/trade · deploy{" "}
+                    {fmtDay(Date.parse(serverBot.started_at))}
+                    {serverBot.last_run_at ? ` · aakhri check ${fmtDay(Date.parse(serverBot.last_run_at))}` : " · pehla check agli band candle par"}
+                    {serverBot.entry_time != null && serverBot.trade_state === "open"
+                      ? ` · entry candle ${fmtDay(serverBot.entry_time)}`
+                      : ""}
+                  </p>
+
+                  {serverBot.last_error && (
+                    <p className="flex items-start gap-2 text-[12.5px]" style={{ color: "var(--red)" }}>
+                      <AlertCircle className="w-4 h-4 mt-px flex-none" />
+                      {serverBot.last_error}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    {serverBot.status === "running" ? (
+                      <button
+                        type="button"
+                        disabled={botBusy}
+                        className="trade-btn trade-btn-ghost trade-size-sm"
+                        title="Naya trade nahi khulega; chalu trade ka stop trail aur exit chalta rahega"
+                        onClick={() => void botAction(() => setStrategyBotStatus(token, serverBot.id, "pause"), "Server bot pause")}
+                      >
+                        <Pause className="w-3.5 h-3.5" />
+                        Pause
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={botBusy}
+                        className="trade-btn trade-btn-ghost trade-size-sm"
+                        onClick={() => void botAction(() => setStrategyBotStatus(token, serverBot.id, "resume"), "Server bot resume")}
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        Resume
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={botBusy}
+                      className="trade-btn trade-btn-ghost trade-size-sm"
+                      style={{ color: "var(--red)" }}
+                      onClick={() => stopBot(true)}
+                    >
+                      <Square className="w-3.5 h-3.5" />
+                      Stop & position band
+                    </button>
+                    {serverBot.trade_state === "open" && (
+                      <button
+                        type="button"
+                        disabled={botBusy}
+                        className="trade-btn trade-btn-ghost trade-size-sm"
+                        title="Bot band, par position aur uska stop-loss waise hi rahenge"
+                        onClick={() => stopBot(false)}
+                      >
+                        Stop · position rehne do
+                      </button>
+                    )}
+                  </div>
+
+                  {serverBot.events.length > 0 && (
+                    <div className="trade-console">
+                      {serverBot.events.map((event) => (
+                        <div key={`${event.at}-${event.text}`}>
+                          <span className="trade-console-time">{fmtDay(Date.parse(event.at))}</span>
+                          {event.text}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {botError && (
+                <p className="flex items-start gap-2 text-[12.5px]" style={{ color: "var(--red)" }}>
+                  <AlertCircle className="w-4 h-4 mt-px flex-none" />
+                  {botError}
+                </p>
+              )}
+            </div>
+          </section>
+        )}
+
         <section className="trade-panel">
           <div className="trade-panel-head">
             <span className="trade-panel-title">Event log</span>
@@ -641,7 +943,15 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                 </div>
                 <h3 className="text-xl font-bold text-emerald-400">Deployed to Paper Trading!</h3>
                 <p className="text-[13px] max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
-                  <b>{def.name}</b> ab Paper Trading Desk par live virtual capital ke saath deploy ho chuki hai. Entry aur exit conditions trigger hone par automatic paper trades execute hongi.
+                  {def.autoTrade ? (
+                    <>
+                      <b>{def.name}</b>{" "}ka bot server par chalu hai. Abhi koi order nahi laga — agle band candle par signal aate hi entry stop ke saath lagegi, aur har candle par stop trail hoga. Bot server par chalta hai, isliye ye page ya browser band karke bhi chalta rahega. Haalat isi page ke &quot;Server bot&quot; panel mein dikhegi.
+                    </>
+                  ) : (
+                    <>
+                      <b>{def.name}</b> ab Paper Trading Desk par live virtual capital ke saath deploy ho chuki hai. Entry aur exit conditions trigger hone par automatic paper trades execute hongi.
+                    </>
+                  )}
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-3">
@@ -705,22 +1015,38 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                       {symbolLabel(symbol)} · {timeframe}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
-                    <span style={{ color: "var(--text-muted)" }}>Stop Loss & Target</span>
-                    <span className="font-bold font-mono text-emerald-400">
-                      Target: {num(values, "target_points", 800)} pts · <span className="text-rose-400">SL: {num(values, "sl_points", 400)} pts</span>
-                    </span>
-                  </div>
+                  {def.autoTrade ? (
+                    <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
+                      <span style={{ color: "var(--text-muted)" }}>Capital & risk</span>
+                      <span className="font-bold font-mono">
+                        ${num(values, "capital", 1000).toLocaleString("en-US")} · {num(values, "risk_pct", 1)}% / trade
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
+                      <span style={{ color: "var(--text-muted)" }}>Stop Loss & Target</span>
+                      <span className="font-bold font-mono text-emerald-400">
+                        Target: {num(values, "target_points", 800)} pts · <span className="text-rose-400">SL: {num(values, "sl_points", 400)} pts</span>
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-center py-1">
                     <span style={{ color: "var(--text-muted)" }}>Execution Mode</span>
                     <span className="font-bold text-emerald-400 flex items-center gap-1">
                       <Zap className="w-3.5 h-3.5" />
-                      Auto-Execute Virtual Orders on Signal Match
+                      {def.autoTrade ? "Signal par entry · stop har candle trail" : "Auto-Execute Virtual Orders on Signal Match"}
                     </span>
                   </div>
                 </div>
 
+                {def.autoTrade && (
+                  <p className="text-[11.5px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    Size strategy khud nikalti hai (stop lagne par capital ka {num(values, "risk_pct", 1)}%, backtest jaisa compounding). Capital aur risk Parameters panel se badlo. Bot server par har {shortInterval(timeframe)} candle band hone ke kuch second baad chalta hai — browser band ho tab bhi. Ek symbol par ek hi bot; us symbol par haath se paper trade mat karo, warna bot ki position gadbad hogi.
+                  </p>
+                )}
+
                 {/* Capital & Leverage inputs */}
+                {!def.autoTrade && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11.5px] font-bold block mb-1">
@@ -752,6 +1078,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                     </select>
                   </div>
                 </div>
+                )}
 
                 <div className="pt-2 flex items-center justify-end gap-2.5">
                   <button

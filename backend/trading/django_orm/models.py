@@ -71,6 +71,56 @@ class PaperBracket(models.Model):
         ]
 
 
+class StrategyBot(models.Model):
+    """
+    Server par chalne wala strategy bot (abhi sirf Trend Rider). Browser band ho tab bhi
+    worker (`bot_worker.py`) har band candle par strategy ki position ko account se milata hai.
+
+    Trade ki pehchaan `entry_time` hai (entry candle ka open, ms). Ek entry_time par order
+    ek hi baar lagta hai, worker chahe kitni baar chale — isi se reconcile idempotent hai.
+    """
+
+    user = models.ForeignKey("UserAccount", on_delete=models.CASCADE, related_name="strategy_bots")
+    strategy = models.CharField(max_length=32, default="trend-rider")
+    symbol = models.CharField(max_length=32)
+    timeframe = models.CharField(max_length=8, default="4h")
+    capital = models.DecimalField(max_digits=18, decimal_places=2)
+    risk_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    # channel, exit_channel, stop_atr, allow_shorts — backtest wale hi naam.
+    params = models.JSONField(default=dict)
+    # Live tabhi jab user ne is bot ke liye khud chuna ho — aur server ka LIVE_ORDERS_ENABLED bhi on ho.
+    mode = models.CharField(max_length=8, default="paper")
+    exchange_account_id = models.BigIntegerField(null=True, blank=True)
+    # running | paused (naya trade nahi, chalu trade manage hota hai) | stopped
+    status = models.CharField(max_length=16, default="running", db_index=True)
+    # Strategy ka replay yahin se shuru hota hai — backtest ka "same period" yahi hai.
+    started_at = models.DateTimeField()
+
+    # ── Abhi wala trade (reconcile state) ──
+    entry_time = models.BigIntegerField(null=True, blank=True)
+    # "" | entering | open | closed | skipped
+    trade_state = models.CharField(max_length=16, blank=True, default="")
+    side = models.CharField(max_length=8, blank=True, default="")
+    quantity = models.DecimalField(max_digits=28, decimal_places=10, null=True, blank=True)
+    entry_price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    # Live mode mein exchange par pada stop order.
+    stop_order_id = models.CharField(max_length=64, blank=True, default="")
+
+    # Aakhri band candle (open time, ms) jiske baad poora reconcile chala.
+    last_bar_time = models.BigIntegerField(null=True, blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    # [{at, text}] — sabse naya aakhir mein, chhota rakha jaata hai.
+    events = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "strategy_bots"
+        ordering = ["-created_at"]
+
+
 class UserAccount(models.Model):
     username = models.CharField(max_length=32, unique=True, db_index=True)
     password_hash = models.TextField()

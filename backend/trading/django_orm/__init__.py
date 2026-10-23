@@ -350,6 +350,146 @@ def set_paper_bracket(user_id: int, symbol: str, *, stop_loss: Optional[float], 
     )
 
 
+# --- Strategy bots ---
+
+BOT_ACTIVE_STATUSES = ("running", "paused")
+# Bot ka event log row par hi rehta hai — bas itne aakhri.
+BOT_EVENTS_KEEP = 60
+
+_BOT_DECIMALS = ("capital", "risk_pct", "quantity", "entry_price", "stop_loss")
+
+
+def _fl(v: Any) -> Optional[float]:
+    return float(v) if v is not None else None
+
+
+def _bot_dict(b: Any) -> Dict[str, Any]:
+    return {
+        "id": b.id,
+        "user_id": b.user_id,
+        "strategy": b.strategy,
+        "symbol": b.symbol,
+        "timeframe": b.timeframe,
+        "capital": float(b.capital),
+        "risk_pct": float(b.risk_pct),
+        "params": dict(b.params or {}),
+        "mode": b.mode,
+        "exchange_account_id": b.exchange_account_id,
+        "status": b.status,
+        "started_at": b.started_at.isoformat(),
+        "entry_time": b.entry_time,
+        "trade_state": b.trade_state,
+        "side": b.side,
+        "quantity": _fl(b.quantity),
+        "entry_price": _fl(b.entry_price),
+        "stop_loss": _fl(b.stop_loss),
+        "stop_order_id": b.stop_order_id,
+        "last_bar_time": b.last_bar_time,
+        "last_run_at": b.last_run_at.isoformat() if b.last_run_at else None,
+        "last_error": b.last_error,
+        "events": list(b.events or []),
+        "created_at": b.created_at.isoformat() if b.created_at else None,
+        "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+    }
+
+
+def _bot_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(fields)
+    for name in _BOT_DECIMALS:
+        if name in out:
+            out[name] = _dec(out[name])
+    return out
+
+
+def create_strategy_bot(user_id: int, **fields: Any) -> Dict[str, Any]:
+    _ensure_django()
+    from django.utils import timezone
+    from django_orm.models import StrategyBot
+
+    fields.setdefault("started_at", timezone.now())
+    b = StrategyBot.objects.create(user_id=user_id, **_bot_fields(fields))
+    return _bot_dict(b)
+
+
+def get_strategy_bot(bot_id: int, *, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """`user_id` do to doosre user ka bot nahi milta."""
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    rows = StrategyBot.objects.filter(pk=bot_id)
+    if user_id is not None:
+        rows = rows.filter(user_id=user_id)
+    b = rows.first()
+    return _bot_dict(b) if b else None
+
+
+def list_strategy_bots(user_id: int, *, include_stopped: bool = True) -> List[Dict[str, Any]]:
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    rows = StrategyBot.objects.filter(user_id=user_id)
+    if not include_stopped:
+        rows = rows.filter(status__in=BOT_ACTIVE_STATUSES)
+    return [_bot_dict(b) for b in rows]
+
+
+def list_active_strategy_bots() -> List[Dict[str, Any]]:
+    """Worker ke liye — saare users ke running/paused bots, purane pehle."""
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    rows = StrategyBot.objects.filter(status__in=BOT_ACTIVE_STATUSES).order_by("created_at", "id")
+    return [_bot_dict(b) for b in rows]
+
+
+def find_active_strategy_bot(user_id: int, symbol: str) -> Optional[Dict[str, Any]]:
+    """Paper book ek symbol par ek hi position rakhta hai, isliye ek symbol par ek hi chalu bot."""
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    b = StrategyBot.objects.filter(user_id=user_id, symbol=symbol, status__in=BOT_ACTIVE_STATUSES).first()
+    return _bot_dict(b) if b else None
+
+
+def update_strategy_bot(bot_id: int, *, events: Optional[List[str]] = None, **fields: Any) -> None:
+    """
+    Diye gaye fields badlo. `events` naye log lines hain — pichhli line jaisi hi ho to
+    dobara nahi likhte (fail hui entry har tick par wahi error na bhare).
+    """
+    _ensure_django()
+    from django.utils import timezone
+    from django_orm.models import StrategyBot
+
+    fields = _bot_fields(fields)
+    if events:
+        b = StrategyBot.objects.filter(pk=bot_id).first()
+        if not b:
+            return
+        log = list(b.events or [])
+        for text in events:
+            if log and log[-1].get("text") == text:
+                continue
+            log.append({"at": timezone.now().isoformat(), "text": text})
+        fields["events"] = log[-BOT_EVENTS_KEEP:]
+    if fields:
+        fields["updated_at"] = timezone.now()
+        StrategyBot.objects.filter(pk=bot_id).update(**fields)
+
+
+def claim_bot_entry(bot_id: int, entry_time: int, **fields: Any) -> bool:
+    """
+    Is entry_time ka order lagane ka haq lo — sirf tab jab bot ne ye entry_time pehle
+    nahi dekha. Do worker (ya worker + API) ek saath chalein to bhi order ek hi lagta hai.
+    """
+    _ensure_django()
+    from django.utils import timezone
+    from django_orm.models import StrategyBot
+
+    fields = _bot_fields(fields)
+    fields.update(entry_time=entry_time, updated_at=timezone.now())
+    return StrategyBot.objects.filter(pk=bot_id).exclude(entry_time=entry_time).update(**fields) > 0
+
+
 # --- Users & sessions ---
 
 
