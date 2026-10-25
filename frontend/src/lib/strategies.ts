@@ -120,6 +120,8 @@ export interface StrategyDef {
   autoTrade?: boolean;
   /** Server bot deploy par strategy ke apne extra params (jaise Steady ka tp1). */
   botParams?: (values: StrategyValues) => Record<string, number | boolean>;
+  /** Ek click wale setups (Safe / Balanced / Growth) — kisi doosri strategy ke bhi ho sakte hain. */
+  presets?: StrategyPreset[];
   /**
    * Chart range chhota chuna ho tab bhi kam se kam itni candles laao — EMA 200 jaisi
    * lambi lines ko settle hone ke liye, taaki live signal chart zoom par na badle.
@@ -140,6 +142,29 @@ export interface StrategyDef {
   };
   analyze: (candles: Candle[], values: StrategyValues) => StrategyAnalysis;
   toBacktest: (values: StrategyValues) => BacktestParams;
+}
+
+/**
+ * Ek click wala setup. `values` sirf research wale rules aur risk badalta hai — user ka
+ * coin aur capital waise hi rehte hain. `expect` ke numbers backtest ke hain (guarantee nahi).
+ */
+export interface StrategyPreset {
+  id: "safe" | "balanced" | "growth";
+  label: string;
+  color: string;
+  /** Kis strategy page par ye setup chalta hai. */
+  strategyId: string;
+  /** "Steady · 1% risk" jaisa chhota naam. */
+  summary: string;
+  values: StrategyValues;
+  expect: {
+    yearly: string;
+    maxDrawdown: string;
+    worstMonth: string;
+    positiveMonths: string;
+    worstYear: string;
+    tradesPerMonth: string;
+  };
 }
 
 /* ── Value helpers ─────────────────────────────────────── */
@@ -2208,7 +2233,7 @@ const volCrushCondor: StrategyDef = {
 /* ── Trend Rider (research-backed, backend native engine) ─ */
 
 /** Research mein yahi teen saath sabse smooth rahe — portfolio backtest inhi par. */
-const TREND_RIDER_PORTFOLIO = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+export const TREND_RIDER_PORTFOLIO = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 
 const TR_UP = "#10b981";
 const TR_DOWN = "#ef4444";
@@ -2220,6 +2245,66 @@ function coinOf(symbol: string): string {
 
 function fmtWhen(timeMs: number): string {
   return new Date(timeMs).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+/** Research wale rules — preset inhi par chalte hain (sirf risk alag). */
+const TREND_RULES: StrategyValues = {
+  timeframe: "4h",
+  channel: 30,
+  exit_channel: 15,
+  stop_atr: 2,
+  allow_shorts: true,
+  backtest_scope: "portfolio",
+};
+
+/**
+ * Sep 2020 → Oct 2026, BTC + ETH + SOL barabar, Delta fees + GST, slippage, funding ke baad
+ * (scratchpad research `presets.py`). Teeno ka koi bhi calendar saal minus nahi gaya.
+ */
+export const TREND_PRESETS: StrategyPreset[] = [
+  {
+    id: "safe",
+    label: "Safe",
+    color: "#10b981",
+    strategyId: "trend-rider-steady",
+    summary: "Steady · 1% risk",
+    values: { ...TREND_RULES, risk_pct: 1, tp1_r: 1, tp1_pct: 25 },
+    expect: { yearly: "~10.6%", maxDrawdown: "11.1%", worstMonth: "−3.4%", positiveMonths: "58%", worstYear: "+1.8%", tradesPerMonth: "~10" },
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    color: "#f59e0b",
+    strategyId: "trend-rider",
+    summary: "Trend Rider · 1% risk",
+    values: { ...TREND_RULES, risk_pct: 1 },
+    expect: { yearly: "~13.5%", maxDrawdown: "12.5%", worstMonth: "−3.7%", positiveMonths: "53%", worstYear: "+1.0%", tradesPerMonth: "~9" },
+  },
+  {
+    id: "growth",
+    label: "Growth",
+    color: "#ef4444",
+    strategyId: "trend-rider-steady",
+    summary: "Steady · 2% risk",
+    values: { ...TREND_RULES, risk_pct: 2, tp1_r: 1, tp1_pct: 25 },
+    expect: { yearly: "~20.7%", maxDrawdown: "20.8%", worstMonth: "−6.7%", positiveMonths: "58%", worstYear: "+3.1%", tradesPerMonth: "~10" },
+  },
+];
+
+/** Ye values kis preset jaisi hain — koi rule badla ho to null (custom). */
+export function matchPreset(def: StrategyDef, values: StrategyValues): StrategyPreset | null {
+  return (
+    (def.presets ?? []).find(
+      (p) =>
+        p.strategyId === def.id &&
+        Object.entries(p.values).every(([key, want]) => {
+          // Backtest kis par chale ye trading rule nahi — preset wahi rehta hai.
+          if (key === "backtest_scope") return true;
+          const got = values[key];
+          return typeof want === "number" ? Number(got) === want : String(got) === String(want);
+        }),
+    ) ?? null
+  );
 }
 
 /**
@@ -2253,6 +2338,7 @@ function makeTrendRider(steady: boolean): StrategyDef {
       "Backtest mein Delta taker fee + 18% GST, 0.02% slippage aur longs par funding (0.01%/8h) kat'ta hai. Research 4h par hui hai: 1h par same rules ka drawdown ~2.5× tha, isliye 4h hi rakho. Trend system ko kam se kam 6–12 mahine par parkho — 30 din mein 2-3 trades hi hote hain.",
     botParams: (values): Record<string, number | boolean> =>
       steady ? { tp1_r: tp1R(values), tp1_frac: tp1Frac(values) } : {},
+    presets: TREND_PRESETS,
     fields: [
       { key: "channel", label: "Entry channel · candles", kind: "number", group: "signal", min: 5, max: 200, onCard: true, hint: "Band candle is channel ke high/low ke paar ho to entry." },
       { key: "exit_channel", label: "Trailing channel · candles", kind: "number", group: "signal", min: 3, max: 200, hint: "Stop pichhli itni candles ke low/high par trail hota hai." },

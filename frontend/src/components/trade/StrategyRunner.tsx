@@ -49,16 +49,21 @@ import {
 } from "@/lib/cryptoApi";
 import {
   bool,
+  getStrategy,
+  matchPreset,
   num,
   readActiveStrategies,
   str,
   strategyHref,
+  TREND_RIDER_PORTFOLIO,
   visibleFields,
   writeActiveStrategy,
   type StrategyDef,
   type StrategyField,
+  type StrategyPreset,
   type StrategyValues,
 } from "@/lib/strategies";
+import PresetPicker from "@/components/trade/PresetPicker";
 import {
   CUSTOM_STRATEGIES_CHANGED,
   deployStrategyToPaper,
@@ -157,6 +162,9 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
   const searchParams = useSearchParams();
 
   const [deployModalOpen, setDeployModalOpen] = useState(false);
+  /** Preset wali strategies ek click mein teeno coins par bot laga sakti hain. */
+  const [deployScope, setDeployScope] = useState<"portfolio" | "single">("portfolio");
+  const [deployNote, setDeployNote] = useState<string | null>(null);
   const [deploying, setDeploying] = useState(false);
   const [deploySuccess, setDeploySuccess] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
@@ -246,6 +254,11 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     [serverBots, def.id, symbol],
   );
   const paperActive = def.autoTrade ? serverBot !== null : isPaperActive;
+  // Portfolio deploy ke baad teeno coins ke bot — panel unhe ek saath dikhata hai.
+  const strategyBots = useMemo(
+    () => serverBots.filter((b) => b.strategy === def.id && b.status !== "stopped"),
+    [serverBots, def.id],
+  );
 
   const botAction = async (run: () => Promise<unknown>, line: string) => {
     setBotBusy(true);
@@ -331,6 +344,19 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     router.replace(strategyHref(def, values), { scroll: false });
   }, [router, def, values]);
 
+  const activePreset = useMemo(() => matchPreset(def, values), [def, values]);
+
+  /** Preset sirf rules aur risk badalta hai — coin, capital aur history waise hi. */
+  const applyPreset = (preset: StrategyPreset) => {
+    const keep = { symbol: values.symbol, capital: values.capital, days: values.days };
+    if (preset.strategyId === def.id) {
+      setValues((prev) => ({ ...prev, ...preset.values, ...keep }));
+      return;
+    }
+    const target = getStrategy(preset.strategyId);
+    if (target) router.push(strategyHref(target, { ...target.defaults, ...preset.values, ...keep }));
+  };
+
   const activate = () => {
     setActive(true);
     onActiveChangeRef.current?.(true);
@@ -353,13 +379,15 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
    * strategy ko paper account se milata hai, browser band ho tab bhi. Order deploy par nahi,
    * agle signal par lagta hai.
    */
-  const deployServerBot = async () => {
+  const portfolioDeploy = Boolean(def.autoTrade && def.presets) && deployScope === "portfolio";
+
+  const deployServerBot = async (botSymbol = symbol, capital = num(values, "capital", 1000)) => {
     if (!token) throw new Error("Bot deploy karne ke liye pehle login karo");
     const res = await deployStrategyBot(token, {
       strategy: def.id,
-      symbol,
+      symbol: botSymbol,
       timeframe,
-      capital: num(values, "capital", 1000),
+      capital,
       risk_pct: num(values, "risk_pct", 1),
       channel: num(values, "channel", 30),
       exit_channel: num(values, "exit_channel", 15),
@@ -370,7 +398,30 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     });
     syncUrl();
     refreshBots();
-    log(`Server bot deploy — ${symbolLabel(symbol)} · ${timeframe} (bot #${res.data.id})`);
+    log(`Server bot deploy — ${symbolLabel(botSymbol)} · ${timeframe} (bot #${res.data.id})`);
+  };
+
+  /**
+   * BTC + ETH + SOL — capital teeno mein barabar, jaise portfolio backtest. Jis coin par bot
+   * pehle se chal raha ho use chhod kar baaki lagao, aur saaf batao kya hua.
+   */
+  const deployPortfolioBots = async () => {
+    const share = Math.floor((num(values, "capital", 1000) / TREND_RIDER_PORTFOLIO.length) * 100) / 100;
+    const done: string[] = [];
+    const failed: string[] = [];
+    for (const sym of TREND_RIDER_PORTFOLIO) {
+      try {
+        await deployServerBot(sym, share);
+        done.push(symbolLabel(sym));
+      } catch (err) {
+        failed.push(`${symbolLabel(sym)}: ${err instanceof Error ? err.message : "deploy nahi hua"}`);
+      }
+    }
+    if (!done.length) throw new Error(failed.join(" · "));
+    setDeployNote(
+      `${done.length} bot chalu (${done.join(", ")}) — har coin par $${share.toLocaleString("en-US")}.` +
+        (failed.length ? ` Nahi lage: ${failed.join(" · ")}` : ""),
+    );
   };
 
   const handleDeployToPaper = async () => {
@@ -378,7 +429,9 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
     setDeployError(null);
     try {
       if (def.autoTrade) {
-        await deployServerBot();
+        setDeployNote(null);
+        if (portfolioDeploy) await deployPortfolioBots();
+        else await deployServerBot();
         setDeploySuccess(true);
         return;
       }
@@ -597,6 +650,7 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
 
       {/* ── Live monitor + results ────────────────────────── */}
       <div className="space-y-4 min-w-0">
+        {def.presets && <PresetPicker presets={def.presets} active={activePreset} onSelect={applyPreset} />}
         <section className="trade-panel overflow-hidden">
           <div className="trade-panel-head">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -881,6 +935,32 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                 </>
               )}
 
+              {strategyBots.length > 1 && (
+                <div className="space-y-1.5">
+                  <div className="trade-section-label">Is strategy ke saare bots</div>
+                  {strategyBots.map((b) => {
+                    const label = botTradeLabel(b);
+                    const here = b.symbol === symbol.toUpperCase();
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setValue("symbol", b.symbol)}
+                        className="w-full flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-[12px] tnum"
+                        style={{ borderColor: here ? "var(--text-muted)" : "var(--border-subtle)" }}
+                        title="Is coin ka bot detail dekho"
+                      >
+                        <span className="font-semibold">{symbolLabel(b.symbol)}</span>
+                        <span style={{ color: label.color ?? "var(--text-secondary)" }}>{label.text}</span>
+                        <span style={{ color: "var(--text-muted)" }}>
+                          {b.trade_state === "open" ? `stop ${fmtPx(b.stop_loss)}` : b.status === "paused" ? "paused" : `$${b.capital.toLocaleString("en-US")}`}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {botError && (
                 <p className="flex items-start gap-2 text-[12.5px]" style={{ color: "var(--red)" }}>
                   <AlertCircle className="w-4 h-4 mt-px flex-none" />
@@ -960,6 +1040,9 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                 <p className="text-[13px] max-w-md mx-auto" style={{ color: "var(--text-muted)" }}>
                   {def.autoTrade ? (
                     <>
+                      {deployNote && (
+                        <span className="block mb-2 font-semibold" style={{ color: "var(--text-secondary)" }}>{deployNote}</span>
+                      )}
                       <b>{def.name}</b>{" "}ka bot server par chalu hai. Abhi koi order nahi laga — agle band candle par signal aate hi entry stop ke saath lagegi, aur har candle par stop trail hoga. Bot server par chalta hai, isliye ye page ya browser band karke bhi chalta rahega. Haalat isi page ke &quot;Server bot&quot; panel mein dikhegi.
                     </>
                   ) : (
@@ -1015,6 +1098,30 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                   </div>
                 )}
 
+                {def.autoTrade && def.presets && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      ["portfolio", "Portfolio · BTC + ETH + SOL", "Teeno par bot — capital ÷ 3. Research mein sabse smooth."],
+                      ["single", `Sirf ${symbolLabel(symbol)}`, "Ek coin par poora capital."],
+                    ] as const).map(([scope, title, hint]) => (
+                      <button
+                        key={scope}
+                        type="button"
+                        aria-pressed={deployScope === scope}
+                        onClick={() => setDeployScope(scope)}
+                        className="text-left rounded-xl border p-3 transition-colors"
+                        style={{
+                          borderColor: deployScope === scope ? "#10b981" : "var(--border-subtle)",
+                          background: deployScope === scope ? "rgba(16,185,129,0.08)" : "rgba(255,255,255,0.02)",
+                        }}
+                      >
+                        <div className="text-[12.5px] font-bold">{title}</div>
+                        <div className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>{hint}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {/* Configuration Summary */}
                 <div className="p-3.5 rounded-xl bg-[rgba(255,255,255,0.02)] border border-[var(--border-subtle)] space-y-2 text-[12.5px]">
                   <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
@@ -1027,14 +1134,16 @@ export default function StrategyRunner({ def, initialValues, onActiveChange, aut
                   <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
                     <span style={{ color: "var(--text-muted)" }}>Target Pair & Timeframe</span>
                     <span className="font-bold font-mono">
-                      {symbolLabel(symbol)} · {timeframe}
+                      {portfolioDeploy ? "BTC + ETH + SOL" : symbolLabel(symbol)} · {timeframe}
                     </span>
                   </div>
                   {def.autoTrade ? (
                     <div className="flex justify-between items-center py-1 border-b border-[var(--border-subtle)]">
                       <span style={{ color: "var(--text-muted)" }}>Capital & risk</span>
                       <span className="font-bold font-mono">
-                        ${num(values, "capital", 1000).toLocaleString("en-US")} · {num(values, "risk_pct", 1)}% / trade
+                        ${num(values, "capital", 1000).toLocaleString("en-US")}
+                        {portfolioDeploy && ` (÷3 = $${(Math.floor((num(values, "capital", 1000) / 3) * 100) / 100).toLocaleString("en-US")} har coin)`}
+                        {" "}· {num(values, "risk_pct", 1)}% / trade
                       </span>
                     </div>
                   ) : (
