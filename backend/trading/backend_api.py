@@ -1709,10 +1709,10 @@ def auth_register():
         # Desk ka sign-up form naam + email + password maangta hai, username
         # nahi. Username na aaye to email se ek unique bana lo.
         if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            return jsonify({'success': False, 'error': 'Valid email address daalein'}), 400
+            return jsonify({'success': False, 'error': 'Please enter a valid email address'}), 400
         if not username:
             if not email:
-                return jsonify({'success': False, 'error': 'Email ya username zaroori hai'}), 400
+                return jsonify({'success': False, 'error': 'Email or username is required'}), 400
             username = make_unique_username(email.split('@', 1)[0])
 
         if not validate_username(username):
