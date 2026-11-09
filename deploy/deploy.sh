@@ -28,6 +28,7 @@ rsync -az --delete \
   --exclude '.cursor' \
   --exclude 'docs' \
   --exclude '.DS_Store' \
+  --exclude '/frontend/.data' \
   "$ROOT/" "$TARGET:$APP_DIR/"
 
 echo "==> Build aur start"

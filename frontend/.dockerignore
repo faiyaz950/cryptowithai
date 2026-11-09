@@ -6,3 +6,5 @@ node_modules
 npm-debug.log*
 .DS_Store
 app
+# Local dev ke funnel events image mein bake na hon (server par volume hai).
+.data
