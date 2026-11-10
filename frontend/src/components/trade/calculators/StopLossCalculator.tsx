@@ -47,7 +47,7 @@ export default function StopLossCalculator() {
       <Field label="Account balance" value={balance} onChange={setBalance} prefix="$" min={0} invalid={bad.balance} />
 
       <div>
-        <Field label="Risk per trade" hint="Stop loss hit hone par account ka kitna % jayega." value={riskPct} onChange={setRiskPct} suffix="%" min={0} invalid={bad.riskPct} />
+        <Field label="Risk per trade" hint="Percent of account lost if stop hits." value={riskPct} onChange={setRiskPct} suffix="%" min={0} invalid={bad.riskPct} />
         <Slider value={n.riskPct} onChange={setRiskPct} min={0.1} max={5} step={0.1} scale={["0.1%", "5%"]} />
         <Chips options={RISK_PRESETS} value={riskPct} onPick={setRiskPct} label="Risk presets" />
       </div>
@@ -62,7 +62,7 @@ export default function StopLossCalculator() {
   const body = error ? (
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
-    <EmptyState icon={ShieldAlert}>Balance, risk %, entry aur quantity daalein — stop loss yahan live dikhega.</EmptyState>
+    <EmptyState icon={ShieldAlert}>Enter balance, risk %, entry and quantity — stop loss updates live here.</EmptyState>
   ) : (
     <div className="cx-body">
       <Hero
@@ -72,7 +72,7 @@ export default function StopLossCalculator() {
           <>
             <Pill tone="down">Loss {fmtMoney(res.riskAmount)}</Pill>
             <span>
-              {noSign(fmtPct(res.stopDistancePct))} {side === "long" ? "neeche" : "upar"} entry se
+              {noSign(fmtPct(res.stopDistancePct))} {side === "long" ? "below" : "above"} entry
             </span>
           </>
         }
@@ -95,7 +95,7 @@ export default function StopLossCalculator() {
 
       {res.minLeverage > 1 && (
         <Notice kind="warn">
-          Position value account balance se bada hai — khulne ke liye kam se kam <b>{res.minLeverage.toFixed(2)}x</b> leverage chahiye. Stop hit hone par loss phir bhi {fmtMoney(res.riskAmount)} hi rahega.
+          Position value exceeds balance — need at least <b>{res.minLeverage.toFixed(2)}x</b> leverage to open. Loss at stop remains {fmtMoney(res.riskAmount)}.
         </Notice>
       )}
 
@@ -123,7 +123,7 @@ export default function StopLossCalculator() {
       badge={<SideBadge side={side} />}
       result={body}
       dock={res ? { label: "Stop loss", value: fmtMoney(res.stopLoss), sub: `Loss ${fmtMoney(res.riskAmount)} · ${noSign(fmtPct(res.stopDistancePct))}` } : null}
-      note="Fees aur slippage isme shamil nahi hain — unke saath exact quantity chahiye to Position Size calculator use karein. Stop-market order fast market mein slip ho sakta hai. Trading advice nahi."
+      note="Fees and slippage not included — use Position Size for exact quantity with costs. Stop-market orders can slip in fast markets. Not trading advice."
     />
   );
 }

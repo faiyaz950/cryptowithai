@@ -161,10 +161,10 @@ export default function VolatilityCalculator() {
             setPriceText(e.target.value);
             setActivePreset(null);
           }}
-          placeholder="Comma ya space separated prices (e.g. 64200, 65100, 64800, 66300...)"
+          placeholder="Comma or space separated prices (e.g. 64200, 65100, 64800, 66300...)"
         />
         <div className="text-[11px] text-slate-400 mt-1">
-          Historical closing prices enter karein. System consecutive returns calculate karke standard deviation aur annualized volatility measure karega.
+          Enter historical closing prices. Returns, standard deviation and annualized volatility are computed.
         </div>
       </div>
     </>
@@ -182,7 +182,7 @@ export default function VolatilityCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Gauge}>
-      Closing prices aur timeframe select karein — current period volatility aur 365-day annualized volatility calculate hogi.
+      Enter closing prices and select timeframe — period volatility and 365-day annualized volatility are computed.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -204,11 +204,11 @@ export default function VolatilityCalculator() {
       {/* Volatility Assessment Notice */}
       <Notice kind={res.volatilityLevel === "extreme" ? "warn" : "info"}>
         <span>
-          <strong>{res.volatilityLevelLabel}:</strong> Crypto market 24/7 trade hota hai, isliye annualization factor{" "}
-          <strong>√{res.periodsPerYear} ({res.timeframe.toUpperCase()})</strong> use hota hai.{" "}
+          <strong>{res.volatilityLevelLabel}:</strong> Crypto trades 24/7, so the annualization factor{" "}
+          <strong>√{res.periodsPerYear} ({res.timeframe.toUpperCase()})</strong> is used.{" "}
           {res.volatilityLevel === "extreme"
-            ? "Meme coin ya high-beta token mein sharp liquidation aur slippage risk zyada hota hai — stop loss tight rakhein."
-            : "High volatility mein options implied pricing aur wide grid spacing beneficial hoti hai."}
+            ? "Meme or high-beta tokens have sharper liquidation and slippage risk — keep stops tight."
+            : "In high volatility, wider grid spacing and options implied vol can help."}
         </span>
       </Notice>
 
@@ -318,7 +318,7 @@ export default function VolatilityCalculator() {
             }
           : null
       }
-      note="Historical volatility past price swings ka standard deviation measure karti hai. Ye implied volatility ya guaranteed future movement nahi darshati."
+      note="Historical volatility is the standard deviation of past swings. It is not implied vol or a forecast of future moves."
     />
   );
 }

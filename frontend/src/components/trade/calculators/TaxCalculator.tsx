@@ -161,7 +161,7 @@ export default function TaxCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Receipt}>
-      Purchase cost, sale value aur jurisdiction select karein — taxable gain aur estimated tax liability live dikhegi.
+      Enter purchase cost, sale value and jurisdiction — taxable gain and estimated tax update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -186,7 +186,7 @@ export default function TaxCalculator() {
           <strong>{res.jurisdiction.name}:</strong>{" "}
           {jurisdiction === "india" ? (
             <span>
-              India mein 1 April 2022 se Virtual Digital Assets (VDA) par <strong>flat 30% tax + 4% cess (31.2%)</strong> lagta hai. Section 115BBH ke anusaar <strong>losses kisi bhi doosre profit se set-off nahi ho sakte</strong>, aur sirf actual cost of acquisition deduct ho sakti hai. Saath hi Section 194S ke tehat <strong>1% TDS</strong> kata jata hai.
+              From 1 Apr 2022 in India, VDAs face <strong>flat 30% tax + 4% cess (31.2%)</strong>. Under Section 115BBH, <strong>losses cannot offset other gains</strong>; only cost of acquisition is deductible. Section 194S applies <strong>1% TDS</strong>.
             </span>
           ) : (
             <span>{res.jurisdiction.notes}</span>
@@ -263,7 +263,7 @@ export default function TaxCalculator() {
             }
           : null
       }
-      note="Yeh calculator sirf illustrative tax estimations ke liye hai. Exact tax filing ke liye chartered accountant ya tax consultant se verify karein. Tax advice nahi."
+      note="Illustrative tax estimates only. Verify with a chartered accountant or tax consultant before filing. Not tax advice."
     />
   );
 }

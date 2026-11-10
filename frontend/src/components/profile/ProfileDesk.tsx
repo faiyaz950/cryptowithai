@@ -70,7 +70,7 @@ function orderTypeLabel(raw: string): string {
 }
 
 function timeAgo(iso: string | null): string {
-  if (!iso) return "Kabhi nahi";
+  if (!iso) return "Never";
   const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
   if (seconds < 60) return "Abhi";
   if (seconds < 3600) return `${Math.round(seconds / 60)} min pehle`;
@@ -109,7 +109,7 @@ export default function ProfileDesk() {
       .catch((err) => {
         onApiError(err);
         if (!alive) return;
-        setLoadError(err instanceof Error ? err.message : "Exchanges load nahi hue");
+        setLoadError(err instanceof Error ? err.message : "Could not load exchanges");
         setAccounts([]);
       });
     return () => {
@@ -124,8 +124,8 @@ export default function ProfileDesk() {
           <span className="pf-empty-icon">
             <ShieldCheck className="w-6 h-6" />
           </span>
-          <h3>Profile dekhne ke liye sign in karein</h3>
-          <p>Aapka account, judi hui exchange aur uska live data — sab login ke peeche hai.</p>
+          <h3>Sign in to view profile</h3>
+          <p>Your account, connected exchanges, and live data require login.</p>
           <Link href="/login?next=%2Fprofile" className="trade-btn trade-btn-primary">
             Sign in
             <ArrowRight className="w-4 h-4" />
@@ -146,7 +146,7 @@ export default function ProfileDesk() {
           <h3>Judi hui exchange</h3>
           <Link href="/trade?tab=exchanges" className="pf-link">
             <Plug className="w-3.5 h-3.5" />
-            Exchanges manage karein
+            Manage exchanges
           </Link>
         </div>
 
@@ -159,13 +159,13 @@ export default function ProfileDesk() {
             <span className="pf-empty-icon">
               <Plug className="w-6 h-6" />
             </span>
-            <h3>Abhi koi exchange nahi juda</h3>
+            <h3>No exchange connected yet</h3>
             <p>
-              Delta, Bybit ya CoinDCX ki API key jodiye — uske baad aapka wallet, khuli positions aur pending
+              Add a Delta, Bybit, or CoinDCX API key — then your wallet, open positions, and pending
               orders yahin is page par live dikhenge.
             </p>
             <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary">
-              Exchange jodein
+              Connect exchange
               <ArrowRight className="w-4 h-4" />
             </Link>
           </section>
@@ -201,7 +201,7 @@ function IdentityCard({ onLogout }: { onLogout: () => void }) {
       await refreshUser();
       setEditing(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Naam save nahi hua");
+      setError(err instanceof Error ? err.message : "Could not save name");
     } finally {
       setSaving(false);
     }
@@ -309,7 +309,7 @@ function ExchangeBlock({
       .catch((err) => {
         onApiError(err);
         if (!alive) return;
-        setError(err instanceof Error ? err.message : "Data load nahi hua");
+        setError(err instanceof Error ? err.message : "Could not load data");
         setLoading(false);
       });
     return () => {
@@ -399,7 +399,7 @@ function ExchangeBlock({
               <div className="pf-keybroken">
                 <Issue message={keyBroken} />
                 <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-ghost trade-size-sm">
-                  Key theek karein
+                  Fix key
                   <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
@@ -455,7 +455,7 @@ function ExchangeBlock({
               {overview.positions.error ? (
                 <Issue message={overview.positions.error} />
               ) : overview.positions.items.length === 0 ? (
-                <p className="pf-note">Koi position khuli nahi hai.</p>
+                <p className="pf-note">No open positions.</p>
               ) : (
                 <div className="pf-table-wrap">
                   <table className="pf-table">

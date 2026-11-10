@@ -502,7 +502,7 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
         if (!h) continue;
         ctx.beginPath();
         ctx.arc(h.x, h.y, 5, 0, Math.PI * 2);
-        ctx.fillStyle = "#0a0e14";
+        ctx.fillStyle = "#161514";
         ctx.fill();
         ctx.lineWidth = 2;
         ctx.strokeStyle = d.color;

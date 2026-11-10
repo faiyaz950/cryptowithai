@@ -214,12 +214,6 @@ export default function PaperOrderEditor({ target, mark, onClose, onSaved }: Pro
             </label>
           </div>
 
-          <p className="po-note">
-            {isOrder
-              ? "Market chunne par order abhi ke bhaav par turant fill hoga. Target/SL fill ke baad position par lag jaate hain."
-              : "Bhaav Target ya Stop loss chhoote hi position abhi ke bhaav par apne aap band ho jaati hai (desk khula ho tab har ~10 second check hota hai)."}
-          </p>
-
           {error && (
             <p className="po-error">
               <AlertCircle className="w-3.5 h-3.5 flex-none" />

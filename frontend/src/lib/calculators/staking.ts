@@ -84,9 +84,9 @@ export function computeStaking(input: StakingInput): StakingOutcome | null {
     return null;
   }
 
-  if (stakedAmount <= 0) return { ok: false, error: "Staked amount 0 se bada hona chahiye." };
-  if (apyPct < 0) return { ok: false, error: "APY negative nahi ho sakti." };
-  if (durationMonths <= 0) return { ok: false, error: "Duration 0 se zyada honi chahiye." };
+  if (stakedAmount <= 0) return { ok: false, error: "Staked amount must be greater than 0." };
+  if (apyPct < 0) return { ok: false, error: "APY cannot be negative." };
+  if (durationMonths <= 0) return { ok: false, error: "Duration must be greater than 0." };
 
   const t = durationMonths / 12; // time in years
   const r = apyPct / 100;

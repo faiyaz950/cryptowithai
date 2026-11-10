@@ -47,17 +47,17 @@ export function computePortfolioAllocation(
   const { totalCapital, assets } = i;
 
   if (!Number.isFinite(totalCapital)) return null;
-  if (totalCapital <= 0) return { ok: false, error: "Total capital 0 se bada hona chahiye." };
+  if (totalCapital <= 0) return { ok: false, error: "Total capital must be greater than 0." };
 
   const validAssets = assets.filter((a) => a.name.trim() !== "");
   if (validAssets.length === 0) {
-    return { ok: false, error: "Kam se kam ek asset ka naam aur percentage hona chahiye." };
+    return { ok: false, error: "At least one asset needs a name and percentage." };
   }
 
   let totalAllocatedPct = 0;
   for (const a of validAssets) {
     const p = Number.isFinite(a.pct) ? a.pct : 0;
-    if (p < 0) return { ok: false, error: `${a.name || "Asset"} ki allocation negative nahi ho sakti.` };
+    if (p < 0) return { ok: false, error: `${a.name || "Asset"} allocation cannot be negative.` };
     totalAllocatedPct += p;
   }
 
@@ -70,7 +70,7 @@ export function computePortfolioAllocation(
     if (totalAllocatedPct < 100) {
       validationError = `Allocation must equal 100%. Abhi kul ${totalAllocatedPct}% hai (${(100 - totalAllocatedPct).toFixed(1)}% unallocated hai).`;
     } else {
-      validationError = `Allocation must equal 100%. Abhi kul ${totalAllocatedPct}% hai (${(totalAllocatedPct - 100).toFixed(1)}% limit se zyada hai).`;
+      validationError = `Allocation must equal 100%. Current total is ${totalAllocatedPct}% (${(totalAllocatedPct - 100).toFixed(1)}% over the limit).`;
     }
   }
 

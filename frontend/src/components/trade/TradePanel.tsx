@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertCircle, ArrowRight, Bot, CheckCircle2, Inbox, LogIn, Plug, SlidersHorizontal, Sparkles, Wallet, Zap } from "lucide-react";
 import type { Candle, DemoOrder, PaperAccount, SpotRules } from "@/lib/cryptoApi";
 import { LiveTag, ModeStrip, PaperTag } from "./ModeTag";
+import { useTradingMode } from "@/lib/tradingMode";
 import { CRYPTO_SYMBOLS, symbolLabel } from "@/lib/cryptoApi";
 import { fmtQuotePrice } from "@/lib/marketQuote";
 import type { ExchangePosition } from "@/lib/accountApi";
@@ -94,7 +95,11 @@ interface Props {
     price?: number | null;
     stop_loss?: number | null;
     take_profit?: number | null;
+    targets?: number[];
+    trail?: boolean;
   }) => Promise<void>;
+  /** Ticket ka entry / stop / targets, chart par line banane ke liye. */
+  onLevels?: (levels: { price: number; title: string; color: string; dashed?: boolean }[]) => void;
   candles?: Candle[];
   interval?: string;
   onDeployStrategySuccess?: () => void;
@@ -135,6 +140,7 @@ export default function TradePanel({
   candles = [],
   interval = "15m",
   onDeployStrategySuccess,
+  onLevels,
   activePanel,
   onActivePanelChange,
 }: Props) {
@@ -145,7 +151,7 @@ export default function TradePanel({
     onActivePanelChange?.(p);
   };
 
-  const [mode, setMode] = useState<OrderMode>("paper");
+  const [mode, setMode] = useTradingMode();
   const [tradeSymbol, setTradeSymbol] = useState(symbol);
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [orderTypePick, setOrderType] = useState<"market" | "limit">("market");
@@ -155,7 +161,10 @@ export default function TradePanel({
   const [error, setError] = useState("");
   const [bracketOn, setBracketOn] = useState(false);
   const [takeProfit, setTakeProfit] = useState("");
+  const [takeProfit2, setTakeProfit2] = useState("");
+  const [takeProfit3, setTakeProfit3] = useState("");
   const [stopLoss, setStopLoss] = useState("");
+  const [trailOn, setTrailOn] = useState(false);
 
   // Strategy Bot State
   const [selectedStratId, setSelectedStratId] = useState<string>("rsi-oversold-long");
@@ -200,6 +209,12 @@ export default function TradePanel({
   const spotKey = spot?.key ?? null;
   useEffect(() => {
     setTradeSymbol(spotKey ?? symbol);
+    // Purane coin ke Target/SL chart ke scale ko tod dete hain (BTC 76k → ARB 0.17).
+    setTakeProfit("");
+    setTakeProfit2("");
+    setTakeProfit3("");
+    setStopLoss("");
+    setTrailOn(false);
   }, [symbol, spotKey]);
 
   const allowedTypes: ("market" | "limit")[] = spot?.rules?.order_types?.length
@@ -233,6 +248,24 @@ export default function TradePanel({
   /** Spot sell position band karta hai — uspar Target/SL ka matlab nahi. */
   const canBracket = effectiveMode === "paper" && !(spot && side === "sell");
   const bracketActive = canBracket && bracketOn;
+
+  useEffect(() => {
+    if (!onLevels) return;
+    if (!bracketActive || panel !== "ticket") {
+      onLevels([]);
+      return;
+    }
+    const entry = effectivePrice;
+    const rows: { price: number; title: string; color: string; dashed?: boolean }[] = [];
+    if (entry > 0) rows.push({ price: entry, title: "Entry", color: "#f97316", dashed: true });
+    const stops = Number(stopLoss);
+    if (stops > 0) rows.push({ price: stops, title: "Stop", color: "#ff5252", dashed: true });
+    [takeProfit, takeProfit2, takeProfit3].forEach((raw, index) => {
+      const price = Number(raw);
+      if (price > 0) rows.push({ price, title: `TP${index + 1}`, color: "#22c55e", dashed: true });
+    });
+    onLevels(rows);
+  }, [bracketActive, panel, effectivePrice, stopLoss, takeProfit, takeProfit2, takeProfit3, onLevels]);
 
   const bracketHint = (value: string, kind: "tp" | "sl") => {
     const v = Number(value);
@@ -276,7 +309,7 @@ export default function TradePanel({
   const submit = async () => {
     setError("");
     if (effectiveMode === "live" && !liveReady) {
-      setError(liveState.message || "Live trade ke liye exchange jodiye");
+      setError(liveState.message || "Connect an exchange for live trading");
       return;
     }
     const qty = Number(quantity);
@@ -286,11 +319,20 @@ export default function TradePanel({
     }
     const limitPrice = orderType === "limit" ? Number(price || lastPrice) : null;
     if (orderType === "limit" && (!limitPrice || limitPrice <= 0)) {
-      setError("Limit order ke liye price chahiye");
+      setError("Limit orders need a price");
       return;
     }
     const tp = bracketActive && Number(takeProfit) > 0 ? Number(takeProfit) : null;
     const sl = bracketActive && Number(stopLoss) > 0 ? Number(stopLoss) : null;
+    const extra = [takeProfit2, takeProfit3].map(Number).filter((n) => n > 0);
+    if (bracketActive && extra.length && !tp) {
+      setError("Pehle Target 1 daaliye, phir aage ke targets.");
+      return;
+    }
+    if (bracketActive && trailOn && extra.length && !sl) {
+      setError("Trail ke liye stop loss chahiye.");
+      return;
+    }
     try {
       await onPlace({
         mode: effectiveMode,
@@ -299,11 +341,14 @@ export default function TradePanel({
         order_type: orderType,
         quantity: qty,
         price: limitPrice,
-        ...(bracketActive ? { stop_loss: sl, take_profit: tp } : {}),
+        ...(bracketActive ? { stop_loss: sl, take_profit: tp, targets: extra, trail: trailOn && extra.length > 0 } : {}),
       });
       if (bracketActive) {
         setTakeProfit("");
+        setTakeProfit2("");
+        setTakeProfit3("");
         setStopLoss("");
+        setTrailOn(false);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Order fail ho gaya");
@@ -334,7 +379,7 @@ export default function TradePanel({
     setError("");
     setStratNotice("");
     if (!lastPrice || lastPrice <= 0) {
-      setError("Price data available nahi hai");
+      setError("Price data unavailable");
       return;
     }
     const cap = Number(stratCapital) || 250;
@@ -352,7 +397,7 @@ export default function TradePanel({
       });
       setStratNotice(`Paper trade lag gaya: ${currentStrat.name} (${stratSide.toUpperCase()} ${finalQty} ${unit})`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Paper trade execute nahi ho paya");
+      setError(err instanceof Error ? err.message : "Paper trade failed");
     }
   };
 
@@ -518,7 +563,7 @@ export default function TradePanel({
                   onClick={() => setOrderType("market")}
                   className="trade-seg-btn"
                   disabled={!allowedTypes.includes("market")}
-                  title={allowedTypes.includes("market") ? undefined : "CoinDCX is pair par market order nahi leta"}
+                  title={allowedTypes.includes("market") ? undefined : "CoinDCX does not allow market orders on this pair"}
                 >
                   Market
                 </button>
@@ -628,33 +673,74 @@ export default function TradePanel({
                   <span className="tp-bracket-opt">optional</span>
                 </button>
                 {bracketOn && (
-                  <div className="po-grid">
-                    <label>
-                      <span className="trade-label">Target</span>
+                  <div className="space-y-2">
+                    <div className="po-grid">
+                      <label>
+                        <span className="trade-label">Target 1</span>
+                        <input
+                          className="trade-input"
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={takeProfit}
+                          placeholder={side === "buy" ? "Upar ka bhaav" : "Neeche ka bhaav"}
+                          onChange={(e) => setTakeProfit(e.target.value)}
+                        />
+                        {bracketHint(takeProfit, "tp")}
+                      </label>
+                      <label>
+                        <span className="trade-label">Stop loss</span>
+                        <input
+                          className="trade-input"
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={stopLoss}
+                          placeholder={side === "buy" ? "Neeche ka bhaav" : "Upar ka bhaav"}
+                          onChange={(e) => setStopLoss(e.target.value)}
+                        />
+                        {bracketHint(stopLoss, "sl")}
+                      </label>
+                      <label>
+                        <span className="trade-label">Target 2</span>
+                        <input
+                          className="trade-input"
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={takeProfit2}
+                          placeholder="Optional"
+                          onChange={(e) => setTakeProfit2(e.target.value)}
+                        />
+                        {bracketHint(takeProfit2, "tp")}
+                      </label>
+                      <label>
+                        <span className="trade-label">Target 3</span>
+                        <input
+                          className="trade-input"
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={takeProfit3}
+                          placeholder="Optional"
+                          onChange={(e) => setTakeProfit3(e.target.value)}
+                        />
+                        {bracketHint(takeProfit3, "tp")}
+                      </label>
+                    </div>
+                    <label className="flex items-center gap-2 text-[12px]" style={{ color: "var(--text-secondary)" }}>
                       <input
-                        className="trade-input"
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={takeProfit}
-                        placeholder={side === "buy" ? "Upar ka bhaav" : "Neeche ka bhaav"}
-                        onChange={(e) => setTakeProfit(e.target.value)}
+                        type="checkbox"
+                        checked={trailOn}
+                        onChange={(e) => setTrailOn(e.target.checked)}
+                        disabled={!takeProfit2}
                       />
-                      {bracketHint(takeProfit, "tp")}
+                      Pehle target ke baad stop trail kare
                     </label>
-                    <label>
-                      <span className="trade-label">Stop loss</span>
-                      <input
-                        className="trade-input"
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={stopLoss}
-                        placeholder={side === "buy" ? "Neeche ka bhaav" : "Upar ka bhaav"}
-                        onChange={(e) => setStopLoss(e.target.value)}
-                      />
-                      {bracketHint(stopLoss, "sl")}
-                    </label>
+                    <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                      Paper deal. Har target bachi size ka barabar hissa band karta hai, stop entry par aa jata hai.
+                      {trailOn ? " Uske baad stop price ke saath khichta hai." : ""}
+                    </p>
                   </div>
                 )}
               </div>
@@ -691,7 +777,7 @@ export default function TradePanel({
             {liveBlockedReason === "signed-out" && (
               <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-lg trade-btn-primary w-full">
                 <LogIn className="w-4 h-4" />
-                Live trade ke liye sign in
+                Sign in for live trading
               </Link>
             )}
             {liveBlockedReason === "spot-needs-coindcx" && (
@@ -699,9 +785,9 @@ export default function TradePanel({
                 <span className="trade-pos-notice-icon"><Plug className="w-4 h-4" /></span>
                 <div className="min-w-0">
                   <b>CoinDCX account chahiye</b>
-                  <p>Spot pair ka asli order aapke CoinDCX account se lagta hai. Trade-only API key jodiye.</p>
+                  <p>Live spot orders go through your CoinDCX account. Add a trade-only API key.</p>
                   <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary trade-size-sm mt-2">
-                    CoinDCX jodein
+                    Connect CoinDCX
                     <ArrowRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>
@@ -710,15 +796,15 @@ export default function TradePanel({
             {liveBlockedReason === "not-connected" && (
               <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-lg trade-btn-primary w-full">
                 <Plug className="w-4 h-4" />
-                Exchange jodein
+                Connect exchange
               </Link>
             )}
             {liveBlockedReason === "no-trade" && (
               <div className="trade-pos-notice">
                 <span className="trade-pos-notice-icon"><AlertCircle className="w-4 h-4" /></span>
                 <div className="min-w-0">
-                  <b>Trading permission nahi hai</b>
-                  <p>{liveState.message || "Is API key se trade nahi ho sakta."}</p>
+                  <b>No trading permission</b>
+                  <p>{liveState.message || "Cannot trade with this API key."}</p>
                   <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary trade-size-sm mt-2">
                     Exchanges
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -730,7 +816,7 @@ export default function TradePanel({
             {!liveBlockedReason && mode === "paper" && !signedIn && (
               <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-lg trade-btn-primary w-full">
                 <LogIn className="w-4 h-4" />
-                Paper trade ke liye sign in karein
+                Sign in for paper trading
               </Link>
             )}
 
@@ -753,23 +839,23 @@ export default function TradePanel({
                 mode === "live" ? (
                   <>
                     Ye <b>live spot order</b> hai
-                    {` — aapke CoinDCX account (${liveState.spot?.label || "CoinDCX"}) par asli ${spot.quote} se lagega. Spot par short nahi hota; bechne ke liye coin paas hona chahiye.`}
+                    {` — goes live on your CoinDCX account (${liveState.spot?.label || "CoinDCX"}) in ${spot.quote}. No shorts on spot; you need coins to sell.`}
                   </>
                 ) : (
                   <>
                     Ye <b>paper order</b> hai
-                    {` — CoinDCX ke abhi ke bhaav par fill hota hai. ${spot.quote} pair ka P&L abhi ke rate se USD paper balance mein judta hai. Spot par short nahi hota.`}
+                    {` — fills at current CoinDCX price. ${spot.quote} P&L converts to USD paper balance at current rate. No shorts on spot.`}
                   </>
                 )
               ) : mode === "live" ? (
                 <>
-                  Ye <b>live order</b> hai — aapke jude hue exchange ({liveState.label || "Delta"}) par
+                  This is a <b>live order</b> — on your connected exchange ({liveState.label || "Delta"}) par
                   asli funds se place hoga. Confirm karke hi bhejein.
                 </>
               ) : (
                 <>
-                  Ye <b>paper order</b> hai — exchange par nahi jaata. Market order abhi ke Delta bhaav par
-                  fill hota hai, limit order bhaav cross hone par. ${DEMO_BALANCE_USDT.toLocaleString("en-US")}{" "}virtual
+                  This is a <b>paper order</b> — does not go to the exchange. Market orders fill at current Delta price;
+                  limits fill when price crosses. ${DEMO_BALANCE_USDT.toLocaleString("en-US")}{" "}virtual
                   balance se shuru, neeche paper positions aur P&amp;L dikhte hain.
                 </>
               )}
@@ -966,7 +1052,7 @@ export default function TradePanel({
             {recentTrades.length === 0 ? (
               <div className="trade-empty">
                 <span className="trade-empty-icon"><Inbox className="w-4 h-4" /></span>
-                Abhi koi recent trade nahi
+                No recent trades yet
               </div>
             ) : (
               <div className="space-y-2">
@@ -1057,7 +1143,7 @@ export default function TradePanel({
           ) : positions.length === 0 ? (
             <div className="trade-empty">
               <span className="trade-empty-icon"><Wallet className="w-4 h-4" /></span>
-              Koi open position nahi hai
+              No open positions
             </div>
           ) : (
             <div className="space-y-2">
@@ -1112,8 +1198,8 @@ function PositionsNotice({ state }: { state: PositionsState }) {
       <div className="trade-pos-notice">
         <span className="trade-pos-notice-icon"><LogIn className="w-4 h-4" /></span>
         <div className="min-w-0">
-          <b>Apni positions dekhne ke liye sign in karein</b>
-          <p>Charts aur analysis bina login bhi chalte hain.</p>
+          <b>Sign in to view your positions</b>
+          <p>Charts and analysis work without login.</p>
           <Link href="/login?next=%2Ftrade" className="trade-btn trade-btn-primary trade-size-sm mt-2">
             Sign in
             <ArrowRight className="w-3.5 h-3.5" />
@@ -1128,10 +1214,10 @@ function PositionsNotice({ state }: { state: PositionsState }) {
       <div className="trade-pos-notice">
         <span className="trade-pos-notice-icon"><Plug className="w-4 h-4" /></span>
         <div className="min-w-0">
-          <b>Koi exchange nahi juda</b>
-          <p>Delta, Bybit ya CoinDCX ki API key jodiye — phir aapki asli positions yahan dikhengi.</p>
+          <b>No exchange connected</b>
+          <p>Add a Delta, Bybit, or CoinDCX API key — then your live positions appear here.</p>
           <Link href="/trade?tab=exchanges" className="trade-btn trade-btn-primary trade-size-sm mt-2">
-            Exchange jodein
+            Connect exchange
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
@@ -1145,8 +1231,8 @@ function PositionsNotice({ state }: { state: PositionsState }) {
         <AlertCircle className="w-4 h-4" />
       </span>
       <div className="min-w-0">
-        <b>Positions nahi aa payi</b>
-        <p>{state.message || "Exchange se jawab nahi mila."}</p>
+        <b>Could not load positions</b>
+        <p>{state.message || "No response from exchange."}</p>
       </div>
     </div>
   );

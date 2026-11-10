@@ -144,11 +144,11 @@ export function deleteWatchlist(id: string): void {
 export function addSymbolToWatchlist(listId: string, symbol: string): { ok: boolean; error?: string } {
   const store = loadWatchlistStore();
   const list = store.lists.find((l) => l.id === listId);
-  if (!list) return { ok: false, error: "Watchlist nahi mili" };
+  if (!list) return { ok: false, error: "Watchlist not found" };
   const sym = normalizeWatchKey(symbol);
-  if (!sym) return { ok: false, error: "Symbol chahiye" };
+  if (!sym) return { ok: false, error: "Symbol is required" };
   if (list.symbols.includes(sym)) {
-    return { ok: false, error: `"${sym}" is list mein pehle se hai` };
+    return { ok: false, error: `"${sym}" is already on this list` };
   }
   saveStore({
     ...store,

@@ -172,8 +172,19 @@ def run_bot(api, bot, now):
     if candles is None:
         _fail(bot, now, "Delta se candles nahi mili — thodi der baad dobara")
         return
+    btc = None
+    if bot["params"].get("btc_confirm") and not str(bot["symbol"]).upper().startswith("BTC"):
+        # Pro: alt ka signal BTC ke regime se pakka hota hai — wahi window BTC ki bhi.
+        btc_candles = _candles_for(api, dict(bot, symbol="BTCUSDT"), now_ms, bar_ms, last_closed)
+        if btc_candles is None:
+            _fail(bot, now, "BTC ki candles nahi mili (Pro confirmation) — thodi der baad dobara")
+            return
+        btc = (btc_candles[0], btc_candles[4])
     plan = trend_rider_bot.plan(
         *candles,
+        btc=btc,
+        # Trident / AVPT apna replay engine; Trend Rider / Steady / Pro ek hi engine par.
+        strategy=bot["strategy"],
         # risk_pct replay ki equity (aur isliye size) badalta hai — backtest bhi params mein bhejta hai.
         params={**bot["params"], "risk_pct": bot["risk_pct"]},
         capital=bot["capital"],
@@ -189,30 +200,127 @@ def run_bot(api, bot, now):
         _fail(bot, now, "Exchange ne abhi aakhri band candle nahi di — thodi der baad dobara")
         return
 
+    allow_entries = bot["status"] == "running"
+    risk_pause, risk_msg, params_out = _risk_entry_guard(bot, state)
+    if risk_pause:
+        allow_entries = False
+
+    prev_trade = state.get("trade_state")
+    prev_snap = {
+        "entry_price": state.get("entry_price"),
+        "quantity": state.get("quantity"),
+        "side": state.get("side"),
+        "stop_loss": state.get("stop_loss"),
+    }
     state, events, ok = trend_rider_bot.reconcile(
         state, plan, client,
         now_ms=now_ms,
         bar_ms=bar_ms,
         risk_pct=bot["risk_pct"],
-        allow_entries=bot["status"] == "running",
+        allow_entries=allow_entries,
         claim=lambda entry_time, fields: claim_bot_entry(bot["id"], entry_time, **fields),
         tag=f"cm{bot['id']}",
     )
     if state is None:
         return
+    # Update risk counters when a position closes (pause new entries only — never auto-flatten).
+    params_out = _risk_on_close(bot, prev_trade, state, params_out, events, prev_snap)
+    if risk_msg and risk_pause:
+        # Surface once per tick window without spamming forever.
+        last_texts = [e.get("text") if isinstance(e, dict) else str(e) for e in (bot.get("events") or [])[-3:]]
+        if risk_msg not in last_texts and not any(risk_msg in str(x) for x in last_texts):
+            events = list(events) + [risk_msg]
     error = "" if ok else (events[-1] if events else "Adhoora raha — dobara try hoga")
     if ok:
         _retry_at.pop(bot["id"], None)
     else:
         _retry_at[bot["id"]] = now + RETRY_SECONDS
-    update_strategy_bot(
-        bot["id"],
+    update_kwargs = dict(
         events=events,
         last_bar_time=plan["last_closed"],
         last_run_at=datetime.fromtimestamp(now, tz=timezone.utc),
-        last_error=error[:400],
+        last_error=error[:400] if isinstance(error, str) else str(error)[:400],
         **state,
     )
+    if params_out is not None:
+        update_kwargs["params"] = params_out
+    update_strategy_bot(bot["id"], **update_kwargs)
+
+
+def _risk_entry_guard(bot, state):
+    """
+    Backend-enforced deploy safety. Pauses NEW entries only — open positions stay managed.
+    Bot OFF ≠ positions closed (that is a separate Stop & flatten action).
+    """
+    params = dict(bot.get("params") or {})
+    risk = dict(params.get("_risk") or {})
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if risk.get("day") != day:
+        risk = {"day": day, "day_pnl": 0.0, "losing_streak": int(risk.get("losing_streak") or 0), "paused_reason": ""}
+        params["_risk"] = risk
+
+    max_daily = float(params.get("max_daily_loss_pct") or 0)
+    max_streak = int(params.get("max_losing_streak") or 0)
+    capital = float(bot.get("capital") or 0)
+    day_pnl = float(risk.get("day_pnl") or 0)
+    streak = int(risk.get("losing_streak") or 0)
+    # max_positions: one open trade per bot is already enforced by reconcile + one-bot-per-symbol.
+
+    if max_daily > 0 and capital > 0 and day_pnl <= -(capital * max_daily / 100.0):
+        msg = f"Risk guard: max daily loss {max_daily:g}% hit (day P&L ${day_pnl:.2f}) — new entries paused"
+        risk["paused_reason"] = msg
+        params["_risk"] = risk
+        return True, msg, params
+
+    if max_streak > 0 and streak >= max_streak:
+        msg = f"Risk guard: max losing streak {max_streak} — new entries paused"
+        risk["paused_reason"] = msg
+        params["_risk"] = risk
+        return True, msg, params
+
+    if risk.get("paused_reason"):
+        risk["paused_reason"] = ""
+        params["_risk"] = risk
+    return False, "", params
+
+
+def _risk_on_close(bot, prev_trade, state, params, events, prev_snap=None):
+    """When trade closes, update day P&L / losing streak from close event mark vs entry."""
+    if params is None:
+        params = dict(bot.get("params") or {})
+    if prev_trade != "open" or state.get("trade_state") != "closed":
+        return params
+    snap = prev_snap or {}
+    risk = dict(params.get("_risk") or {})
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if risk.get("day") != day:
+        risk = {"day": day, "day_pnl": 0.0, "losing_streak": 0, "paused_reason": ""}
+    pnl = 0.0
+    entry = float(snap.get("entry_price") or state.get("entry_price") or 0)
+    qty = float(snap.get("quantity") or state.get("quantity") or 0)
+    side = (snap.get("side") or state.get("side") or "").lower()
+    exit_px = None
+    for ev in reversed(list(events or [])):
+        text = ev if isinstance(ev, str) else str(ev)
+        if "@ ~" in text:
+            try:
+                exit_px = float(text.split("@ ~")[-1].split()[0].replace(",", ""))
+                break
+            except (TypeError, ValueError, IndexError):
+                pass
+    if exit_px and entry and qty:
+        pnl = (exit_px - entry) * qty * (1 if side == "buy" else -1)
+    else:
+        stop = float(snap.get("stop_loss") or state.get("stop_loss") or 0)
+        if entry and stop and qty:
+            pnl = (stop - entry) * qty * (1 if side == "buy" else -1)
+    risk["day_pnl"] = float(risk.get("day_pnl") or 0) + pnl
+    if pnl < 0:
+        risk["losing_streak"] = int(risk.get("losing_streak") or 0) + 1
+    elif pnl > 0:
+        risk["losing_streak"] = 0
+    params["_risk"] = risk
+    return params
 
 
 def close_bot_trade(api, bot, why):

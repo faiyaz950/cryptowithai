@@ -82,7 +82,7 @@ export default function LeverageCalculator() {
       <DirectionToggle side={side} onChange={setSide} />
       <Field
         label="Capital / Margin"
-        hint="Aapka lagaya hua margin / initial collateral."
+        hint="Margin you posted / initial collateral."
         value={margin}
         onChange={setMargin}
         prefix="$"
@@ -130,7 +130,7 @@ export default function LeverageCalculator() {
         <Field
           label="Position size"
           optional
-          hint="Direct target position value ($) — isse required margin = Position Size ÷ Leverage calculate hota hai."
+          hint="Target position value ($) — required margin = position size ÷ leverage."
           value={positionSize}
           onChange={setPositionSize}
           prefix="$"
@@ -146,7 +146,7 @@ export default function LeverageCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Zap}>
-      Margin, leverage aur entry price daalein — position value aur quantity yahan live dikhega.
+      Enter margin, leverage and entry — position value and quantity update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -167,7 +167,7 @@ export default function LeverageCalculator() {
       <Notice kind="warn">
         <strong>Leverage increases position exposure relative to your margin and can significantly increase liquidation risk.</strong>
         <p style={{ marginTop: 4, fontSize: "12px", opacity: 0.9 }}>
-          Calculator ye claim nahi karta ki {res.leverage}× leverage par aap 10× ya {res.leverage}× nuksaan karenge. Isolated margin par aapka loss margin ({fmtMoney(res.margin)}) tak hi simit rehta hai, lekin market ke sirf ~{res.liquidationDistancePct.toFixed(1)}% adverse move hone par poora margin liquidate ho sakta hai.
+          This does not mean {res.leverage}× leverage multiplies loss by {res.leverage}×. On isolated margin, loss is capped at margin ({fmtMoney(res.margin)}), but ~{res.liquidationDistancePct.toFixed(1)}% adverse move can liquidate it.
         </p>
       </Notice>
 
@@ -202,7 +202,7 @@ export default function LeverageCalculator() {
 
       {res.marginDiff != null && res.marginDiff > 0 && (
         <Notice kind="info">
-          Target position {fmtMoney(res.targetPositionSize ?? 0)} lene ke liye {res.leverage}× par <b>{fmtMoney(res.requiredMarginForTarget ?? 0)}</b> margin chahiye — aapke current margin se <b>{fmtMoney(res.marginDiff)}</b> zyada.
+          To take {fmtMoney(res.targetPositionSize ?? 0)} at {res.leverage}× you need <b>{fmtMoney(res.requiredMarginForTarget ?? 0)}</b> margin — <b>{fmtMoney(res.marginDiff)}</b> more than your current margin.
         </Notice>
       )}
 
@@ -262,7 +262,7 @@ export default function LeverageCalculator() {
             }
           : null
       }
-      note="Liquidation price ka anuman isolated margin par aadharit hai. Exchange maintenance margin rate (MMR) aur fees ke karan asal liquidation price thoda pehle trigger ho sakta hai. Trading advice nahi."
+      note="Liquidation estimate uses isolated margin. MMR and fees can trigger liquidation slightly earlier. Not trading advice."
     />
   );
 }

@@ -21,6 +21,10 @@ export interface TrendRiderParams {
   tp1R?: number | null;
   /** Steady: pehle profit par kitna hissa book (0–1). */
   tp1Frac?: number;
+  /** Pro: Saturday/Sunday (UTC) ki candle par bana signal nahi. */
+  skipWeekend?: boolean;
+  /** Pro: alt ka trade tabhi jab BTC usi taraf ke regime mein ho (BTC candles chahiye). */
+  btcConfirm?: boolean;
 }
 
 export const TREND_RIDER_DEFAULTS: TrendRiderParams = {
@@ -102,11 +106,47 @@ function finite(v: number | null | undefined): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
+/**
+ * Har candle ke liye BTC ka regime — us waqt tak ki aakhri BTC candle (open time <= t) se.
+ * Backend `trend_rider.btc_confirm_arrays` ka mirror.
+ */
+export function btcConfirmArrays(
+  times: number[],
+  btc: Candle[],
+  params: Pick<TrendRiderParams, "emaFast" | "emaSlow">,
+): { long: boolean[]; short: boolean[] } {
+  const closes = btc.map((b) => b.close);
+  const ef = ema(closes, params.emaFast);
+  const es = ema(closes, params.emaSlow);
+  const long: boolean[] = [];
+  const short: boolean[] = [];
+  let j = -1;
+  for (const t of times) {
+    while (j + 1 < btc.length && btc[j + 1].time <= t) j++;
+    if (j < 0) {
+      long.push(false);
+      short.push(false);
+      continue;
+    }
+    long.push(closes[j] > es[j]);
+    short.push(closes[j] < es[j] && ef[j] < es[j]);
+  }
+  return { long, short };
+}
+
+/** UTC Saturday/Sunday — backend `weekday_mask` jaisa. */
+function isWeekend(timeMs: number): boolean {
+  const day = new Date(timeMs).getUTCDay();
+  return day === 0 || day === 6;
+}
+
 export function replayTrendRider(
   candles: Candle[],
   params: TrendRiderParams,
   intervalMs: number,
   nowMs: number = Date.now(),
+  /** Pro ke BTC confirmation ke liye — BTC khud ho to mat do. */
+  btc?: Candle[],
 ): TrendRiderReplay {
   const n = candles.length;
   const o = candles.map((c) => c.open);
@@ -144,13 +184,16 @@ export function replayTrendRider(
     }
   }
 
+  const confirm = params.btcConfirm && btc?.length ? btcConfirmArrays(candles.map((x) => x.time), btc, params) : null;
+
   const signal = (k: number): TrendSide | null => {
     const ak = a[k];
     const up = upper[k];
     const dn = lower[k];
     if (!finite(ak) || !finite(up) || !finite(dn)) return null;
-    if (c[k] > up && c[k] > eSlow[k]) return "long";
-    if (params.allowShorts && c[k] < dn && c[k] < eSlow[k] && eFast[k] < eSlow[k]) return "short";
+    if (params.skipWeekend && isWeekend(candles[k].time)) return null;
+    if (c[k] > up && c[k] > eSlow[k] && (!confirm || confirm.long[k])) return "long";
+    if (params.allowShorts && c[k] < dn && c[k] < eSlow[k] && eFast[k] < eSlow[k] && (!confirm || confirm.short[k])) return "short";
     return null;
   };
 

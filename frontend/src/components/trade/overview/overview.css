@@ -375,6 +375,83 @@
   .mo-pulse::after, .mo-skel, .mo-chart-dot[data-live]::after { animation: none; }
 }
 
+/* ── Section bands (Global vs Desk) ─────────────────────── */
+
+.mo-band {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+@media (min-width: 640px) {
+  .mo-band { gap: 14px; }
+}
+
+.mo-band-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 2px 2px 0;
+}
+.mo-band-label h2 {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.mo-source-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--mo-edge);
+  background: rgb(255 255 255 / 0.03);
+  font-size: 0.68rem;
+  font-weight: 550;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.mo-global-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+@media (min-width: 960px) {
+  .mo-global-row {
+    grid-template-columns: minmax(0, 1.55fr) minmax(260px, 0.85fr);
+    gap: 14px;
+  }
+}
+
+.mo-desk-pulse {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding: 16px 18px 18px;
+}
+@media (min-width: 900px) {
+  .mo-desk-pulse {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    align-items: stretch;
+    gap: 18px;
+    padding: 18px 20px 20px;
+  }
+}
+
+.mo-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 800px) {
+  .mo-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+}
+
 /* ── Hero ───────────────────────────────────────────────── */
 
 .mo-hero {
@@ -399,8 +476,11 @@
   -webkit-mask-image: radial-gradient(ellipse at 20% 0%, #000 10%, transparent 70%);
   mask-image: radial-gradient(ellipse at 20% 0%, #000 10%, transparent 70%);
 }
+.mo-hero-solo {
+  grid-template-columns: 1fr;
+}
 @media (min-width: 1024px) {
-  .mo-hero { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
+  .mo-hero:not(.mo-hero-solo) { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
 }
 
 .mo-hero-main {
@@ -645,6 +725,12 @@
   font-family: var(--tr-mono);
   font-size: 0.62rem;
   color: var(--text-muted);
+}
+.mo-chart-note {
+  margin: 8px 0 0;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
 }
 
 /* ── Grids ──────────────────────────────────────────────── */

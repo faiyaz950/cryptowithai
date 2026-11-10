@@ -119,12 +119,12 @@ const catalogFor = (catalog: CatalogEntry[], exchange: string): CatalogEntry =>
   };
 
 function timeAgo(iso: string | null): string {
-  if (!iso) return "Kabhi nahi";
+  if (!iso) return "Never";
   const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 60) return "Abhi";
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min pehle`;
-  if (seconds < 86_400) return `${Math.round(seconds / 3600)} ghante pehle`;
-  return `${Math.round(seconds / 86_400)} din pehle`;
+  if (seconds < 60) return "Just now";
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} hr ago`;
+  return `${Math.round(seconds / 86_400)} d ago`;
 }
 
 function fmtBalance(value: number, asset: string): string {
@@ -169,7 +169,7 @@ function CopyChip({ value }: { value: string }) {
           /* clipboard band ho to user khud select kar le */
         }
       }}
-      title="Copy karein"
+      title="Copy"
     >
       <span className="tnum">{value}</span>
       {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -235,7 +235,7 @@ export default function ExchangesDesk() {
           ...prev,
           [accountId]: {
             status: "error",
-            message: err instanceof Error ? err.message : "Balance nahi mila",
+            message: err instanceof Error ? err.message : "Could not load balance",
             clientIp: err instanceof AccountApiError ? err.clientIp : null,
           },
         }));
@@ -253,7 +253,7 @@ export default function ExchangesDesk() {
       for (const account of list) void loadBalances(account.id);
     } catch (err) {
       onApiError(err);
-      setLoadError(err instanceof Error ? err.message : "Exchanges load nahi hue");
+      setLoadError(err instanceof Error ? err.message : "Could not load exchanges");
       setAccounts((prev) => prev ?? []);
     }
   }, [token, onApiError, loadBalances]);
@@ -299,11 +299,9 @@ export default function ExchangesDesk() {
         <div className="ex-head-copy">
           <div className="trade-page-kicker">Exchanges</div>
           <h2 className="trade-page-title">
-            {user ? `${connectedCount} connected` : "Apna exchange jodein"}
+            {user ? `${connectedCount} connected` : "Connect your exchange"}
           </h2>
-          <p className="trade-page-sub">
-            Exchange ki API key jodein — orders aur positions aapke apne account se chalenge.
-          </p>
+          <p className="trade-page-line">API key jodo. Orders aapke exchange account par chalte hain.</p>
         </div>
         {user && (
           <div className="trade-page-actions">
@@ -313,7 +311,7 @@ export default function ExchangesDesk() {
               onClick={() => setConnecting((cur) => (cur ? null : defaultEntry))}
             >
               {connecting ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-              {connecting ? "Form band karein" : "Connect exchange"}
+              {connecting ? "Close form" : "Connect exchange"}
             </button>
           </div>
         )}
@@ -324,21 +322,21 @@ export default function ExchangesDesk() {
           <span className="ex-trust-ico"><Lock aria-hidden /></span>
           <span>
             <b>Encrypted storage</b>
-            <small>Key aur secret server par encrypt hokar save hote hain</small>
+            <small>Keys and secrets are encrypted on the server</small>
           </span>
         </div>
         <div className="ex-trust-item">
           <span className="ex-trust-ico"><ShieldOff aria-hidden /></span>
           <span>
-            <b>Withdrawal kabhi nahi</b>
-            <small>Sirf Read + Trading permission chahiye</small>
+            <b>Never withdrawal</b>
+            <small>Read + Trading permission only</small>
           </span>
         </div>
         <div className="ex-trust-item">
           <span className="ex-trust-ico"><Trash2 aria-hidden /></span>
           <span>
             <b>Disconnect = delete</b>
-            <small>Hatate hi keys permanently mit jaati hain</small>
+            <small>Keys are permanently deleted when you disconnect</small>
           </span>
         </div>
       </div>
@@ -348,9 +346,9 @@ export default function ExchangesDesk() {
           <span className="ex-empty-icon">
             <KeyRound className="w-6 h-6" />
           </span>
-          <h3>Exchange jodne ke liye sign in karein</h3>
+          <h3>Sign in to connect an exchange</h3>
           <p>
-            API keys aapke account se judti hain, isliye pehle login ya free account banana hoga. Charts aur AI bina
+            API keys tie to your account — sign in or create a free account first. Charts and AI work without
             login bhi chalte rahenge.
           </p>
           <div className="flex flex-wrap justify-center gap-2">
@@ -359,7 +357,7 @@ export default function ExchangesDesk() {
               <ArrowRight className="w-4 h-4" />
             </Link>
             <Link href="/login?next=%2Ftrade%3Ftab%3Dexchanges" className="trade-btn trade-btn-ghost">
-              Free account banayein
+              Create free account
             </Link>
           </div>
         </section>
@@ -373,14 +371,14 @@ export default function ExchangesDesk() {
               <span className="ex-empty-icon">
                 <Plug className="w-6 h-6" />
               </span>
-              <h3>Abhi koi exchange nahi juda</h3>
+              <h3>No exchange connected yet</h3>
               <p>
-                Delta, CoinDCX ya Bybit ki Read + Trading API key jodein. Withdrawal permission kabhi nahi maangi
+                Add a Read + Trading API key for Delta, CoinDCX, or Bybit. We never ask for withdrawal permission
                 jaati.
               </p>
               <button type="button" className="trade-btn trade-btn-primary" onClick={() => setConnecting(defaultEntry)}>
                 <Plus className="w-4 h-4" />
-                Pehla exchange jodein
+                Connect first exchange
               </button>
             </section>
           ) : (
@@ -421,10 +419,10 @@ export default function ExchangesDesk() {
           <h3>All exchanges</h3>
           <span>
             {catalogState === "ready"
-              ? `${liveEntries.length} live · ${catalog.length - liveEntries.length} jald aa rahe hain`
+              ? `${liveEntries.length} live · ${catalog.length - liveEntries.length} coming soon`
               : catalogState === "loading"
-                ? "List aa rahi hai…"
-                : "List load nahi hui"}
+                ? "Loading list…"
+                : "Could not load list"}
           </span>
           {catalogState === "failed" && (
             <button
@@ -436,14 +434,13 @@ export default function ExchangesDesk() {
               }}
             >
               <RefreshCw className="w-3 h-3" />
-              Dobara try karein
+              Try again
             </button>
           )}
         </div>
         {catalogState === "failed" && (
           <p className="ex-auto-note" style={{ marginBottom: 10 }}>
-            Poori list server se nahi aa payi — free hosting par server jaagne mein thoda time lagta hai. Tab tak
-            sirf wahi dikh raha hai jo pakka support mein hai.
+            Full list failed to load — showing confirmed exchanges only.
           </p>
         )}
         <div className="ex-grid">
@@ -468,7 +465,7 @@ export default function ExchangesDesk() {
                     onClick={() => setConnecting(entry)}
                   >
                     <Plug className="w-3.5 h-3.5" />
-                    {connecting?.id === entry.id ? "Form neeche khula hai" : "Connect"}
+                    {connecting?.id === entry.id ? "Form open below" : "Connect"}
                   </button>
                 ) : (
                   <Link href="/login?next=%2Ftrade%3Ftab%3Dexchanges" className="trade-btn trade-btn-ghost ex-tile-btn">
@@ -524,7 +521,7 @@ function ConnectedCard({
     } catch (err) {
       onApiError(err);
       setIssue({
-        message: err instanceof Error ? err.message : "Verify nahi ho paya",
+        message: err instanceof Error ? err.message : "Verification failed",
         clientIp: err instanceof AccountApiError ? err.clientIp : null,
       });
     } finally {
@@ -540,7 +537,7 @@ function ConnectedCard({
       await onChanged();
     } catch (err) {
       onApiError(err);
-      setIssue({ message: err instanceof Error ? err.message : "Disconnect nahi ho paya", clientIp: null });
+      setIssue({ message: err instanceof Error ? err.message : "Disconnect failed", clientIp: null });
       setBusy(null);
       setConfirming(false);
     }
@@ -556,7 +553,7 @@ function ConnectedCard({
         : balance.message}
     </p>
   ) : balance.data.length === 0 ? (
-    <p className="ex-balance-note">Wallet khaali hai</p>
+    <p className="ex-balance-note">Wallet is empty</p>
   ) : (
     <div className="ex-balance-list">
       {balance.data.slice(0, 4).map((b) => (
@@ -591,7 +588,7 @@ function ConnectedCard({
           <div className="ex-card-actions">
             <button type="button" className="trade-btn trade-btn-ghost trade-size-sm" onClick={reverify} disabled={busy !== null}>
               {busy === "verify" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
-              {busy === "verify" ? "Verify ho raha hai…" : "Re-verify"}
+              {busy === "verify" ? "Verifying…" : "Re-verify"}
             </button>
             <button type="button" className="trade-btn trade-btn-ghost trade-size-sm ex-danger-ghost" onClick={() => setConfirming(true)} disabled={busy !== null}>
               <Trash2 className="w-3.5 h-3.5" />
@@ -604,7 +601,7 @@ function ConnectedCard({
       {confirming && (
         <div className="ex-confirm">
           <p>
-            <b>Disconnect karein?</b> Encrypted key aur secret server se permanently delete honge. Dobara jodne ke liye
+            <b>Disconnect?</b> Encrypted key and secret will be permanently deleted. To connect again,
             key phir se daalni hogi.
           </p>
           <div className="flex gap-2">
@@ -737,7 +734,7 @@ function ConnectPanel({
     } catch (err) {
       onApiError(err);
       setIssue({
-        message: err instanceof Error ? err.message : "Connect nahi ho paya",
+        message: err instanceof Error ? err.message : "Could not connect",
         clientIp: err instanceof AccountApiError ? err.clientIp : null,
       });
     } finally {
@@ -755,7 +752,7 @@ function ConnectPanel({
           <h3>{entry.name} connected</h3>
           <p>
             Key <span className="tnum">{done}</span> {entry.name} se verify hokar judi — wallet balance upar card
-            par aa gaya hai.
+            is shown below.
           </p>
         </div>
         <button type="button" className="trade-btn trade-btn-ghost" onClick={onClose}>
@@ -771,14 +768,14 @@ function ConnectPanel({
         <ExchangeMark entry={entry} size={34} />
         <div className="min-w-0 flex-1">
           <span className="ex-connect-kicker">Connecting · {entry.name}</span>
-          <h3 id="ex-connect-title">API credentials paste karein</h3>
+          <h3 id="ex-connect-title">Paste API credentials</h3>
         </div>
         <button
           type="button"
           className="trade-iconbtn trade-iconbtn-sm"
           onClick={onClose}
           disabled={submitting}
-          aria-label="Form band karein"
+          aria-label="Close form"
         >
           <X className="w-4 h-4" />
         </button>
@@ -799,7 +796,7 @@ function ConnectPanel({
               {catalog.map((c) => (
                 <option key={c.id} value={c.id} disabled={!c.available}>
                   {c.name}
-                  {c.available ? "" : " · jald aa raha hai"}
+                  {c.available ? "" : " · coming soon"}
                 </option>
               ))}
             </select>
@@ -857,7 +854,7 @@ function ConnectPanel({
           <label className="ex-check">
             <input type="checkbox" checked={withdrawOff} onChange={(e) => setWithdrawOff(e.target.checked)} />
             <span>
-              Maine is key par <b>withdrawal / transfer permission OFF</b> rakhi hai.
+              I kept <b>withdrawal / transfer permission OFF</b> on this key.
             </span>
           </label>
 
@@ -872,7 +869,7 @@ function ConnectPanel({
               {submitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  {entry.name} se verify ho raha hai…
+                  {entry.name} verifying…
                 </>
               ) : (
                 <>
@@ -883,32 +880,31 @@ function ConnectPanel({
             </button>
             <p className="ex-secure-note">
               <Lock className="w-3.5 h-3.5 flex-none mt-px" />
-              Save se pehle key {entry.name} se verify hoti hai, phir encrypt hokar jaati hai. Secret dobara kabhi
-              screen par nahi dikhega.
+              Key is verified with {entry.name}, then encrypted.
             </p>
           </div>
         </form>
 
         <aside className="ex-connect-side">
           <div className="ex-side-block">
-            <h4 className="ex-side-title">Zaroori permissions</h4>
+            <h4 className="ex-side-title">Required permissions</h4>
             <ul className="ex-req">
               <li data-on="true">
                 <Check className="w-3.5 h-3.5" />
                 <span>
-                  <b>Trading</b> — orders aur positions
+                  <b>Trading</b> — orders and positions
                 </span>
               </li>
               <li data-on="true">
                 <Check className="w-3.5 h-3.5" />
                 <span>
-                  <b>Read data</b> — balance aur fills
+                  <b>Read data</b> — balance and fills
                 </span>
               </li>
               <li data-on="false">
                 <X className="w-3.5 h-3.5" />
                 <span>
-                  <b>Withdrawal / transfer</b> — is desk se kabhi use nahi hoti
+                  <b>Withdrawal / transfer</b> — never used
                 </span>
               </li>
             </ul>
@@ -923,7 +919,7 @@ function ConnectPanel({
               <div className="ex-ip-skeleton shimmer" />
             ) : egress.ips.length === 0 ? (
               <p className="ex-side-note">
-                Key par IP restriction <b>band</b> (Unrestricted) rakhein — tab kuch add karne ki zaroorat nahi.
+                Leave IP restriction off on the key.
               </p>
             ) : (
               <>
@@ -934,24 +930,24 @@ function ConnectPanel({
                 </div>
                 <p className="ex-side-note">
                   {egress.complete
-                    ? `Key par IP restriction lagayein to ${entry.name} par yahi IP add karein.`
-                    : "IP restriction band rakhna sabse aasan hai — server kabhi doosre IP se bhi jaa sakta hai. Lagani ho to ye IP add karke connect karke dekh lein."}
+                    ? `Add this IP on ${entry.name} if you restrict by IP.`
+                    : "Prefer unrestricted IP, or whitelist this address and test."}
                 </p>
               </>
             )}
           </div>
 
           <details className="ex-side-block ex-howto">
-            <summary>{entry.name} par key kaise banayein?</summary>
+            <summary>How to create a key on {entry.name}?</summary>
             <ol className="ex-guide">
               <li>
                 <span className="ex-guide-num">1</span>
                 <div>
-                  <b>{entry.name} par login karke API settings kholein</b>
+                  <b>Log in to {entry.name} and open API settings</b>
                   <p>
                     {entry.id === "delta"
-                      ? "Account → API Management → New API Key. Global delta.exchange ki key yahan nahi chalegi."
-                      : "Apne account ki API settings mein jaakar nayi key banayein."}
+                      ? "Account → API Management → New API Key. Global delta.exchange keys will not work here."
+                      : "Create a new key in your account API settings."}
                   </p>
                 </div>
               </li>
@@ -959,23 +955,23 @@ function ConnectPanel({
                 <span className="ex-guide-num">2</span>
                 <div>
                   <b>Read + Trading on, Withdrawal off</b>
-                  <p>Balance aur positions ke liye trading permission zaroori hai.</p>
+                  <p>Trading permission is required for balance and positions.</p>
                 </div>
               </li>
               <li>
                 <span className="ex-guide-num">3</span>
                 <div>
-                  <b>Key aur Secret wahin copy karein</b>
+                  <b>Copy Key and Secret there</b>
                   <p>
-                    Secret <b>sirf ek baar</b> — key banate waqt — dikhta hai. Baad mein exchange bhi use dobara
-                    nahi dikha sakta; kho gaya to nayi key banani padegi.
+                    The secret is shown <b>only once</b> when you create the key. The exchange cannot show it again later;
+                    if lost, create a new key.
                   </p>
                 </div>
               </li>
             </ol>
             {entry.keyUrl && (
               <a href={entry.keyUrl} target="_blank" rel="noopener noreferrer" className="ex-link">
-                {entry.name} ka API page kholein
+                Open {entry.name} API page
                 <ExternalLink className="w-3 h-3" />
               </a>
             )}
@@ -1017,7 +1013,7 @@ function TradingControls({
       setSettings(await updateTradingSettings(token, account.id, input));
     } catch (err) {
       onApiError(err);
-      setError(err instanceof Error ? err.message : "Save nahi hua");
+      setError(err instanceof Error ? err.message : "Save failed");
     } finally {
       setBusy(false);
     }
@@ -1031,9 +1027,9 @@ function TradingControls({
           <small>
             {enabled
               ? serverLive
-                ? "Is key se asli order ja sakta hai."
-                : "Aapki taraf se on hai — par server par live orders abhi band hain, isliye order paper hi rahega."
-              : "Band hai. Orders sirf paper mein record honge."}
+                ? "Live orders can go out with this key."
+                : "You turned this on — but live orders are disabled on the server, so orders stay paper."
+              : "Off. Orders are recorded in paper only."}
           </small>
         </span>
         <button
@@ -1053,8 +1049,8 @@ function TradingControls({
         <span className="min-w-0">
           <b>Ek order ki limit</b>
           <small>
-            Isse bade order khud hi ruk jaate hain. Khaali chhodne par default{" "}
-            {settings ? settings.default_max_order_notional.toLocaleString("en-US") : "500"} lagti hai.
+            Orders above this are blocked. Empty uses default{" "}
+            {settings ? settings.default_max_order_notional.toLocaleString("en-US") : "500"}.
           </small>
         </span>
         <span className="ex-cap">
@@ -1131,7 +1127,7 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
       .then((data) => alive && setSetup(data))
       .catch((err) => {
         onApiError(err);
-        if (alive) setError(err instanceof Error ? err.message : "Setup load nahi hua");
+        if (alive) setError(err instanceof Error ? err.message : "Could not load setup");
       });
     return () => {
       alive = false;
@@ -1146,7 +1142,7 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
       setConfirming(false);
     } catch (err) {
       onApiError(err);
-      setError(err instanceof Error ? err.message : "Naya URL nahi bana");
+      setError(err instanceof Error ? err.message : "Could not create new URL");
     } finally {
       setBusy(false);
     }
@@ -1177,8 +1173,7 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
         <>
           {setup.mode === "paper" && (
             <p className="ex-auto-note ex-auto-callout">
-              Abhi <b>paper mode</b> hai: signal aayega, saare check honge aur order history mein record ho jayega —
-              par exchange par kuch nahi bheja jayega. Isse poora setup bina paise ke test kar sakte hain.
+              Paper mode — signals are recorded, not sent to the exchange.
             </p>
           )}
 
@@ -1186,25 +1181,24 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
             <li>
               <span className="ex-guide-num">1</span>
               <div>
-                <b>TradingView par alert banayein</b>
-                <p>Chart par apna indicator lagayein → Alert → Notifications mein &ldquo;Webhook URL&rdquo; on karein.</p>
+                <b>Create TradingView alert</b>
+                <p>Enable Webhook URL in Notifications.</p>
               </div>
             </li>
             <li>
               <span className="ex-guide-num">2</span>
               <div>
-                <b>Neeche wala URL webhook mein paste karein</b>
-                <p>Ye URL aapki pehchan hai — kisi ke saath share na karein.</p>
+                <b>Paste webhook URL</b>
+                <p>Do not share this URL.</p>
               </div>
             </li>
             <li>
               <span className="ex-guide-num">3</span>
               <div>
-                <b>Message box mein neeche wala JSON daalein</b>
+                <b>Paste JSON message</b>
                 <p>
-                  <code className="ex-mono">{"{{close}}"}</code> TradingView khud bhav se badal deta hai. Market
-                  order ke liye <code className="ex-mono">order_type</code> ko <code className="ex-mono">market</code>{" "}
-                  kar dein aur price hata dein.
+                  Use <code className="ex-mono">{"{{close}}"}</code> for price; set{" "}
+                  <code className="ex-mono">order_type</code> to <code className="ex-mono">market</code> for market orders.
                 </p>
               </div>
             </li>
@@ -1227,16 +1221,13 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
           </div>
 
           <p className="ex-auto-note">
-            Ek minute mein zyada se zyada <b>{setup.rate_limit_per_minute} signal</b> liye jaate hain — alert loop
-            mein fans jaye to wo yahin ruk jaata hai. Har signal par order ki limit bhi waise hi lagti hai jaise desk
-            se lagaye order par.
+            Max <b>{setup.rate_limit_per_minute} signals</b>/min.
           </p>
 
           {confirming ? (
             <div className="ex-confirm">
               <p>
-                <b>Naya URL banayein?</b> Purana URL turant kaam karna band kar dega — TradingView par bhi naya URL
-                daalna padega.
+                <b>Create new URL?</b> The old URL stops working immediately — paste the new URL in TradingView too.
               </p>
               <div className="flex gap-2">
                 <button
@@ -1245,11 +1236,11 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
                   onClick={() => setConfirming(false)}
                   disabled={busy}
                 >
-                  Rehne dein
+                  Cancel
                 </button>
                 <button type="button" className="trade-btn trade-size-sm ex-danger" onClick={regenerate} disabled={busy}>
                   {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                  Haan, naya banayein
+                  Yes, create new
                 </button>
               </div>
             </div>
@@ -1260,7 +1251,7 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
               onClick={() => setConfirming(true)}
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              Naya URL banayein
+              Create new URL
             </button>
           )}
         </>

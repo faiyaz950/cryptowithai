@@ -164,7 +164,7 @@ export default function CorrelationCalculator() {
           placeholder="Comma separated prices for Coin B"
         />
         <div className="text-[11px] text-slate-400 mt-1">
-          Dono coins ki corresponding period prices enter karein. System Pearson correlation coefficient (-1.00 se +1.00) aur beta sensitivity measure karega.
+          Enter matching-period prices for both coins. Pearson correlation (−1 to +1) and beta sensitivity are computed.
         </div>
       </div>
     </>
@@ -182,7 +182,7 @@ export default function CorrelationCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Network}>
-      Dono coins ki closing prices enter karein — Pearson correlation score, relationship status aur portfolio diversification benefit live dikhega.
+      Enter closing prices for both coins — Pearson score, relationship label and diversification benefit update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -207,15 +207,15 @@ export default function CorrelationCalculator() {
           <strong>Interpretation:</strong>{" "}
           {res.correlation > 0.7 ? (
             <span>
-              <strong>High Co-movement:</strong> {res.coinA} aur {res.coinB} ka price behavior kafi similar hai. Dono ko ek sath hold karne par diversification benefit kam milta hai kyunki market girne par dono ek sath dump ho sakte hain.
+              <strong>High Co-movement:</strong> {res.coinA} and {res.coinB} move similarly. Holding both adds little diversification — both may fall together in a downturn.
             </span>
           ) : res.correlation < -0.3 ? (
             <span>
-              <strong>Inverse / Hedge:</strong> Dono coins opposite direction mein move karte hain. Ye hedging ke liye effective ho sakta hai.
+              <strong>Inverse / Hedge:</strong> The two coins tend to move in opposite directions — potentially useful for hedging.
             </span>
           ) : (
             <span>
-              <strong>Uncorrelated / Independent:</strong> Dono coins ka movement aapas mein largely independent hai. Portfolio risk reduction aur diversification ke liye excellent candidate hai.
+              <strong>Uncorrelated / Independent:</strong> Movements are largely independent — a strong candidate for diversification.
             </span>
           )}
         </span>
@@ -326,7 +326,7 @@ export default function CorrelationCalculator() {
             }
           : null
       }
-      note="Correlation historical linear relationship measure karti hai. Ye future performance ki guarantee nahi deta aur na hi causation prove karta hai."
+      note="Correlation measures historical linear co-movement. It does not guarantee future results or prove causation."
     />
   );
 }

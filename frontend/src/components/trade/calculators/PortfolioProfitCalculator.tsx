@@ -151,7 +151,7 @@ export default function PortfolioProfitCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Briefcase}>
-      Apne portfolio ke coins, quantity aur purchase prices enter karein — total profit/loss aur asset breakdown live dikhega.
+      Enter coins, quantities and purchase prices — total P&L and breakdown update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -174,7 +174,7 @@ export default function PortfolioProfitCalculator() {
       {/* Top Performers Notice */}
       <Notice kind={res.totalPnl >= 0 ? "info" : "warn"}>
         <span>
-          <strong>Performance Summary:</strong> Portfolio me <strong>{res.coinCount} assets</strong> hain.
+          <strong>Performance Summary:</strong> Portfolio holds <strong>{res.coinCount} assets</strong>.
           {res.bestPerformer && (
             <span>
               {" "}Best Performer: <strong className="text-emerald-400">{res.bestPerformer.symbol} (+{res.bestPerformer.roiPct.toFixed(1)}%)</strong>.
@@ -306,7 +306,7 @@ export default function PortfolioProfitCalculator() {
             }
           : null
       }
-      note="Portfolio profit calculation unrealized market pricing par based hai. Actual realized profits exchange withdrawal aur spot trading fees ke baad adjust honge. Trading advice nahi."
+      note="Portfolio P&L uses unrealized market prices. Realized profits adjust for withdrawals and spot fees. Not trading advice."
     />
   );
 }

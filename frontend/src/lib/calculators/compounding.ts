@@ -57,12 +57,12 @@ export function computeCompounding(i: CompoundInput): CompoundOutcome | null {
     return null;
   }
 
-  if (initialCapital < 0) return { ok: false, error: "Initial capital negative nahi ho sakta." };
-  if (periodicContribution < 0) return { ok: false, error: "Contribution negative nahi ho sakti." };
-  if (durationYears <= 0) return { ok: false, error: "Duration 0 se zyada honi chahiye." };
-  if (durationYears > 50) return { ok: false, error: "Duration maximum 50 saal tak ho sakti hai." };
+  if (initialCapital < 0) return { ok: false, error: "Initial capital cannot be negative." };
+  if (periodicContribution < 0) return { ok: false, error: "Contribution cannot be negative." };
+  if (durationYears <= 0) return { ok: false, error: "Duration must be greater than 0." };
+  if (durationYears > 50) return { ok: false, error: "Duration cannot exceed 50 years." };
   if (expectedReturnPct < -90 || expectedReturnPct > 500) {
-    return { ok: false, error: "Return rate -90% se 500% ke beech honi chahiye." };
+    return { ok: false, error: "Return rate must be between -90% and 500%." };
   }
 
   const periodsPerYear = frequency === "daily" ? 365 : frequency === "monthly" ? 12 : 1;

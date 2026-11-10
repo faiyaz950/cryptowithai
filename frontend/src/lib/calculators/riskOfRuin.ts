@@ -75,17 +75,17 @@ export function computeRiskOfRuin(input: RiskOfRuinInput): RiskOfRuinOutcome | n
   }
 
   if (winRatePct <= 0 || winRatePct >= 100) {
-    return { ok: false, error: "Win rate 0% se 100% ke beech honi chahiye." };
+    return { ok: false, error: "Win rate must be between 0% and 100%." };
   }
-  if (avgWin <= 0) return { ok: false, error: "Average win 0 se bada hona chahiye." };
-  if (avgLoss <= 0) return { ok: false, error: "Average loss 0 se bada hona chahiye." };
+  if (avgWin <= 0) return { ok: false, error: "Average win must be greater than 0." };
+  if (avgLoss <= 0) return { ok: false, error: "Average loss must be greater than 0." };
   if (riskPctPerTrade <= 0 || riskPctPerTrade > 50) {
-    return { ok: false, error: "Risk per trade 0% se 50% ke beech hona chahiye." };
+    return { ok: false, error: "Risk per trade must be between 0% and 50%." };
   }
   if (tradesCount < 5 || tradesCount > 1000) {
-    return { ok: false, error: "Number of trades 5 se 1000 ke beech hone chahiye." };
+    return { ok: false, error: "Number of trades must be between 5 and 1000." };
   }
-  if (startingCapital <= 0) return { ok: false, error: "Starting capital 0 se bada hona chahiye." };
+  if (startingCapital <= 0) return { ok: false, error: "Starting capital must be greater than 0." };
 
   const w = winRatePct / 100;
   const l = 1 - w;

@@ -3,7 +3,6 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ArrowLeft, UserRound } from "lucide-react";
-
 /**
  * Profile ka data sirf logged-in user ka hai (session token localStorage mein
  * hai), isliye server par render karne ka koi matlab nahi — client-only.

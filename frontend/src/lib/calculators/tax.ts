@@ -33,7 +33,7 @@ export const JURISDICTIONS: Record<TaxJurisdiction, JurisdictionProfile> = {
     tdsPct: 1.0,  // Section 194S 1% TDS on sale turnover
     allowFeeDeduction: false, // Under Sec 115BBH, no deduction except cost of acquisition
     allowLossOffset: false,   // Losses cannot be set off against any other income
-    notes: "Section 115BBH ke tehat flat 30% tax + 4% cess = 31.2% lagta hai. Sirf cost of acquisition deduct ho sakti hai (fees ya losses offset allow nahi hain). Section 194S ke tehat 1% TDS lagta hai.",
+    notes: "Under Section 115BBH: flat 30% tax + 4% cess = 31.2%. Only cost of acquisition is deductible (fees/losses cannot offset). Section 194S: 1% TDS.",
   },
   usa_short: {
     id: "usa_short",
@@ -42,7 +42,7 @@ export const JURISDICTIONS: Record<TaxJurisdiction, JurisdictionProfile> = {
     tdsPct: 0.0,
     allowFeeDeduction: true,
     allowLossOffset: true,
-    notes: "1 saal se kam holding period par ordinary income tax bracket apply hota hai (typically 22% - 37%). Trading fees deduct hoti hain aur capital loss offset allow hota hai.",
+    notes: "Holdings under 1 year are typically taxed as ordinary income (often 22%–37%). Trading fees are deductible and capital losses may offset gains.",
   },
   usa_long: {
     id: "usa_long",
@@ -51,7 +51,7 @@ export const JURISDICTIONS: Record<TaxJurisdiction, JurisdictionProfile> = {
     tdsPct: 0.0,
     allowFeeDeduction: true,
     allowLossOffset: true,
-    notes: "1 saal se zyada hold karne par preferential long-term capital gains tax (0%, 15%, ya 20%) lagta hai. Fees deductible hoti hain.",
+    notes: "Holdings over 1 year may qualify for LTCG rates (0%, 15%, or 20%). Fees are deductible.",
   },
   custom: {
     id: "custom",
@@ -60,7 +60,7 @@ export const JURISDICTIONS: Record<TaxJurisdiction, JurisdictionProfile> = {
     tdsPct: 0.0,
     allowFeeDeduction: true,
     allowLossOffset: true,
-    notes: "Apne desh ya custom bracket ke anusaar tax rate enter karein.",
+    notes: "Enter the tax rate for your country or custom bracket.",
   },
 };
 
@@ -106,8 +106,8 @@ export function computeCryptoTax(input: TaxInput): TaxOutcome | null {
     return null;
   }
 
-  if (purchaseCost < 0) return { ok: false, error: "Purchase cost negative nahi ho sakti." };
-  if (saleValue < 0) return { ok: false, error: "Sale value negative nahi ho sakti." };
+  if (purchaseCost < 0) return { ok: false, error: "Purchase cost cannot be negative." };
+  if (saleValue < 0) return { ok: false, error: "Sale value cannot be negative." };
 
   const fees = Number.isFinite(rawFees) && rawFees > 0 ? rawFees : 0;
   const profile = JURISDICTIONS[jurisdiction] ?? JURISDICTIONS.india;

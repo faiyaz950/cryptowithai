@@ -90,7 +90,7 @@ export default function ProfitTargetCalculator() {
 
       <Field
         label="Investment Amount"
-        hint="Kul lagaya gaya capital ($ / ₹)"
+        hint="Total capital deployed ($ / ₹)"
         value={investment}
         onChange={setInvestment}
         prefix="$"
@@ -100,7 +100,7 @@ export default function ProfitTargetCalculator() {
 
       <Field
         label="Entry Price"
-        hint="Jis price par buy ya short kiya"
+        hint="Price at which you bought or shorted"
         value={entry}
         onChange={setEntry}
         prefix="$"
@@ -110,7 +110,7 @@ export default function ProfitTargetCalculator() {
 
       <Field
         label="Target Price"
-        hint={side === "long" ? "Entry se upar ka profit target" : "Entry se neeche ka profit target"}
+        hint={side === "long" ? "Profit target above entry" : "Profit target below entry"}
         value={targetPrice}
         onChange={setTargetPrice}
         prefix="$"
@@ -169,7 +169,7 @@ export default function ProfitTargetCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Target}>
-      Investment amount, entry price aur target price enter karein — expected profit aur ROI live calculate hoga.
+      Enter investment, entry and target price — expected profit and ROI update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -204,7 +204,7 @@ export default function ProfitTargetCalculator() {
         <span>
           <strong>Target Projection:</strong> Agar price <strong>{fmtMoney(res.entry)}</strong> se{" "}
           <strong className="text-cyan-400">+{res.priceMovePct.toFixed(2)}% move</strong> karke{" "}
-          <strong>{fmtMoney(res.targetPrice)}</strong> hit karta hai, toh aapko{" "}
+          If price reaches <strong>{fmtMoney(res.targetPrice)}</strong>, you earn{" "}
           <strong className="text-emerald-400">+{fmtMoney(res.netProfit)} net profit</strong> milega (Fees deduction: {fmtMoney(res.totalFees)}).
         </span>
       </Notice>
@@ -281,7 +281,7 @@ export default function ProfitTargetCalculator() {
             }
           : null
       }
-      note="Profit target projections entry aur target levels par based hain. Market orders aur slippage se actual realized profit minor vary kar sakta hai. Trading advice nahi."
+      note="Targets are based on entry and target levels. Market orders and slippage can change realized profit. Not trading advice."
     />
   );
 }

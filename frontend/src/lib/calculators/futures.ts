@@ -78,11 +78,11 @@ export function computeFutures(input: FuturesInput): FuturesOutcome | null {
     return null;
   }
 
-  if (entry <= 0) return { ok: false, error: "Entry price 0 se zyada hona chahiye." };
-  if (exit <= 0) return { ok: false, error: "Exit price 0 se zyada hona chahiye." };
-  if (margin <= 0) return { ok: false, error: "Margin amount 0 se zyada hona chahiye." };
+  if (entry <= 0) return { ok: false, error: "Entry price must be greater than 0." };
+  if (exit <= 0) return { ok: false, error: "Exit price must be greater than 0." };
+  if (margin <= 0) return { ok: false, error: "Margin amount must be greater than 0." };
   if (leverage < 1 || leverage > 125) {
-    return { ok: false, error: "Leverage 1x se 125x ke beech hona chahiye." };
+    return { ok: false, error: "Leverage must be between 1x and 125x." };
   }
 
   const lev = Math.max(1, Math.min(125, leverage));

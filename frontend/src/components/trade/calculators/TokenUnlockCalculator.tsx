@@ -156,7 +156,7 @@ export default function TokenUnlockCalculator() {
       <div className="cx-row-2">
         <Field
           label="Current Circulating Supply"
-          hint="Abhi market mein trade hone wale tokens"
+          hint="Tokens currently trading in the market"
           value={circulatingSupply}
           onChange={(v) => {
             setCirculatingSupply(v);
@@ -168,7 +168,7 @@ export default function TokenUnlockCalculator() {
         />
         <Field
           label="Upcoming Unlock Amount"
-          hint="Naye unlock hone wale tokens"
+          hint="Tokens in the upcoming unlock"
           value={unlockAmount}
           onChange={(v) => {
             setUnlockAmount(v);
@@ -182,7 +182,7 @@ export default function TokenUnlockCalculator() {
 
       <Field
         label="Total / Maximum Supply"
-        hint="Token ki total hard cap ya current max supply"
+        hint="Token hard cap or current max supply"
         value={totalSupply}
         onChange={(v) => {
           setTotalSupply(v);
@@ -241,7 +241,7 @@ export default function TokenUnlockCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Unlock}>
-      Current price, circulating supply aur upcoming unlock amount enter karein — dilution factor aur equilibrium price calculate hoga.
+      Enter current price, circulating supply and upcoming unlock — dilution and equilibrium price are computed.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -264,10 +264,10 @@ export default function TokenUnlockCalculator() {
       <Notice kind={res.riskLevel === "severe" || res.riskLevel === "high" ? "warn" : "info"}>
         <span>
           <strong>{res.riskLevelLabel}:</strong> {matchedPreset ? `(${matchedPreset.unlockDateNote}) ` : ""}
-          Market mein <strong>+{fmtNum(res.unlockAmount)} {symbol}</strong> naye tokens introduce honge, jisse circulating supply{" "}
-          <strong>{res.currentCirculatingRatioPct.toFixed(1)}% se badhkar {res.newCirculatingRatioPct.toFixed(1)}%</strong> ho jayegi.{" "}
-          Agar valuation / market cap constant rehti hai, toh token price{" "}
-          <strong>{fmtMoney(res.equilibriumPrice)} ({res.equilibriumPriceDropPct.toFixed(1)}%)</strong> adjust ho sakti hai.
+          The market will add <strong>+{fmtNum(res.unlockAmount)} {symbol}</strong>, so circulating supply{" "}
+          rises from <strong>{res.currentCirculatingRatioPct.toFixed(1)}% to {res.newCirculatingRatioPct.toFixed(1)}%</strong>.{" "}
+          If valuation / market cap stays constant, token price may{" "}
+          <strong>{fmtMoney(res.equilibriumPrice)} ({res.equilibriumPriceDropPct.toFixed(1)}%)</strong> may adjust.
         </span>
       </Notice>
 
@@ -384,7 +384,7 @@ export default function TokenUnlockCalculator() {
             }
           : null
       }
-      note="Token unlock se circulating supply badhti hai, lekin price automatically dump nahi hoti. Actual impact OTC deals, vesting staking aur market liquidity par depend karta hai."
+      note="Unlocks increase float but do not automatically crash price. Impact depends on OTC, vesting, staking and liquidity."
     />
   );
 }

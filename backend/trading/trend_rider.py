@@ -16,6 +16,9 @@ Rules (sirf band candles par):
   Steady (tp1_r diya ho): price entry se tp1_r x risk aage jaaye to us candle ke andar tp1_frac
           hissa wahin book, aur stop entry (+fees) par — baaki hissa upar wale trail se chalta hai.
           Win rate ~33% se ~50%, kamai ~25% kam (research: 25% @ 1R).
+  Pro (skip_weekend + btc_confirm): Steady ke upar — Saturday/Sunday (UTC) ki candle par bana
+          signal nahi, aur alt coin ka long tabhi jab BTC bhi bull regime mein ho (short tabhi jab
+          BTC bear ho). 2019-22 / 2023-26 dono par PF aur drawdown behtar hue.
 
 Frontend (`frontend/src/lib/trendRider.ts`) yahi replay chalata hai — live signal aur
 backtest ek hi rule par rehne chahiye, isliye dono files saath badalni hain.
@@ -44,6 +47,10 @@ DEFAULTS = {
     # Steady: pehla profit kitne R par (None = band), aur kitna hissa.
     "tp1_r": None,
     "tp1_frac": 0.25,
+    # Pro: weekend (UTC) ki candle par bana signal nahi — kam liquidity ke breakout zyada fail hote hain.
+    "skip_weekend": False,
+    # Pro: alt ka trade tabhi jab BTC usi taraf ke regime mein ho (`confirm` arrays se).
+    "btc_confirm": False,
 }
 
 # EMA 200 ko settle hone ke liye backtest window se pehle itni candles chahiye — 600 par
@@ -117,7 +124,33 @@ def _rolling_max(values, window):
     return out
 
 
-def indicators(o, h, l, c, p):
+def weekday_mask(times):
+    """True = Monday–Friday (UTC). 1 Jan 1970 Thursday tha, isliye +3."""
+    days = np.asarray(times, dtype=np.int64) // 86_400_000
+    return (days + 3) % 7 < 5
+
+
+def btc_confirm_arrays(times, btc_times, btc_close, params=None):
+    """
+    Har candle ke liye BTC ka regime — us waqt tak ki aakhri BTC candle se (open time <= t).
+    long: BTC close > EMA slow; short: BTC close < EMA slow aur EMA fast < EMA slow.
+    Frontend `btcConfirmArrays` isi ka mirror hai.
+    """
+    p = dict(DEFAULTS)
+    p.update(params or {})
+    bt = np.asarray(btc_times, dtype=np.int64)
+    bc = np.asarray(btc_close, dtype=float)
+    ef = ema(bc, p["ema_fast"])
+    es = ema(bc, p["ema_slow"])
+    up = bc > es
+    dn = (bc < es) & (ef < es)
+    idx = np.searchsorted(bt, np.asarray(times, dtype=np.int64), side="right") - 1
+    ok = idx >= 0
+    li = np.where(ok, idx, 0)
+    return {"long": ok & up[li], "short": ok & dn[li]}
+
+
+def indicators(o, h, l, c, p, times=None, confirm=None):
     a = atr(h, l, c, p["atr_period"])
     e_fast = ema(c, p["ema_fast"])
     e_slow = ema(c, p["ema_slow"])
@@ -130,23 +163,31 @@ def indicators(o, h, l, c, p):
     short_sig = ok & (c < lower) & (c < e_slow) & (e_fast < e_slow)
     if not p["allow_shorts"]:
         short_sig[:] = False
+    if p.get("skip_weekend") and times is not None:
+        wk = weekday_mask(times)
+        long_sig &= wk
+        short_sig &= wk
+    if p.get("btc_confirm") and confirm is not None:
+        long_sig &= np.asarray(confirm["long"], dtype=bool)
+        short_sig &= np.asarray(confirm["short"], dtype=bool)
     return {
         "atr": a, "ema_fast": e_fast, "ema_slow": e_slow, "upper": upper, "lower": lower,
         "trail_long": trail_long, "trail_short": trail_short, "long": long_sig, "short": short_sig,
     }
 
 
-def simulate(times, o, h, l, c, params=None, capital=1000.0, start_index=0, bar_hours=4.0):
+def simulate(times, o, h, l, c, params=None, capital=1000.0, start_index=0, bar_hours=4.0, confirm=None):
     """
     times: ms timestamps (candle open), sirf BAND candles.
     start_index: is index se pehle ki candles sirf indicator warmup ke liye hain.
+    confirm: Pro ke liye `btc_confirm_arrays(...)` (alt coins); BTC khud ya None = filter nahi.
     Returns dict: trades, equity (list of [time, equity]), position (open trade ya None), stats.
     """
     p = dict(DEFAULTS)
     p.update(params or {})
     o, h, l, c = (np.asarray(x, dtype=float) for x in (o, h, l, c))
     n = len(c)
-    ind = indicators(o, h, l, c, p)
+    ind = indicators(o, h, l, c, p, times=times, confirm=confirm)
     risk = p["risk_pct"] / 100.0
     fund_per_bar = FUNDING_PER_8H * bar_hours / 8.0
     tp1_r = p.get("tp1_r") or None

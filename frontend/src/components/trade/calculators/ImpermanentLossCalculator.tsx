@@ -250,7 +250,7 @@ export default function ImpermanentLossCalculator() {
               prefix="$"
               value={manualFeesUSD}
               placeholder="Leave blank to use APY"
-              hint="Agar aapke paas actual earned fees ka exact dollar amount hai"
+              hint="If you have the exact dollar amount of fees earned"
               optional
               onChange={(v) => {
                 setActivePreset(null);
@@ -374,7 +374,7 @@ export default function ImpermanentLossCalculator() {
             {/* Breakeven APY Notice */}
             {outcome.breakevenFeeApyPct > 0 && (
               <Notice kind={outcome.isProfitableVsHold ? "info" : "warn"}>
-                Breakeven Fee APY: Is <b>{outcome.impermanentLossPct.toFixed(2)}%</b> IL ko cover karne ke liye pool ko kam se kam <b>{outcome.breakevenFeeApyPct.toFixed(1)}%</b> annual fee APY generate karni hogi. Aapki current yield se net result: <b>{outcome.netLpResultUSD >= 0 ? `+${fmtMoney(outcome.netLpResultUSD)} profit vs hold` : `${fmtMoney(outcome.netLpResultUSD)} loss vs hold`}</b>.
+                Breakeven Fee APY: To cover <b>{outcome.impermanentLossPct.toFixed(2)}%</b> IL, the pool needs at least <b>{outcome.breakevenFeeApyPct.toFixed(1)}%</b> annual fee APY. Net vs hold at your current yield: <b>{outcome.netLpResultUSD >= 0 ? `+${fmtMoney(outcome.netLpResultUSD)} profit vs hold` : `${fmtMoney(outcome.netLpResultUSD)} loss vs hold`}</b>.
               </Notice>
             )}
 
@@ -391,7 +391,7 @@ export default function ImpermanentLossCalculator() {
                 },
                 {
                   title: "3. HODL vs LP Position Math",
-                  math: `Agar aapne tokens ko sirf wallet me rakha hota, to portfolio value ${fmtMoney(outcome.holdPortfolioValueUSD)} hoti. Pool me automated arbitrage rebalancing ki wajah se LP value ${fmtMoney(outcome.lpPositionValueUSD)} reh gayi (Difference: -${fmtMoney(Math.abs(outcome.valueDifferenceUSD))}).`,
+                  math: `If you had held tokens in a wallet, portfolio value would be ${fmtMoney(outcome.holdPortfolioValueUSD)}. LP value stayed ${fmtMoney(outcome.lpPositionValueUSD)} after pool rebalancing (difference: -${fmtMoney(Math.abs(outcome.valueDifferenceUSD))}).`,
                 },
                 {
                   title: "4. Net Liquidity Provider Outcome",
@@ -402,7 +402,7 @@ export default function ImpermanentLossCalculator() {
           </div>
         ) : (
           <EmptyState icon={Repeat}>
-            Initial deposit amount aur dono tokens ke price change % daalein. System turant standard 50/50 constant-product formula se Impermanent Loss aur HODL comparison dikhayega.
+            Enter initial deposit and both tokens' price change %. Standard 50/50 constant-product IL vs HODL comparison updates instantly.
           </EmptyState>
         )
       }
@@ -416,7 +416,7 @@ export default function ImpermanentLossCalculator() {
             }
           : null
       }
-      note="Note: Impermanent loss tab 'permanent' banta hai jab aap pool se liquidity withdraw kar lete hain. Agar price ratio wapas initial level par aa jaye to IL 0% ho jata hai."
+      note="Note: Impermanent loss becomes permanent when you withdraw from the pool. If the price ratio returns to the start, IL goes to 0%."
     />
   );
 }

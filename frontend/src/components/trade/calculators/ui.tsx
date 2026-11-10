@@ -142,9 +142,9 @@ export function CalcLayout({
   resultTitle,
   resultIcon: ResultIcon,
   badge,
+  actions,
   result,
   dock,
-  note,
 }: {
   inputsTitle: string;
   inputsIcon: LucideIcon;
@@ -153,8 +153,10 @@ export function CalcLayout({
   resultTitle: string;
   resultIcon: LucideIcon;
   badge?: ReactNode;
+  actions?: ReactNode;
   result: ReactNode;
   dock: Dock | null;
+  /** @deprecated Footer notes are no longer rendered. */
   note?: string;
 }) {
   const resultRef = useRef<HTMLElement>(null);
@@ -191,10 +193,12 @@ export function CalcLayout({
               <ResultIcon className="w-4 h-4" />
               {resultTitle}
             </span>
-            {badge}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {badge}
+              {actions}
+            </div>
           </div>
           {result}
-          {note && <p className="cx-note">{note}</p>}
         </section>
       </div>
 
@@ -206,7 +210,7 @@ export function CalcLayout({
           data-down={dock.tone === "down" || undefined}
           data-hidden={resultInView || undefined}
           onClick={() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-          aria-label={`${dock.label}: ${dock.value}. Poora result dekhein`}
+          aria-label={`${dock.label}: ${dock.value}. View full result`}
           tabIndex={resultInView ? -1 : 0}
         >
           <span>
@@ -373,7 +377,7 @@ export function Walkthrough({ steps }: { steps: { title: string; math: ReactNode
   return (
     <details className="cx-walk">
       <summary>
-        Hisaab kaise bana
+        How this was calculated
         <ChevronDown className="w-4 h-4" />
       </summary>
       <ol>

@@ -31,7 +31,7 @@ export type RiskRewardOutcome = { ok: true; result: RiskRewardResult } | { ok: f
 export function computeRiskReward(i: RiskRewardInput): RiskRewardOutcome | null {
   const { side, entry, stopLoss, takeProfit } = i;
   if (![entry, stopLoss, takeProfit].every(Number.isFinite)) return null;
-  if (entry <= 0 || stopLoss <= 0 || takeProfit <= 0) return { ok: false, error: "Teeno price 0 se bade hone chahiye." };
+  if (entry <= 0 || stopLoss <= 0 || takeProfit <= 0) return { ok: false, error: "Teeno price must be greater than 0." };
 
   const risk = side === "long" ? entry - stopLoss : stopLoss - entry;
   const reward = side === "long" ? takeProfit - entry : entry - takeProfit;
@@ -41,8 +41,8 @@ export function computeRiskReward(i: RiskRewardInput): RiskRewardOutcome | null 
       ok: false,
       error:
         side === "long"
-          ? "Long mein stop loss entry se neeche hona chahiye."
-          : "Short mein stop loss entry se upar hona chahiye.",
+          ? "For a long, stop loss must be below entry."
+          : "For a short, stop loss must be above entry.",
     };
   }
   if (reward <= 0) {
@@ -50,8 +50,8 @@ export function computeRiskReward(i: RiskRewardInput): RiskRewardOutcome | null 
       ok: false,
       error:
         side === "long"
-          ? "Long mein take profit entry se upar hona chahiye."
-          : "Short mein take profit entry se neeche hona chahiye.",
+          ? "For a long, take profit must be above entry."
+          : "For a short, take profit must be below entry.",
     };
   }
 

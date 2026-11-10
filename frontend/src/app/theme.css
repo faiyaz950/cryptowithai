@@ -1,0 +1,269 @@
+/* ═══════════════════════════════════════════════════════════
+   THEME — dark (default) aur light (white + blue).
+   `<html data-theme="light">` par light palette lagti hai; toggle
+   `ThemeToggle` component se hota hai aur localStorage mein yaad rehta hai.
+
+   Desk/club CSS ke purane hardcoded dark rang `--p-<hex>` tokens ban gaye
+   hain: dark mein wahi hex, light mein uska white-blue jodidaar.
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  --ink-rgb: 255 255 255;
+  --shade-rgb: 0 0 0;
+  --shade-k: 1;
+  --surface-rgb: 11 10 9;
+  --surface2-rgb: 33 32 31;
+  --surface3-rgb: 54 53 52;
+  --ink-hi: #ffffff;
+  --p-000000: #000000;
+  --p-00c853: #00c853;
+  --p-00e676: #00e676;
+  --p-030508: #070605;
+  --p-04120a: #04120a;
+  --p-05080d: #0b0a09;
+  --p-070a0f: #100e0c;
+  --p-070b12: #100e0c;
+  --p-07111f: #141312;
+  --p-080b10: #121110;
+  --p-080c12: #121110;
+  --p-090f1a: #141312;
+  --p-0a0e14: #161514;
+  --p-0a0f16: #161514;
+  --p-0a0f1a: #181716;
+  --p-0a1a2c: #1c1917;
+  --p-0b1220: #1a1918;
+  --p-0b1a30: #1c1917;
+  --p-0c1017: #181716;
+  --p-0d121a: #1c1b1a;
+  --p-0d131c: #1c1b1a;
+  --p-0f141c: #1e1d1c;
+  --p-121821: #212020;
+  --p-141b2b: #262524;
+  --p-151b26: #262524;
+  --p-16110a: #16110a;
+  --p-1a2230: #363534;
+  --p-1ad49a: #1ad49a;
+  --p-1c2028: #2a2928;
+  --p-1e293b: #302f2e;
+  --p-1f2733: #302f2e;
+  --p-1f2a3a: #363534;
+  --p-2a303b: #3a3937;
+  --p-2a3546: #4a4846;
+  --p-2dd4bf: #f97316;
+  --p-334155: #334155;
+  --p-34d399: #34d399;
+  --p-3ee08f: #3ee08f;
+  --p-4b5a70: #4b5a70;
+  --p-5cc4ef: #fb923c;
+  --p-5eead4: #fdba74;
+  --p-69f0ae: #69f0ae;
+  --p-7c8799: #a8a29e;
+  --p-7c8aa5: #a8a29e;
+  --p-8494ad: #a8a29e;
+  --p-8b93a3: #8b93a3;
+  --p-8fa3bf: #8fa3bf;
+  --p-94a3b8: #b1b1b1;
+  --p-97a8bf: #97a8bf;
+  --p-99f6e4: #fed7aa;
+  --p-9aa3b2: #9aa3b2;
+  --p-a78bfa: #a78bfa;
+  --p-a7f3d0: #a7f3d0;
+  --p-b6c2d4: #b6c2d4;
+  --p-c0ccdc: #c0ccdc;
+  --p-c4b5fd: #c4b5fd;
+  --p-cbd5e1: #cbd5e1;
+  --p-ddd6fe: #ddd6fe;
+  --p-dee2e6: #dee2e6;
+  --p-e0ad3a: #ffa825;
+  --p-e2e8f0: #e2e8f0;
+  --p-e8b94a: #e8b94a;
+  --p-e8edf5: #e8edf5;
+  --p-f1f5f9: #f1f5f9;
+  --p-f5c542: #f5c542;
+  --p-f6d27a: #f6d27a;
+  --p-f87171: #f87171;
+  --p-f8e6b4: #f8e6b4;
+  --p-f8fafc: #f8fafc;
+  --p-fbbf24: #fbbf24;
+  --p-fca5a5: #fca5a5;
+  --p-fecaca: #fecaca;
+  --p-ff5252: #ff5252;
+  --p-ff6b6b: #ff6b6b;
+  --p-ff8787: #ff8787;
+  --p-ff8a80: #ff8a80;
+  --p-ffb300: #ffb300;
+}
+
+:root[data-theme="light"] {
+  --ink-rgb: 15 23 42;
+  --shade-rgb: 15 35 70;
+  --shade-k: .22;
+  --surface-rgb: 255 255 255;
+  --surface2-rgb: 244 247 251;
+  --surface3-rgb: 226 232 240;
+  --ink-hi: #1c1917;
+  --p-000000: #ffffff;
+  --p-00c853: #059669;
+  --p-00e676: #059669;
+  --p-030508: #f1f0ef;
+  --p-04120a: #ecfdf5;
+  --p-05080d: #f6f5f4;
+  --p-070a0f: #ffffff;
+  --p-070b12: #f6f5f4;
+  --p-07111f: #f1f0ef;
+  --p-080b10: #ffffff;
+  --p-080c12: #f6f5f4;
+  --p-090f1a: #f6f5f4;
+  --p-0a0e14: #f8fafc;
+  --p-0a0f16: #f6f5f4;
+  --p-0a0f1a: #f6f5f4;
+  --p-0a1a2c: #f1f0ef;
+  --p-0b1220: #f6f5f4;
+  --p-0b1a30: #f1f0ef;
+  --p-0c1017: #ffffff;
+  --p-0d121a: #f8fafc;
+  --p-0d131c: #f8fafc;
+  --p-0f141c: #f8fafc;
+  --p-121821: #f1f5f9;
+  --p-141b2b: #eef2f7;
+  --p-151b26: #f1f5f9;
+  --p-16110a: #fff7e6;
+  --p-1a2230: #e4e8ee;
+  --p-1ad49a: #059669;
+  --p-1c2028: #eef1f4;
+  --p-1e293b: #e2e8f0;
+  --p-1f2733: #e4e8ee;
+  --p-1f2a3a: #e4e8ee;
+  --p-2a303b: #dbe2ea;
+  --p-2a3546: #d0d6df;
+  --p-2dd4bf: #c2410c;
+  --p-334155: #cbd5e1;
+  --p-34d399: #059669;
+  --p-3ee08f: #059669;
+  --p-4b5a70: #94a3b8;
+  --p-5cc4ef: #ea580c;
+  --p-5eead4: #c2410c;
+  --p-69f0ae: #059669;
+  --p-7c8799: #64748b;
+  --p-7c8aa5: #64748b;
+  --p-8494ad: #64748b;
+  --p-8b93a3: #64748b;
+  --p-8fa3bf: #64748b;
+  --p-94a3b8: #64748b;
+  --p-97a8bf: #64748b;
+  --p-99f6e4: #9a3412;
+  --p-9aa3b2: #64748b;
+  --p-a78bfa: #7c3aed;
+  --p-a7f3d0: #047857;
+  --p-b6c2d4: #475569;
+  --p-c0ccdc: #475569;
+  --p-c4b5fd: #6d28d9;
+  --p-cbd5e1: #334155;
+  --p-ddd6fe: #5b21b6;
+  --p-dee2e6: #334155;
+  --p-e0ad3a: #a0730f;
+  --p-e2e8f0: #1e293b;
+  --p-e8b94a: #a16207;
+  --p-e8edf5: #1e293b;
+  --p-f1f5f9: #0f172a;
+  --p-f5c542: #a16207;
+  --p-f6d27a: #ea580c;
+  --p-f87171: #dc2626;
+  --p-f8e6b4: #a0730f;
+  --p-f8fafc: #0f172a;
+  --p-fbbf24: #b45309;
+  --p-fca5a5: #b91c1c;
+  --p-fecaca: #991b1b;
+  --p-ff5252: #dc2626;
+  --p-ff6b6b: #dc2626;
+  --p-ff8787: #dc2626;
+  --p-ff8a80: #dc2626;
+  --p-ffb300: #b45309;
+}
+
+/* ── Light: desk / auth / AI / profile (trade-root) ─────────── */
+[data-theme="light"] .trade-root {
+  --bg-primary: #f6f5f4;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #f1f0ef;
+  --bg-sidebar: #ffffff;
+  --border: #d7d4d3;
+  --border-strong: #c4c1bf;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --tr-line: #d7d4d3;
+  --tr-line-soft: #eceae8;
+  --tr-head: #fafaf9;
+  --tr-field: #f3f2f1;
+  --tr-ink: #0f172a;
+  --tr-ink-2: #1e293b;
+  --tr-paper: #f6f5f4;
+  --tr-mint: #ea580c;
+  --tr-mint-deep: #c2410c;
+  --accent: #ea580c;
+  --accent-hover: #c2410c;
+  --accent-soft: rgba(249, 115, 22, 0.1);
+  --accent-dim: rgba(249, 115, 22, 0.14);
+  --ring: #f97316;
+  --green: #16a34a;
+  --red: #dc2626;
+  --amber: #b45309;
+  --gold: #c2410c;
+  background-image:
+    radial-gradient(900px 420px at 12% -10%, rgba(249, 115, 22, 0.10), transparent 55%),
+    radial-gradient(700px 360px at 100% 0%, rgba(194, 65, 12, 0.05), transparent 50%);
+  color-scheme: light;
+}
+
+/* ── Light: landing / join / club / admin (mukul-club) ──────── */
+[data-theme="light"] .mukul-club {
+  --mc-black: #ffffff;
+  --mc-bg: #f6f5f4;
+  --mc-card: #ffffff;
+  --mc-field: #f3f2f1;
+  --mc-line: #d7d4d3;
+  --mc-line-strong: #c4c1bf;
+  --mc-ink: #1c1917;
+  --mc-text: #44403c;
+  --mc-muted: #78716c;
+  --mc-blue: #ea580c;
+  --mc-gold: #c2410c;
+  --mc-gold-bright: #ea580c;
+  --mc-ok: #059669;
+  --mc-warn: #b45309;
+  --mc-bad: #dc2626;
+  background-image:
+    radial-gradient(900px 420px at 12% -10%, rgba(249, 115, 22, 0.12), transparent 55%),
+    radial-gradient(700px 360px at 100% 0%, rgba(249, 115, 22, 0.06), transparent 50%);
+  color-scheme: light;
+}
+
+/* ── Toggle button ──────────────────────────────────────────── */
+.theme-toggle {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(11, 10, 9, 0.92);
+  color: #ffa825;
+  box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease;
+}
+.theme-toggle:hover { transform: translateY(-1px); }
+.theme-toggle:focus-visible { outline: 2px solid #f97316; outline-offset: 2px; }
+[data-theme="light"] .theme-toggle {
+  border-color: #c4c1bf;
+  background: rgba(255, 255, 255, 0.95);
+  color: #c2410c;
+  box-shadow: 0 8px 22px -12px rgba(194, 65, 12, 0.45);
+}

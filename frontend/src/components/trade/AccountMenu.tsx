@@ -6,9 +6,8 @@ import { LogIn, LogOut, Plug, UserRound } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 /**
- * Desk header ka account button. Pehle yahan sirf ek khaali user icon tha jo
- * kuch nahi karta tha — ab logged-in user ka naam, exchanges aur logout, ya
- * sign-in ka rasta.
+ * Sign in, ya logged-in user ka naam, exchanges aur logout.
+ * Side rail ke neeche aur chhoti screen ke step bar par.
  */
 export default function AccountMenu({ onOpenExchanges }: { onOpenExchanges: () => void }) {
   const { user, logout } = useAuth();

@@ -49,14 +49,14 @@ export function computeWinRate(i: WinRateInput): WinRateOutcome | null {
   }
 
   if (wins < 0 || losses < 0 || breakeven < 0) {
-    return { ok: false, error: "Trades count negative nahi ho sakta." };
+    return { ok: false, error: "Trades count cannot be negative." };
   }
 
   const totalDecisive = wins + losses;
   const totalTrades = wins + losses + breakeven;
 
   if (totalTrades <= 0) {
-    return { ok: false, error: "Kam se kam 1 trade hona zaroori hai." };
+    return { ok: false, error: "At least one trade is required." };
   }
 
   // Basic win rate strictly excluding breakeven as requested: Wins / (Wins + Losses) * 100

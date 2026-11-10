@@ -317,17 +317,17 @@ export default function BreakoutDistanceCalculator() {
             {/* Status alerts */}
             {outcome.isBreakout && (
               <Notice kind="info">
-                Breakout Confirmed: Price <b>{fmtMoney(outcome.resistanceLevel)}</b> resistance se <b>{Math.abs(outcome.distToResistancePct).toFixed(2)}%</b> upar nikal chuka hai. Volume aur candle close confirmation zaroor check karein.
+                Breakout Confirmed: Price is <b>{Math.abs(outcome.distToResistancePct).toFixed(2)}%</b> above resistance at <b>{fmtMoney(outcome.resistanceLevel)}</b>. Confirm with volume and candle close.
               </Notice>
             )}
             {outcome.isBreakdown && (
               <Notice kind="error">
-                Breakdown Warning: Price <b>{fmtMoney(outcome.supportLevel)}</b> support floor se <b>{Math.abs(outcome.distToSupportPct).toFixed(2)}%</b> neeche breach ho gaya hai.
+                Breakdown Warning: Price breached support at <b>{fmtMoney(outcome.supportLevel)}</b> by <b>{Math.abs(outcome.distToSupportPct).toFixed(2)}%</b> below the floor.
               </Notice>
             )}
             {!outcome.isBreakout && !outcome.isBreakdown && outcome.isAlertTriggered && (
               <Notice kind="warn">
-                Proximity Alert: Current price key level ke kaafi kareeb hai (within <b>{outcome.alertThresholdPct}%</b> threshold). Orderbook liquidity aur breakout volume par nazar rakhein.
+                Proximity Alert: Price is near a key level (within <b>{outcome.alertThresholdPct}%</b> threshold). Watch order book liquidity and breakout volume.
               </Notice>
             )}
 
@@ -350,7 +350,7 @@ export default function BreakoutDistanceCalculator() {
                   ? [
                       {
                         title: "4. ATR Normalization",
-                        math: `ATR = ${fmtMoney(outcome.atr)}. Resistance tak pahunchne ke liye ${outcome.distToResistanceAtr?.toFixed(2)} ATR moves chahiye; Support test ke liye ${outcome.distToSupportAtr?.toFixed(2)} ATR move chahiye.`,
+                        math: `ATR = ${fmtMoney(outcome.atr)}. ${outcome.distToResistanceAtr?.toFixed(2)} ATR moves to reach resistance; ${outcome.distToSupportAtr?.toFixed(2)} ATR move to test support.`,
                       },
                     ]
                   : []),
@@ -359,7 +359,7 @@ export default function BreakoutDistanceCalculator() {
           </div>
         ) : (
           <EmptyState icon={Compass}>
-            Current price ke sath key support aur resistance levels bharein. System turant distance %, range position aur ATR normalization calculate karega.
+            Enter current price with key support and resistance. Distance %, range position and ATR normalization update instantly.
           </EmptyState>
         )
       }
@@ -373,7 +373,7 @@ export default function BreakoutDistanceCalculator() {
             }
           : null
       }
-      note="Technical Disclaimer: Breakout distance levels ka mathematical measure hai; ye breakout ki probability predict nahi karta. Volume aur multi-timeframe confirmation zaroor lein."
+      note="Technical disclaimer: breakout distance is a mathematical measure, not a probability forecast. Confirm with volume and multiple timeframes."
     />
   );
 }

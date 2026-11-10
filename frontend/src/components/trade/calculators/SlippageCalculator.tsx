@@ -134,8 +134,8 @@ export default function SlippageCalculator() {
               </span>
               <span className="text-[11px] text-[var(--text-muted)]">
                 {isEstimate
-                  ? "Orderbook depth ke basis par anumanit execution"
-                  : "Exchange trade history se actual fill price"}
+                  ? "Estimated execution from order book depth"
+                  : "Actual fill price from exchange trade history"}
               </span>
             </div>
             <button
@@ -315,17 +315,17 @@ export default function SlippageCalculator() {
             {/* Severity notice */}
             {outcome.severity === "high" && (
               <Notice kind="error">
-                High Slippage Warning: Order par <b>{Math.abs(outcome.slippagePct).toFixed(2)}%</b> slippage lag rahi hai ({fmtMoney(outcome.absoluteSlippageCost)} extra loss). Market order ke bajaye Limit Order use karein ya order size ko chhota karein.
+                High Slippage Warning: <b>{Math.abs(outcome.slippagePct).toFixed(2)}%</b> slippage on this order ({fmtMoney(outcome.absoluteSlippageCost)} extra loss). Prefer a limit order or reduce size.
               </Notice>
             )}
             {outcome.severity === "moderate" && (
               <Notice kind="warn">
-                Moderate Slippage: Slippage <b>{Math.abs(outcome.slippagePct).toFixed(2)}%</b> hai. Low liquidity pairs par DEX slippage tolerance limit (0.5% - 1.0%) set karke trade karein.
+                Moderate Slippage: <b>{Math.abs(outcome.slippagePct).toFixed(2)}%</b> slippage. On thin pairs, set DEX slippage tolerance (0.5%–1.0%) before trading.
               </Notice>
             )}
             {outcome.isFavorable && (
               <Notice kind="info">
-                Price Improvement: Order expected se behtar price par fill hua hai. Aapne total <b>{fmtMoney(outcome.absoluteSlippageCost)}</b> save kiye hain.
+                Price Improvement: Order filled better than expected. You saved <b>{fmtMoney(outcome.absoluteSlippageCost)}</b> in total.
               </Notice>
             )}
 
@@ -345,11 +345,11 @@ export default function SlippageCalculator() {
                   math:
                     outcome.side === "buy"
                       ? outcome.executionPrice > outcome.expectedPrice
-                        ? `Buy order mein execution price zyada hona unfavorable hota hai kyunki aapko $${outcome.absoluteSlippageCost.toFixed(2)} extra spend karna pada.`
-                        : `Buy order mein execution price kam hona favorable hota hai kyunki aapko saste me coins mile.`
+                        ? `On a buy, a higher execution price is unfavorable — you spent an extra $${outcome.absoluteSlippageCost.toFixed(2)}.`
+                        : `On a buy, a lower execution price is favorable — you paid less per coin.`
                       : outcome.executionPrice < outcome.expectedPrice
-                      ? `Sell order mein execution price kam hona unfavorable hota hai kyunki aapko $${outcome.absoluteSlippageCost.toFixed(2)} kam revenue mili.`
-                      : `Sell order mein execution price zyada hona favorable hota hai kyunki aapko zyada USDT mili.`,
+                      ? `On a sell, a lower execution price is unfavorable — you received $${outcome.absoluteSlippageCost.toFixed(2)} less.`
+                      : `On a sell, a higher execution price is favorable — you received more USDT.`,
                 },
                 {
                   title: "Total Effective Cost with Fees",
@@ -360,7 +360,7 @@ export default function SlippageCalculator() {
           </div>
         ) : (
           <EmptyState icon={Percent}>
-            Expected price, execution price aur order quantity bharein. System turant slippage % aur cost calculate karega.
+            Enter expected price, execution price and quantity. Slippage % and cost update instantly.
           </EmptyState>
         )
       }
@@ -374,7 +374,7 @@ export default function SlippageCalculator() {
             }
           : null
       }
-      note="Note: Market orders low-liquidity orderbooks ya thin AMM pools mein expected price se kaafi alag fill ho sakte hain. Slippage tolerance ka istemaal karein."
+      note="Note: Market orders in thin books or AMM pools can fill far from the quoted price. Use slippage tolerance settings."
     />
   );
 }

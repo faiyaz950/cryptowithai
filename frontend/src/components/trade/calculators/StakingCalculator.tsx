@@ -229,7 +229,7 @@ export default function StakingCalculator() {
       <Optional>
         <Field
           label={`Current ${symbol} Price (USD)`}
-          hint="Rewards ko fiat value mein dekhne ke liye"
+          hint="To show rewards in fiat value"
           value={coinPrice}
           onChange={setCoinPrice}
           prefix="$"
@@ -245,7 +245,7 @@ export default function StakingCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Coins}>
-      Staked amount, APY aur duration enter karein — projected staking rewards aur daily/monthly yields calculate honge.
+      Enter staked amount, APY and duration — projected rewards and daily/monthly yields are computed.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -266,9 +266,9 @@ export default function StakingCalculator() {
       {matchedPreset && (
         <Notice kind="info">
           <span>
-            <strong>{matchedPreset.name}:</strong> Unbonding period lagbhag{" "}
+            <strong>{matchedPreset.name}:</strong> Typical unbonding period{" "}
             <strong>{matchedPreset.unbondingDays === 0 ? "Instant (No lock)" : `${matchedPreset.unbondingDays} din`}</strong>{" "}
-            ka hota hai. Unstaking ke waqt rewards pause ho sakte hain.
+            . Rewards may pause while unstaking.
           </span>
         </Notice>
       )}
@@ -384,7 +384,7 @@ export default function StakingCalculator() {
             }
           : null
       }
-      note="Staking yields network inflation, validation rewards aur slashing risk par depend karte hain. APY fixed nahi hoti, fluctuating hoti hai."
+      note="Staking yields depend on inflation, validation rewards and slashing risk. APY is variable, not fixed."
     />
   );
 }

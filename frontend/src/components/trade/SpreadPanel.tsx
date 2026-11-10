@@ -49,10 +49,10 @@ export default function SpreadPanel({ def, values, tone }: Props) {
     setError(null);
     try {
       const res = await fetchOptionSpread({ underlying, optionType, width, longDelta, maxSpreadPct: maxSpread });
-      if (!res.success) throw new Error(res.error || "Spread load nahi hua");
+      if (!res.success) throw new Error(res.error || "Could not load spread");
       setData(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Spread load nahi hua");
+      setError(err instanceof Error ? err.message : "Could not load spread");
       setData(null);
     } finally {
       setLoading(false);

@@ -302,7 +302,7 @@ def modify_demo_order(
     return rows.update(**fields) > 0
 
 
-def fetch_paper_brackets(user_id: int) -> Dict[str, Dict[str, Optional[float]]]:
+def fetch_paper_brackets(user_id: int) -> Dict[str, Dict[str, Any]]:
     _ensure_django()
     from django_orm.models import PaperBracket
 
@@ -310,6 +310,7 @@ def fetch_paper_brackets(user_id: int) -> Dict[str, Dict[str, Optional[float]]]:
         b.symbol: {
             "stop_loss": float(b.stop_loss) if b.stop_loss is not None else None,
             "take_profit": float(b.take_profit) if b.take_profit is not None else None,
+            "plan": b.plan if isinstance(b.plan, dict) else {},
         }
         for b in PaperBracket.objects.filter(user_id=user_id)
     }
@@ -335,19 +336,60 @@ def claim_pending_demo_order(order_id: str, *, user_id: int, status: str) -> boo
     return DemoOrder.objects.filter(order_id=order_id, user_id=user_id, status="pending").update(status=status) > 0
 
 
-def set_paper_bracket(user_id: int, symbol: str, *, stop_loss: Optional[float], take_profit: Optional[float]) -> None:
-    """Dono khaali ho to row hi hata do."""
+def set_paper_bracket(
+    user_id: int,
+    symbol: str,
+    *,
+    stop_loss: Optional[float],
+    take_profit: Optional[float],
+    plan: Any = _UNSET,
+) -> None:
+    """Dono khaali ho to row hi hata do. `plan` na diya ho to purana plan rehta hai."""
     _ensure_django()
     from django_orm.models import PaperBracket
 
-    if stop_loss is None and take_profit is None:
+    if stop_loss is None and take_profit is None and (plan is _UNSET or not plan):
         PaperBracket.objects.filter(user_id=user_id, symbol=symbol).delete()
         return
-    PaperBracket.objects.update_or_create(
-        user_id=user_id,
-        symbol=symbol,
-        defaults={"stop_loss": _dec(stop_loss), "take_profit": _dec(take_profit)},
-    )
+    defaults: Dict[str, Any] = {"stop_loss": _dec(stop_loss), "take_profit": _dec(take_profit)}
+    if plan is not _UNSET:
+        defaults["plan"] = plan if isinstance(plan, dict) else {}
+    PaperBracket.objects.update_or_create(user_id=user_id, symbol=symbol, defaults=defaults)
+
+
+def advance_paper_target(
+    user_id: int,
+    symbol: str,
+    *,
+    expect_tp: float,
+    stop_loss: Optional[float],
+    take_profit: Optional[float],
+    plan: Dict[str, Any],
+) -> bool:
+    """Agla target tabhi lagao jab abhi wahi target pada ho. Do poll ek saath na kaaten."""
+    _ensure_django()
+    from django.db import transaction
+    from django_orm.models import PaperBracket
+
+    with transaction.atomic():
+        row = PaperBracket.objects.select_for_update().filter(user_id=user_id, symbol=symbol).first()
+        if row is None or row.take_profit is None:
+            return False
+        if abs(float(row.take_profit) - float(expect_tp)) > max(1e-8, abs(float(expect_tp)) * 1e-8):
+            return False
+        row.stop_loss = _dec(stop_loss)
+        row.take_profit = _dec(take_profit)
+        row.plan = plan or {}
+        row.save(update_fields=["stop_loss", "take_profit", "plan", "updated_at"])
+        return True
+
+
+def touch_paper_plan(user_id: int, symbol: str, *, stop_loss: Optional[float], plan: Dict[str, Any]) -> None:
+    """Trail ka high-water aur stop likho, target na badlo."""
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    PaperBracket.objects.filter(user_id=user_id, symbol=symbol).update(stop_loss=_dec(stop_loss), plan=plan or {})
 
 
 # --- Strategy bots ---

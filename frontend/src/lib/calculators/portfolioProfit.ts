@@ -61,7 +61,7 @@ export function computePortfolioProfit(coins: PortfolioCoinItem[]): PortfolioPro
   );
 
   if (validItems.length === 0) {
-    return { ok: false, error: "Kam se kam ek valid coin (quantity aur prices > 0) enter karein." };
+    return { ok: false, error: "Enter at least one valid coin (quantity and prices > 0)." };
   }
 
   let totalInvested = 0;

@@ -79,41 +79,41 @@ export function computeMukulRisk(input: MukulRiskInput): MukulRiskOutcome | null
   }
 
   if (balance <= 0) {
-    return { ok: false, error: "Account balance 0 se bada hona chahiye." };
+    return { ok: false, error: "Account balance must be greater than 0." };
   }
   if (riskPct <= 0 || riskPct > 100) {
-    return { ok: false, error: "Risk percentage 0% se 100% ke beech hona chahiye." };
+    return { ok: false, error: "Risk percentage must be between 0% and 100%." };
   }
   if (entryPrice <= 0) {
-    return { ok: false, error: "Entry price 0 se bada hona chahiye." };
+    return { ok: false, error: "Entry price must be greater than 0." };
   }
   if (stopLossPrice <= 0) {
-    return { ok: false, error: "Stop loss price 0 se bada hona chahiye." };
+    return { ok: false, error: "Stop loss price must be greater than 0." };
   }
   if (takeProfitPrice <= 0) {
-    return { ok: false, error: "Take profit price 0 se bada hona chahiye." };
+    return { ok: false, error: "Take profit price must be greater than 0." };
   }
 
   if (entryPrice === stopLossPrice) {
-    return { ok: false, error: "Entry price aur Stop Loss barabar nahi ho sakte." };
+    return { ok: false, error: "Entry price and stop loss cannot be equal." };
   }
   if (entryPrice === takeProfitPrice) {
-    return { ok: false, error: "Entry price aur Take Profit barabar nahi ho sakte." };
+    return { ok: false, error: "Entry price and take profit cannot be equal." };
   }
 
   if (side === "long") {
     if (stopLossPrice >= entryPrice) {
-      return { ok: false, error: "Long trade ke liye Stop Loss entry price se neeche hona chahiye." };
+      return { ok: false, error: "For a long, stop loss must be below entry price." };
     }
     if (takeProfitPrice <= entryPrice) {
-      return { ok: false, error: "Long trade ke liye Take Profit entry price se upar hona chahiye." };
+      return { ok: false, error: "For a long, take profit must be above entry price." };
     }
   } else {
     if (stopLossPrice <= entryPrice) {
-      return { ok: false, error: "Short trade ke liye Stop Loss entry price se upar hona chahiye." };
+      return { ok: false, error: "For a short, stop loss must be above entry price." };
     }
     if (takeProfitPrice >= entryPrice) {
-      return { ok: false, error: "Short trade ke liye Take Profit entry price se neeche hona chahiye." };
+      return { ok: false, error: "For a short, take profit must be below entry price." };
     }
   }
 

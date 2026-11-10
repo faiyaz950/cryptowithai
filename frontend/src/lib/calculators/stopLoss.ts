@@ -36,10 +36,10 @@ export function computeStopLoss(i: StopLossInput): StopLossOutcome | null {
   const { side, balance, riskPct, entry, quantity } = i;
   if (![balance, riskPct, entry, quantity].every(Number.isFinite)) return null;
 
-  if (balance <= 0) return { ok: false, error: "Account balance 0 se bada hona chahiye." };
-  if (riskPct <= 0 || riskPct > 100) return { ok: false, error: "Risk % 0 se bada aur 100 se kam ya barabar hona chahiye." };
-  if (entry <= 0) return { ok: false, error: "Entry price 0 se bada hona chahiye." };
-  if (quantity <= 0) return { ok: false, error: "Quantity 0 se badi honi chahiye." };
+  if (balance <= 0) return { ok: false, error: "Account balance must be greater than 0." };
+  if (riskPct <= 0 || riskPct > 100) return { ok: false, error: "Risk % must be greater than 0 and at most 100." };
+  if (entry <= 0) return { ok: false, error: "Entry price must be greater than 0." };
+  if (quantity <= 0) return { ok: false, error: "Quantity must be greater than 0." };
 
   const riskAmount = (balance * riskPct) / 100;
   const riskPerUnit = riskAmount / quantity;
@@ -48,7 +48,7 @@ export function computeStopLoss(i: StopLossInput): StopLossOutcome | null {
   if (stopLoss <= 0) {
     return {
       ok: false,
-      error: `Is quantity par risk per coin (${riskPerUnit.toLocaleString("en-US", { maximumFractionDigits: 4 })}) entry se bada hai, isliye Long ka stop loss 0 ya negative aata hai. Quantity badhao ya risk % ghatao.`,
+      error: `At this quantity, risk per coin (${riskPerUnit.toLocaleString("en-US", { maximumFractionDigits: 4 })}) exceeds entry, so the long stop loss would be zero or negative. Increase quantity or lower risk %.`,
     };
   }
 

@@ -19,7 +19,8 @@ export async function GET() {
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(8000),
     }),
-    // Free tier pe global market_cap_chart PRO-only hai — BTC 7d chart market mood proxy.
+    // Free tier pe global market_cap_chart PRO-only hai.
+    // BTC 7d price = risk/mood proxy only — UI pe "BTC trend proxy" label hota hai.
     fetch(
       "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=7",
       { next: { revalidate: 300 }, signal: AbortSignal.timeout(8000) },

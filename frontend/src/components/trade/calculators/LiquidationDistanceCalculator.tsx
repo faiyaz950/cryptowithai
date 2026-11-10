@@ -111,7 +111,7 @@ export default function LiquidationDistanceCalculator() {
 
       <Field
         label="Entry Price"
-        hint="Position open hone ka price"
+        hint="Price when the position was opened"
         value={entry}
         onChange={setEntry}
         prefix="$"
@@ -131,7 +131,7 @@ export default function LiquidationDistanceCalculator() {
 
       <Field
         label="Liquidation Price"
-        hint="Exchange position ticket ka exact liq price"
+        hint="Exact liq price from the exchange position ticket"
         value={liqPrice}
         onChange={setLiqPrice}
         prefix="$"
@@ -165,7 +165,7 @@ export default function LiquidationDistanceCalculator() {
       <Optional>
         <Field
           label="Stop Loss Price"
-          hint="Verify karein ki SL liquidation se pehle trigger hoga"
+          hint="Confirm stop loss triggers before liquidation"
           value={stopLoss}
           onChange={setStopLoss}
           prefix="$"
@@ -192,7 +192,7 @@ export default function LiquidationDistanceCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Radar}>
-      Entry price, current mark price aur liquidation price enter karein — exact liquidation distance % aur risk alert live dikhega.
+      Enter entry, mark and liquidation price — distance % and risk alerts update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -223,7 +223,7 @@ export default function LiquidationDistanceCalculator() {
         <span>
           <strong>{res.riskTitle}:</strong> {res.riskMessage}
           <div className="mt-1 text-xs opacity-90">
-            *Note: Liquidation price hamesha exchange ke official position ticket ya verified MMR rules ke anusaar confirm karein.
+            *Note: Always confirm liquidation price from the exchange position ticket or verified MMR rules.
           </div>
         </span>
       </Notice>
@@ -234,11 +234,11 @@ export default function LiquidationDistanceCalculator() {
           <span>
             {res.slSafetyStatus === "safe" ? (
               <span className="text-emerald-400">
-                ✓ <strong>Stop Loss Protected:</strong> Aapka Stop Loss ({fmtMoney(n.stopLoss)}) liquidation price ({fmtMoney(res.liqPrice)}) se pehle trigger hoga ({res.slDistanceToLiqPct?.toFixed(2)}% safety cushion).
+                ✓ <strong>Stop Loss Protected:</strong> Your stop ({fmtMoney(n.stopLoss)}) triggers before liquidation ({fmtMoney(res.liqPrice)}) — {res.slDistanceToLiqPct?.toFixed(2)}% cushion.
               </span>
             ) : (
               <span className="text-rose-400">
-                ⚠ <strong>DANGER — SL Invalid:</strong> Aapka Stop Loss liquidation price ke baad pad raha hai! Price wahan pahunchne se pehle hi position liquidate ho jayegi!
+                ⚠ <strong>DANGER — SL Invalid:</strong> Stop is beyond liquidation — you may be liquidated before price reaches it!
               </span>
             )}
           </span>
@@ -345,7 +345,7 @@ export default function LiquidationDistanceCalculator() {
             }
           : null
       }
-      note="Liquidation price exchange ke official position data ya verified exchange-specific formula se lena chahiye. Market volatility aur dynamic funding rates se real liquidation price vary kar sakti hai. Trading advice nahi."
+      note="Use official exchange position data or a verified formula for liquidation. Volatility and funding can shift real liquidation. Not trading advice."
     />
   );
 }

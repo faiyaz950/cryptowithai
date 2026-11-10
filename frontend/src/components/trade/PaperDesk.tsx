@@ -16,11 +16,13 @@ import {
   LogIn,
   Pencil,
   RefreshCw,
+  Share2,
   Target,
   Wallet,
   X,
 } from "lucide-react";
 import PaperOrderEditor, { type PaperEditTarget } from "./PaperOrderEditor";
+import ShareCardModal, { type ShareCardData } from "./ShareCardModal";
 import { PaperTag } from "./ModeTag";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -122,6 +124,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [editing, setEditing] = useState<PaperEditTarget | null>(null);
   const [paperStrategies, setPaperStrategies] = useState<CustomStrategy[]>([]);
+  const [shareData, setShareData] = useState<ShareCardData | null>(null);
 
   const syncPaperStrategies = useCallback(() => {
     setPaperStrategies(listPaperDeployedStrategies());
@@ -147,7 +150,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
       setError(null);
       setUpdatedAt(new Date());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Paper account load nahi hua");
+      setError(err instanceof Error ? err.message : "Could not load paper account");
     } finally {
       setLoading(false);
     }
@@ -175,7 +178,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
 
   const closePosition = async (p: PaperPosition) => {
     if (!token) return;
-    if (!window.confirm(`${symbolLabel(p.symbol)} ki ${p.side === "long" ? "long" : "short"} position (${p.size}) market par band karein?`)) return;
+    if (!window.confirm(`Close ${p.side === "long" ? "long" : "short"} ${symbolLabel(p.symbol)} position (${p.size}) at market?`)) return;
     setBusyId(p.symbol);
     try {
       const res = await placeDemoOrder(token, {
@@ -187,7 +190,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
       flash(res.message || "Position band ho gayi");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Position band nahi hui");
+      setError(err instanceof Error ? err.message : "Could not close position");
     } finally {
       setBusyId(null);
     }
@@ -201,7 +204,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
       flash("Paper order cancel ho gaya");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Cancel nahi hua");
+      setError(err instanceof Error ? err.message : "Cancel failed");
     } finally {
       setBusyId(null);
     }
@@ -216,8 +219,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
               <LogIn className="w-4 h-4" />
             </span>
             <div className="min-w-0">
-              <b>Paper trading ke liye sign in karein</b>
-              <p>Aapke paper orders, positions aur P&amp;L aapke account mein save hote hain.</p>
+              <b>Sign in for paper trading</b>
               <Link href="/login?next=%2Ftrade%3Ftab%3Dtrades" className="trade-btn trade-btn-primary trade-size-sm mt-2">
                 Sign in
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -238,7 +240,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
             <div>
               <h2>Paper trading account <PaperTag className="ml-1.5" /></h2>
               <p>
-                Virtual paisa · asli Delta bhaav · {usd(account?.start_balance ?? 10_000, 0)} se shuru
+                Starts at {usd(account?.start_balance ?? 10_000, 0)}
                 {updatedAt && <> · updated {updatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</>}
               </p>
             </div>
@@ -255,14 +257,6 @@ export default function PaperDesk({ onPickSymbol }: Props) {
           </div>
         </div>
 
-        <div className="pp-banner" role="note">
-          <PaperTag />
-          <span>
-            Neeche ka saara equity aur P&amp;L <b>virtual paisa</b>{" "}ka hai — exchange par kuch nahi gaya. Asli
-            positions aur P&amp;L ke liye upar <b>Exchange</b> tab dekho.
-          </span>
-        </div>
-
         {paperStrategies.length > 0 && (
           <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[12px] my-1">
             <div className="flex items-center gap-2">
@@ -271,7 +265,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                 {paperStrategies.length} Deployed Paper {paperStrategies.length > 1 ? "Strategies" : "Strategy"}:
               </span>
               <span className="text-muted-foreground hidden sm:inline" style={{ color: "var(--text-muted)" }}>
-                Entry/Exit rules ke according virtual signals monitor ho rahe hain
+                Monitoring virtual signals per Entry/Exit rules
               </span>
             </div>
             <button
@@ -336,7 +330,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
             {error ? <AlertCircle className="w-3.5 h-3.5 flex-none" /> : null}
             <span>{error || notice}</span>
             {error && (
-              <button type="button" onClick={() => setError(null)} aria-label="Band karein">
+              <button type="button" onClick={() => setError(null)} aria-label="Close">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -365,9 +359,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
         <div className="p-3">
           {tab === "positions" &&
             (positions.length === 0 ? (
-              <Empty icon={<Wallet className="w-4 h-4" />} title="Koi open paper position nahi">
-                Markets tab ke order ticket mein <b>Paper</b> mode chunein aur Buy/Sell karein.
-              </Empty>
+              <Empty icon={<Wallet className="w-4 h-4" />} title="No open positions" />
             ) : (
               <div className="pp-pos-grid">
                 {positions.map((p) => (
@@ -379,6 +371,25 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                     onClose={() => void closePosition(p)}
                     onBracket={() => setEditing({ kind: "position", position: p })}
                     onChart={() => onPickSymbol?.(p.symbol)}
+                    onShare={() =>
+                      setShareData({
+                        type: "pnl",
+                        symbol: p.symbol,
+                        formattedSymbol: symbolLabel(p.symbol),
+                        side: p.side,
+                        leverage: "1x",
+                        pnl: p.unrealized_pnl,
+                        roiPct: p.move_pct,
+                        entryPrice: p.entry_price,
+                        markPrice: p.mark_price,
+                        targetPrice: p.take_profit,
+                        stopLossPrice: p.stop_loss,
+                        size: p.size,
+                        margin: p.margin,
+                        isClosed: false,
+                        openedAt: p.opened_at,
+                      })
+                    }
                   />
                 ))}
               </div>
@@ -386,9 +397,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
 
           {tab === "strategies" &&
             (paperStrategies.length === 0 ? (
-              <Empty icon={<FlaskConical className="w-4 h-4 text-emerald-400" />} title="Koi Paper Strategy Deployed Nahi Hai">
-                Aap <b>My Strategy</b> ya <b>Strategy Builder / Simulator</b> mein jakar ready-made ya custom strategy ko <b>Deploy to Paper Trading</b> kar sakte hain.
-              </Empty>
+              <Empty icon={<FlaskConical className="w-4 h-4 text-emerald-400" />} title="No paper strategies deployed" />
             ) : (
               <div className="space-y-3">
                 {paperStrategies.map((s) => (
@@ -408,9 +417,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
 
           {tab === "open" &&
             (openOrders.length === 0 ? (
-              <Empty icon={<Clock className="w-4 h-4" />} title="Koi pending limit order nahi">
-                Limit order tab tak yahan rehta hai jab tak bhaav aapki price cross na kare.
-              </Empty>
+              <Empty icon={<Clock className="w-4 h-4" />} title="No pending limit orders" />
             ) : (
               <div className="pp-table-wrap">
                 <table className="pp-table">
@@ -466,9 +473,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
 
           {tab === "history" &&
             (history.length === 0 ? (
-              <Empty icon={<Inbox className="w-4 h-4" />} title="Abhi koi paper order nahi">
-                Pehla paper trade lagate hi uska poora record yahan aayega.
-              </Empty>
+              <Empty icon={<Inbox className="w-4 h-4" />} title="No paper orders yet" />
             ) : (
               <div className="pp-table-wrap">
                 <table className="pp-table">
@@ -483,6 +488,7 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                       <th className="num">Value</th>
                       <th className="num">Paper realized P&amp;L</th>
                       <th>Status</th>
+                      <th />
                     </tr>
                   </thead>
                   <tbody>
@@ -511,6 +517,37 @@ export default function PaperDesk({ onPickSymbol }: Props) {
                             )}
                           </td>
                           <td><StatusBadge status={o.status} /></td>
+                          <td className="num">
+                            <button
+                              type="button"
+                              className="trade-btn trade-size-sm"
+                              title="Share flex card"
+                              onClick={() =>
+                                setShareData({
+                                  type: "pnl",
+                                  symbol: o.symbol,
+                                  formattedSymbol: symbolLabel(o.symbol),
+                                  side: o.side === "buy" ? "long" : "short",
+                                  leverage: "1x",
+                                  pnl: realized ?? 0,
+                                  roiPct:
+                                    o.price && realized != null && o.quantity
+                                      ? (realized / (o.price * o.quantity)) * 100
+                                      : 0,
+                                  entryPrice: o.price,
+                                  markPrice: o.price,
+                                  targetPrice: o.take_profit,
+                                  stopLossPrice: o.stop_loss,
+                                  size: o.quantity,
+                                  isClosed: true,
+                                  openedAt: o.timestamp,
+                                })
+                              }
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              Share
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -520,12 +557,6 @@ export default function PaperDesk({ onPickSymbol }: Props) {
             ))}
         </div>
       </section>
-
-      <p className="pp-footnote">
-        Paper orders exchange par nahi jaate. Market order abhi ke Delta bhaav par fill hota hai; limit order tab
-        fill hota hai jab aap ye page ya orders kholte hain aur bhaav limit cross kar chuka ho. Leverage 1x hai —
-        order value available balance se zyada nahi ho sakti.
-      </p>
 
       {editing && (
         <PaperOrderEditor
@@ -540,6 +571,13 @@ export default function PaperDesk({ onPickSymbol }: Props) {
             flash(msg);
             await load();
           }}
+        />
+      )}
+
+      {shareData && (
+        <ShareCardModal
+          data={shareData}
+          onClose={() => setShareData(null)}
         />
       )}
     </div>
@@ -563,6 +601,7 @@ function PositionCard({
   onClose,
   onBracket,
   onChart,
+  onShare,
 }: {
   p: PaperPosition;
   equity: number;
@@ -570,6 +609,7 @@ function PositionCard({
   onClose: () => void;
   onBracket: () => void;
   onChart: () => void;
+  onShare: () => void;
 }) {
   const share = equity > 0 ? Math.min(100, (p.margin / equity) * 100) : 0;
   return (
@@ -582,6 +622,10 @@ function PositionCard({
           </span>
         </button>
         <span className="pd-actions">
+          <button type="button" className="trade-btn trade-size-sm" onClick={onShare} title="Share aesthetic P&L card">
+            <Share2 className="w-3.5 h-3.5 text-[#f97316]" />
+            Share
+          </button>
           <button type="button" className="trade-btn trade-size-sm" onClick={onBracket}>
             <Target className="w-3.5 h-3.5" />
             Target/SL
@@ -643,12 +687,11 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`trade-badge ${cls}`}>{label[status] ?? status}</span>;
 }
 
-function Empty({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+function Empty({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
     <div className="trade-empty pp-empty">
       <span className="trade-empty-icon">{icon}</span>
       <b>{title}</b>
-      <span>{children}</span>
     </div>
   );
 }

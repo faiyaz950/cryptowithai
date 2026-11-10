@@ -11,6 +11,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  async redirects() {
+    return [
+      { source: "/trade/advanced", destination: "/trade/backtester", permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       {

@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Calculator, Receipt } from "lucide-react";
+import { Calculator, Receipt, Share2 } from "lucide-react";
 import { computePnl, type Side } from "@/lib/calculators/pnl";
 import { fmtMoney, fmtNum, fmtPct, fmtSigned, toNum, tone } from "@/lib/calculators/format";
 import { CalcLayout, Chips, DirectionToggle, EmptyState, Field, Flow, Hero, Notice, Pill, SectionTitle, SideBadge, Stats, Walkthrough } from "./ui";
+import ShareCardModal, { type ShareCardData } from "../ShareCardModal";
 
 const DEFAULTS = { side: "long" as Side, entry: "100", exit: "120", quantity: "10", feePct: "0.05", funding: "0" };
 const FEE_PRESETS = ["0", "0.02", "0.05", "0.1"];
@@ -16,6 +17,7 @@ export default function PnlCalculator() {
   const [quantity, setQuantity] = useState(DEFAULTS.quantity);
   const [feePct, setFeePct] = useState(DEFAULTS.feePct);
   const [funding, setFunding] = useState(DEFAULTS.funding);
+  const [shareData, setShareData] = useState<ShareCardData | null>(null);
 
   const nums = { entry: toNum(entry), exit: toNum(exit), quantity: toNum(quantity), feePct: toNum(feePct, 0), funding: toNum(funding, 0) };
 
@@ -52,11 +54,11 @@ export default function PnlCalculator() {
         <Field label="Entry price" value={entry} onChange={setEntry} prefix="$" min={0} invalid={bad.entry} />
         <Field label="Exit price" value={exit} onChange={setExit} prefix="$" min={0} invalid={bad.exit} />
       </div>
-      <Field label="Quantity" hint="Coins / contracts ki sankhya" value={quantity} onChange={setQuantity} min={0} invalid={bad.quantity} />
+      <Field label="Quantity" hint="Number of coins or contracts" value={quantity} onChange={setQuantity} min={0} invalid={bad.quantity} />
       <div>
         <Field
           label="Trading fee (per side)"
-          hint="Entry aur exit — dono par lagta hai. Apne exchange ka taker / maker fee daalein."
+          hint="Applies to entry and exit. Enter your exchange taker/maker fee."
           value={feePct}
           onChange={setFeePct}
           suffix="%"
@@ -68,7 +70,7 @@ export default function PnlCalculator() {
       <Field
         label="Funding fee"
         optional
-        hint="Kul funding kharcha $ mein. Diya = plus, mila = minus (−)."
+        hint="Total funding cost in $. Paid = positive, received = negative (−)."
         value={funding}
         onChange={setFunding}
         prefix="$"
@@ -77,7 +79,7 @@ export default function PnlCalculator() {
   );
 
   const body = !result ? (
-    <EmptyState icon={Calculator}>Entry, exit aur quantity daalein — result yahan live dikhega.</EmptyState>
+    <EmptyState icon={Calculator}>Enter entry, exit and quantity — results update live here.</EmptyState>
   ) : (
     <div className="cx-body">
       <Hero
@@ -92,7 +94,7 @@ export default function PnlCalculator() {
         }
       />
 
-      <SectionTitle>Gross se net tak</SectionTitle>
+      <SectionTitle>From gross to net</SectionTitle>
       <Flow
         rows={[
           { label: "Gross P&L", value: result.gross, text: fmtSigned(result.gross) },
@@ -129,22 +131,63 @@ export default function PnlCalculator() {
           { title: "ROI % = Net P&L ÷ Initial position value × 100", math: `${fmtSigned(result.net)} ÷ ${fmtMoney(result.positionValue)} × 100 = ${fmtPct(result.roiPct)}` },
         ]}
       />
-      {Math.abs(result.net) < 0.005 && <Notice kind="info">Net P&L lagbhag zero hai — fees aur funding ne poora gross kha liya.</Notice>}
+      {Math.abs(result.net) < 0.005 && <Notice kind="info">Net P&L is roughly zero — fees and funding consumed the gross.</Notice>}
     </div>
   );
 
   return (
-    <CalcLayout
-      inputsTitle="Trade details"
-      inputsIcon={Calculator}
-      onReset={reset}
-      inputs={inputs}
-      resultTitle="Result"
-      resultIcon={Receipt}
-      badge={<SideBadge side={side} />}
-      result={body}
-      dock={result ? { label: "Net P&L", value: fmtSigned(result.net), sub: `${fmtPct(result.roiPct)} ROI`, tone: t } : null}
-      note="Estimate hai — exchange ka asli fee, slippage aur funding timing alag ho sakte hain. Trading advice nahi."
-    />
+    <>
+      <CalcLayout
+        inputsTitle="Trade details"
+        inputsIcon={Calculator}
+        onReset={reset}
+        inputs={inputs}
+        resultTitle="Result"
+        resultIcon={Receipt}
+        badge={<SideBadge side={side} />}
+        actions={
+          result ? (
+            <button
+              type="button"
+              className="cx-chip"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                height: 26,
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--accent)",
+              }}
+              title="Export aesthetic card"
+              onClick={() =>
+                setShareData({
+                  type: "pnl",
+                  symbol: "CRYPTO PERP",
+                  formattedSymbol: `${side.toUpperCase()} SETUP`,
+                  side,
+                  pnl: result.net,
+                  roiPct: result.roiPct,
+                  entryPrice: nums.entry,
+                  markPrice: nums.exit,
+                  size: nums.quantity,
+                  margin: nums.entry * nums.quantity,
+                  isClosed: true,
+                })
+              }
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              Share Card
+            </button>
+          ) : null
+        }
+        result={body}
+        dock={result ? { label: "Net P&L", value: fmtSigned(result.net), sub: `${fmtPct(result.roiPct)} ROI`, tone: t } : null}
+        note="Estimate only — actual fees, slippage and funding timing may differ. Not trading advice."
+      />
+      {shareData && (
+        <ShareCardModal data={shareData} onClose={() => setShareData(null)} />
+      )}
+    </>
   );
 }

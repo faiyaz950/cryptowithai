@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Crown, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Crown, Share2, SlidersHorizontal, Sparkles } from "lucide-react";
 import { computeMukulRisk } from "@/lib/calculators/mukulRisk";
 import { fmtMoney, fmtNum, fmtQty, fmtRatio, fmtSigned, toNum } from "@/lib/calculators/format";
 import {
@@ -22,6 +22,7 @@ import {
   Stats,
   Walkthrough,
 } from "./ui";
+import ShareCardModal, { type ShareCardData } from "../ShareCardModal";
 
 const DEFAULTS = {
   side: "long" as const,
@@ -78,6 +79,7 @@ export default function MukulRiskCalculator() {
   const [takeProfitPrice, setTakeProfitPrice] = useState(DEFAULTS.takeProfitPrice);
   const [leverage, setLeverage] = useState(DEFAULTS.leverage);
   const [feePct, setFeePct] = useState(DEFAULTS.feePct);
+  const [shareData, setShareData] = useState<ShareCardData | null>(null);
 
   const n = {
     balance: toNum(balance),
@@ -140,7 +142,7 @@ export default function MukulRiskCalculator() {
 
       <Field
         label="Account Balance"
-        hint="Aapke trading account ka kul balance"
+        hint="Total balance in your trading account"
         value={balance}
         onChange={setBalance}
         prefix="$"
@@ -151,7 +153,7 @@ export default function MukulRiskCalculator() {
       <div>
         <Field
           label="Risk per Trade"
-          hint="Ek trade par kitna % capital risk karna hai"
+          hint="Percent of capital to risk on one trade"
           value={riskPct}
           onChange={setRiskPct}
           suffix="%"
@@ -177,7 +179,7 @@ export default function MukulRiskCalculator() {
 
       <Field
         label="Entry Price"
-        hint="Jis price par buy ya short karenge"
+        hint="Price at which you will buy or short"
         value={entryPrice}
         onChange={setEntryPrice}
         prefix="$"
@@ -187,7 +189,7 @@ export default function MukulRiskCalculator() {
 
       <Field
         label="Stop Loss Price"
-        hint={side === "long" ? "Entry se neeche ka exit point" : "Entry se upar ka exit point"}
+        hint={side === "long" ? "Exit below entry" : "Exit above entry"}
         value={stopLossPrice}
         onChange={setStopLossPrice}
         prefix="$"
@@ -197,7 +199,7 @@ export default function MukulRiskCalculator() {
 
       <Field
         label="Take Profit Price"
-        hint={side === "long" ? "Entry se upar ka profit target" : "Entry se neeche ka profit target"}
+        hint={side === "long" ? "Profit target above entry" : "Profit target below entry"}
         value={takeProfitPrice}
         onChange={setTakeProfitPrice}
         prefix="$"
@@ -265,7 +267,7 @@ export default function MukulRiskCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Crown}>
-      Account balance, risk %, entry, stop loss aur take profit daal kar complete position plan ek hi screen par dekhein.
+      Enter balance, risk %, entry, stop loss and take profit to see a full position plan on one screen.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -297,10 +299,10 @@ export default function MukulRiskCalculator() {
       {/* Risk vs Reward Metric Notice */}
       <Notice kind={res.riskRewardRatio >= 2 ? "info" : res.riskRewardRatio >= 1.5 ? "info" : "warn"}>
         <span>
-          <strong>Trade Setup Edge:</strong> Aap <strong>{fmtMoney(res.riskAmount)}</strong> ({fmtNum(res.riskPct)}% account) risk kar rahe hain{" "}
-          <strong className="text-emerald-400">+{fmtMoney(res.potentialProfit)}</strong> (+{res.roiOnAccountProfit.toFixed(1)}% gain) kamane ke liye.
-          Is <strong>{rrRatioLabel}</strong> R:R setup mein break-even rehne ke liye aapko sirf{" "}
-          <strong>{res.breakevenWinRate.toFixed(1)}% win rate</strong> chahiye.
+          <strong>Trade Setup Edge:</strong> You are risking <strong>{fmtMoney(res.riskAmount)}</strong> ({fmtNum(res.riskPct)}% of account){" "}
+          <strong className="text-emerald-400">+{fmtMoney(res.potentialProfit)}</strong> (+{res.roiOnAccountProfit.toFixed(1)}% gain) to earn.
+          In this <strong>{rrRatioLabel}</strong> R:R setup you only need a{" "}
+          <strong>{res.breakevenWinRate.toFixed(1)}% win rate</strong> to break even.
         </span>
       </Notice>
 
@@ -312,11 +314,11 @@ export default function MukulRiskCalculator() {
             <strong>{fmtMoney(res.estimatedLiqPrice)}</strong> ({res.liqDistancePct?.toFixed(1)}% away).
             {res.isSafeFromLiquidation ? (
               <span className="text-emerald-400">
-                {" "}✓ Safe: Aapka Stop Loss ({fmtMoney(res.stopLossPrice)}) liquidation se pehle trigger hoga.
+                {" "}✓ Safe: Your stop loss ({fmtMoney(res.stopLossPrice)}) triggers before liquidation.
               </span>
             ) : (
               <span className="text-rose-400">
-                {" "}⚠ Danger: Stop Loss liquidation price ke baad pad raha hai! Pehle liquidate ho jayenge.
+                {" "}⚠ Danger: Stop loss is beyond liquidation price — you may be liquidated first.
               </span>
             )}
           </span>
@@ -405,26 +407,69 @@ export default function MukulRiskCalculator() {
   );
 
   return (
-    <CalcLayout
-      inputsTitle="All-in-one trade levels"
-      inputsIcon={SlidersHorizontal}
-      onReset={reset}
-      inputs={inputs}
-      resultTitle="Mukul Risk Engine"
-      resultIcon={Crown}
-      badge={<Pill tone={res && res.riskRewardRatio >= 2 ? "up" : "flat"}>{res ? `R:R ${rrRatioLabel}` : "👑 Flagship"}</Pill>}
-      result={body}
-      dock={
-        res
-          ? {
-              label: "Position Size",
-              value: `${fmtQty(res.positionSize)} coins`,
-              sub: `Risk: ${fmtMoney(res.riskAmount)} · R:R ${rrRatioLabel}`,
-              tone: "up",
-            }
-          : null
-      }
-      note="Mukul Crypto Club flagship risk formula: Position sizing accounts for account risk first — market chahe kitna bhi volatile ho, predetermined stop-loss se zyada loss nahi ho sakta. Trading advice nahi."
-    />
+    <>
+      <CalcLayout
+        inputsTitle="All-in-one trade levels"
+        inputsIcon={SlidersHorizontal}
+        onReset={reset}
+        inputs={inputs}
+        resultTitle="Mukul Risk Engine"
+        resultIcon={Crown}
+        badge={<Pill tone={res && res.riskRewardRatio >= 2 ? "up" : "flat"}>{res ? `R:R ${rrRatioLabel}` : "👑 Flagship"}</Pill>}
+        actions={
+          res ? (
+            <button
+              type="button"
+              className="cx-chip"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                height: 26,
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--accent)",
+              }}
+              title="Export aesthetic card"
+              onClick={() =>
+                setShareData({
+                  type: "plan",
+                  symbol: "CRYPTO PLAN",
+                  formattedSymbol: `${side.toUpperCase()} RISK SETUP`,
+                  side,
+                  calcName: "Mukul Risk Architecture",
+                  riskReward: rrRatioLabel,
+                  riskAmount: res.riskAmount,
+                  rewardAmount: res.potentialProfit,
+                  entryPrice: res.entryPrice,
+                  targetPrice: res.takeProfitPrice,
+                  stopLossPrice: res.stopLossPrice,
+                  breakEven: res.entryPrice,
+                  roiPct: res.positionValue > 0 ? (res.potentialProfit / res.positionValue) * 100 : null,
+                })
+              }
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              Share Plan
+            </button>
+          ) : null
+        }
+        result={body}
+        dock={
+          res
+            ? {
+                label: "Position Size",
+                value: `${fmtQty(res.positionSize)} coins`,
+                sub: `Risk: ${fmtMoney(res.riskAmount)} · R:R ${rrRatioLabel}`,
+                tone: "up",
+              }
+            : null
+        }
+        note="Mukul Crypto Club flagship risk formula: position sizing caps risk first — regardless of volatility, loss at your stop cannot exceed what you planned. Not trading advice."
+      />
+      {shareData && (
+        <ShareCardModal data={shareData} onClose={() => setShareData(null)} />
+      )}
+    </>
   );
 }

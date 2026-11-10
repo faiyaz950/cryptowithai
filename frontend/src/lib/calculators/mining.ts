@@ -108,10 +108,10 @@ export function computeMining(input: MiningInput): MiningOutcome | null {
     return null;
   }
 
-  if (hashrate <= 0) return { ok: false, error: "Hashrate 0 se zyada hona chahiye." };
-  if (powerWatts < 0) return { ok: false, error: "Power consumption negative nahi ho sakti." };
-  if (electricityRateKwh < 0) return { ok: false, error: "Electricity rate negative nahi ho sakti." };
-  if (coinPrice <= 0) return { ok: false, error: "Coin price 0 se zyada honi chahiye." };
+  if (hashrate <= 0) return { ok: false, error: "Hashrate must be greater than 0." };
+  if (powerWatts < 0) return { ok: false, error: "Power consumption cannot be negative." };
+  if (electricityRateKwh < 0) return { ok: false, error: "Electricity rate cannot be negative." };
+  if (coinPrice <= 0) return { ok: false, error: "Coin price must be greater than 0." };
 
   const dailyKwh = (powerWatts / 1000) * 24;
   const monthlyKwh = dailyKwh * 30.5;

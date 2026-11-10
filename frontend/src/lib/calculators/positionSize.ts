@@ -53,14 +53,14 @@ export type PositionSizeOutcome =
 export function computePositionSize(i: PositionSizeInput): PositionSizeOutcome | null {
   const { balance, riskPct, entry, stopLoss, feePct, slippagePct, leverage } = i;
   if (![balance, riskPct, entry, stopLoss].every(Number.isFinite)) return null;
-  if (!Number.isFinite(feePct) || !Number.isFinite(slippagePct)) return { ok: false, error: "Fee aur slippage number hone chahiye." };
+  if (!Number.isFinite(feePct) || !Number.isFinite(slippagePct)) return { ok: false, error: "Fee and slippage must be numbers." };
 
-  if (balance <= 0) return { ok: false, error: "Account balance 0 se bada hona chahiye." };
-  if (riskPct <= 0 || riskPct > 100) return { ok: false, error: "Risk % 0 se bada aur 100 se kam ya barabar hona chahiye." };
-  if (entry <= 0 || stopLoss <= 0) return { ok: false, error: "Entry aur stop loss price 0 se bade hone chahiye." };
-  if (entry === stopLoss) return { ok: false, error: "Stop loss entry ke barabar nahi ho sakta — risk per unit 0 ho jayega." };
-  if (feePct < 0 || slippagePct < 0) return { ok: false, error: "Fee aur slippage negative nahi ho sakte." };
-  if (feePct >= 100) return { ok: false, error: "Fee 100% se kam hona chahiye." };
+  if (balance <= 0) return { ok: false, error: "Account balance must be greater than 0." };
+  if (riskPct <= 0 || riskPct > 100) return { ok: false, error: "Risk % must be greater than 0 and at most 100." };
+  if (entry <= 0 || stopLoss <= 0) return { ok: false, error: "Entry and stop-loss prices must be greater than 0." };
+  if (entry === stopLoss) return { ok: false, error: "Stop loss cannot equal entry — risk per unit would be 0." };
+  if (feePct < 0 || slippagePct < 0) return { ok: false, error: "Fee and slippage cannot be negative." };
+  if (feePct >= 100) return { ok: false, error: "Fee must be less than 100%." };
 
   const side = stopLoss < entry ? "long" : "short";
   const f = feePct / 100;
@@ -74,7 +74,7 @@ export function computePositionSize(i: PositionSizeInput): PositionSizeOutcome |
   const feePerUnit = f * (fillEntry + fillStop);
   const slipPerUnit = Math.abs(fillEntry - entry) + Math.abs(fillStop - stopLoss);
   const effectiveRiskPerUnit = Math.abs(fillEntry - fillStop) + feePerUnit;
-  if (!(effectiveRiskPerUnit > 0)) return { ok: false, error: "Risk per unit nikal nahi paya — inputs check karein." };
+  if (!(effectiveRiskPerUnit > 0)) return { ok: false, error: "Could not compute risk per unit — check inputs." };
 
   const quantity = riskAmount / effectiveRiskPerUnit;
   const positionValue = quantity * entry;

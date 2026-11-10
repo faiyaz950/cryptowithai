@@ -83,7 +83,7 @@ export function computeConversion(input: ConverterInput): ConverterOutcome | nul
   if (!from || !to) return null;
   if (!Number.isFinite(amount)) return null;
   if (amount <= 0) {
-    return { ok: false, error: "Conversion amount 0 se bada hona chahiye." };
+    return { ok: false, error: "Conversion amount must be greater than 0." };
   }
 
   const fromItem = SUPPORTED_CURRENCIES.find((c) => c.code === from) ?? {
@@ -104,7 +104,7 @@ export function computeConversion(input: ConverterInput): ConverterOutcome | nul
   const toPriceUsd = rates[to] ?? toItem.defaultPriceUsd;
 
   if (fromPriceUsd <= 0 || toPriceUsd <= 0) {
-    return { ok: false, error: "Price data available nahi hai." };
+    return { ok: false, error: "Price data is not available." };
   }
 
   // Rate: How many 'To' units for 1 'From' unit

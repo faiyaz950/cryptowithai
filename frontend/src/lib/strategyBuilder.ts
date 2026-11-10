@@ -6,7 +6,7 @@
 import { Wand2 } from "lucide-react";
 import type { Candle } from "./cryptoApi";
 import { CRYPTO_SYMBOLS, symbolLabel } from "./cryptoApi";
-import { atr, crossDirection, ema, macd, rsi } from "./indicators";
+import { adx, atr, crossDirection, ema, macd, rsi, type Bar } from "./indicators";
 import {
   num,
   str,
@@ -99,13 +99,24 @@ export const STRATEGY_CATEGORIES: {
 
 export type IndicatorId =
   | "rsi"
+  | "stoch"
   | "ema"
+  | "sma"
   | "macd"
   | "macd_line"
   | "macd_signal"
   | "macd_hist"
   | "macd_highest"
   | "atr"
+  | "adx"
+  | "plus_di"
+  | "minus_di"
+  | "bb_mid"
+  | "bb_upper"
+  | "bb_lower"
+  | "highest"
+  | "lowest"
+  | "roc"
   | "price"
   | "volume"
   | "price_volume";
@@ -117,7 +128,7 @@ export type CompareOp =
   | "below"
   | "equals";
 
-export type CompareTarget = "value" | "ema" | "price";
+export type CompareTarget = "value" | "ema" | "sma" | "price";
 
 export type TpUnit = "%" | "pts" | "price" | "rr";
 export type SlUnit = "atr" | "%" | "pts" | "price";
@@ -157,6 +168,8 @@ export interface MarketConfig {
 export interface SignalConfig {
   triggerType: TriggerType;
   entryGroups: ConditionGroup[];
+  /** Extra close rules. Empty means only the risk exits apply. */
+  exitGroups?: ConditionGroup[];
   exitOnSignal: boolean;
   exitOnReversal: boolean;
   /** Time trigger: HH:MM IST — desk ka timezone (dekho DESK_TZ). */
@@ -222,17 +235,29 @@ export interface LiveEval {
 
 /* ── Catalogs ───────────────────────────────────────────── */
 
-export const INDICATOR_OPTIONS: { value: IndicatorId; label: string; defaultPeriod: number }[] = [
-  { value: "rsi", label: "RSI", defaultPeriod: 14 },
-  { value: "ema", label: "EMA", defaultPeriod: 21 },
-  { value: "macd", label: "MACD", defaultPeriod: 12 },
-  { value: "macd_line", label: "MACD Line", defaultPeriod: 12 },
-  { value: "macd_signal", label: "Signal Line", defaultPeriod: 9 },
-  { value: "macd_highest", label: "Highest MACD", defaultPeriod: 20 },
-  { value: "atr", label: "ATR", defaultPeriod: 14 },
-  { value: "price_volume", label: "Price & Volume", defaultPeriod: 20 },
-  { value: "price", label: "Price", defaultPeriod: 1 },
-  { value: "volume", label: "Volume", defaultPeriod: 1 },
+export const INDICATOR_OPTIONS: { value: IndicatorId; label: string; defaultPeriod: number; group: string }[] = [
+  { value: "price", label: "Price", defaultPeriod: 1, group: "Price" },
+  { value: "highest", label: "Highest high", defaultPeriod: 20, group: "Price" },
+  { value: "lowest", label: "Lowest low", defaultPeriod: 20, group: "Price" },
+  { value: "roc", label: "Rate of change", defaultPeriod: 10, group: "Price" },
+  { value: "ema", label: "EMA", defaultPeriod: 21, group: "Trend" },
+  { value: "sma", label: "SMA", defaultPeriod: 20, group: "Trend" },
+  { value: "adx", label: "ADX", defaultPeriod: 14, group: "Trend" },
+  { value: "plus_di", label: "+DI", defaultPeriod: 14, group: "Trend" },
+  { value: "minus_di", label: "−DI", defaultPeriod: 14, group: "Trend" },
+  { value: "bb_mid", label: "Bollinger mid", defaultPeriod: 20, group: "Bands" },
+  { value: "bb_upper", label: "Bollinger upper", defaultPeriod: 20, group: "Bands" },
+  { value: "bb_lower", label: "Bollinger lower", defaultPeriod: 20, group: "Bands" },
+  { value: "rsi", label: "RSI", defaultPeriod: 14, group: "Momentum" },
+  { value: "stoch", label: "Stochastic %K", defaultPeriod: 14, group: "Momentum" },
+  { value: "macd", label: "MACD", defaultPeriod: 12, group: "Momentum" },
+  { value: "macd_line", label: "MACD line", defaultPeriod: 12, group: "Momentum" },
+  { value: "macd_signal", label: "Signal line", defaultPeriod: 9, group: "Momentum" },
+  { value: "macd_hist", label: "MACD histogram", defaultPeriod: 9, group: "Momentum" },
+  { value: "macd_highest", label: "Highest MACD", defaultPeriod: 20, group: "Momentum" },
+  { value: "atr", label: "ATR", defaultPeriod: 14, group: "Volatility" },
+  { value: "volume", label: "Volume", defaultPeriod: 1, group: "Volume" },
+  { value: "price_volume", label: "Price × volume", defaultPeriod: 20, group: "Volume" },
 ];
 
 export const OPERATOR_OPTIONS: { value: CompareOp; label: string }[] = [
@@ -246,6 +271,7 @@ export const OPERATOR_OPTIONS: { value: CompareOp; label: string }[] = [
 export const COMPARE_OPTIONS: { value: CompareTarget; label: string }[] = [
   { value: "value", label: "Value" },
   { value: "ema", label: "EMA" },
+  { value: "sma", label: "SMA" },
   { value: "price", label: "Price" },
 ];
 
@@ -318,6 +344,7 @@ export function defaultSignal(): SignalConfig {
   return {
     triggerType: "indicator",
     entryGroups: [newGroup()],
+    exitGroups: [],
     exitOnSignal: true,
     exitOnReversal: false,
     entryTime: "09:30",
@@ -421,7 +448,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     id: "rsi-oversold-long",
     name: "RSI Oversold Long",
     strategyType: "indicators",
-    blurb: "RSI 14 jab oversold zone (< 32) mein dip kare to long entry — classic mean-reversion.",
+    blurb: "Long when RSI 14 dips into oversold (< 32) — classic mean reversion.",
     tag: "Mean reversion",
     accent: "#059669",
     apply: (symbol) =>
@@ -862,13 +889,28 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     id: "blank",
     name: "Start from scratch",
     strategyType: "indicators",
-    blurb: "Khali cockpit — strategy type, rules, indicators aur parameters khud define karo.",
+    blurb: "Blank cockpit — define strategy type, rules, indicators, and parameters yourself.",
     tag: "Custom",
     accent: "#64748b",
     apply: (symbol) => {
       const s = createBlankStrategy(symbol);
       s.name = "";
       s.description = "";
+      s.signal.entryGroups = [
+        newGroup({
+          conditions: [
+            newCondition({
+              indicator: "price",
+              period: 1,
+              operator: "crosses_above",
+              compareTo: "ema",
+              comparePeriod: 21,
+              value: 0,
+            }),
+          ],
+        }),
+      ];
+      s.signal.exitGroups = [];
       return s;
     },
   },
@@ -979,27 +1021,27 @@ export function validateStrategy(s: CustomStrategy): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   if (!s.name.trim()) {
-    issues.push({ level: "error", field: "name", message: "Strategy ka naam zaroori hai" });
+    issues.push({ level: "error", field: "name", message: "Strategy name is required" });
   }
   if (!s.market.symbols.length) {
-    issues.push({ level: "error", field: "symbols", message: "Kam se kam ek coin select karo" });
+    issues.push({ level: "error", field: "symbols", message: "Select at least one coin" });
   }
   if (s.market.leverage < 1 || s.market.leverage > 100) {
-    issues.push({ level: "error", field: "leverage", message: "Leverage 1x–100x ke beech hona chahiye" });
+    issues.push({ level: "error", field: "leverage", message: "Leverage must be between 1x and 100x" });
   }
 
   if (s.signal.triggerType === "indicator") {
     const conds = s.signal.entryGroups.flatMap((g) => g.conditions);
     if (!conds.length) {
-      issues.push({ level: "error", field: "entry", message: "Kam se kam ek entry condition add karo" });
+      issues.push({ level: "error", field: "entry", message: "Add at least one entry condition" });
     }
     for (const c of conds) {
       if (c.period < 1) {
-        issues.push({ level: "error", field: "entry", message: "Indicator period ≥ 1 hona chahiye" });
+        issues.push({ level: "error", field: "entry", message: "Indicator period must be ≥ 1" });
       }
     }
   } else if (!s.signal.entryTime) {
-    issues.push({ level: "error", field: "entry", message: "Entry time set karo" });
+    issues.push({ level: "error", field: "entry", message: "Set an entry time" });
   }
 
   if (!s.risk.takeProfit.enabled && !s.risk.stopLoss.enabled) {
@@ -1013,7 +1055,7 @@ export function validateStrategy(s: CustomStrategy): ValidationIssue[] {
     issues.push({
       level: "warning",
       field: "risk",
-      message: "Live safety off hai aur stop-loss bhi nahi — risky",
+      message: "Live safety is off and there is no stop-loss — risky",
     });
   }
   if (s.risk.takeProfit.enabled && s.risk.stopLoss.enabled && s.risk.takeProfit.unit === "%" && s.risk.stopLoss.unit === "%") {
@@ -1021,15 +1063,22 @@ export function validateStrategy(s: CustomStrategy): ValidationIssue[] {
       issues.push({
         level: "warning",
         field: "risk",
-        message: "Take-profit stop-loss se chhota hai (R:R < 1)",
+        message: "Take-profit is smaller than stop-loss (R:R < 1)",
       });
     }
   }
-  if (s.market.instrument === "options") {
+  if (s.market.instrument === "options" || s.market.strategyType === "options") {
     issues.push({
       level: "warning",
       field: "market",
-      message: "Options builder abhi beta hai — signal logic perps jaisa evaluate hoga",
+      message: "The candle test scores your entry rules on price. It does not price option legs or IV.",
+    });
+  }
+  if (s.market.strategyType === "hedging") {
+    issues.push({
+      level: "warning",
+      field: "market",
+      message: "The candle test scores the entry rules on the chart coin. The hedge ratio is saved with the strategy and is not a second fill.",
     });
   }
 
@@ -1054,6 +1103,7 @@ function conditionPhrase(c: Condition): string {
   let right: string;
   if (c.compareTo === "value") right = String(c.value);
   else if (c.compareTo === "ema") right = `EMA ${c.comparePeriod}`;
+  else if (c.compareTo === "sma") right = `SMA ${c.comparePeriod}`;
   else right = "price";
   return `${left} ${op} ${right}`;
 }
@@ -1108,6 +1158,12 @@ export function summarizeStrategy(s: CustomStrategy): string {
   }
   if (s.risk.trailing) exits.push(`trailing ${s.risk.trailingPct}%`);
   if (s.risk.timeStop) exits.push(`time-stop after ${s.risk.timeStopCandles} candles`);
+  if (s.signal.exitGroups?.length) {
+    const exitParts = s.signal.exitGroups.map((g) =>
+      g.conditions.map(conditionPhrase).join(` ${g.join.toUpperCase()} `),
+    );
+    exits.push(`close when ${exitParts.join(" OR ")}`);
+  }
   if (s.signal.exitOnReversal) exits.push("exit on reversal");
   if (s.signal.exitOnSignal) exits.push("exit on opposite signal");
 
@@ -1117,6 +1173,76 @@ export function summarizeStrategy(s: CustomStrategy): string {
 }
 
 /* ── Live evaluation ────────────────────────────────────── */
+
+/* ── Indicator series ───────────────────────────────────── */
+
+function sma(values: number[], period: number): (number | null)[] {
+  const out: (number | null)[] = values.map(() => null);
+  const span = Math.max(1, period);
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= span) sum -= values[i - span];
+    if (i >= span - 1) out[i] = sum / span;
+  }
+  return out;
+}
+
+function windowExtreme(candles: Candle[], period: number, kind: "high" | "low"): (number | null)[] {
+  const out: (number | null)[] = candles.map(() => null);
+  const span = Math.max(1, period);
+  for (let i = 0; i < candles.length; i++) {
+    const start = Math.max(0, i - span + 1);
+    let extreme = kind === "high" ? -Infinity : Infinity;
+    for (let k = start; k <= i; k++) {
+      const v = kind === "high" ? candles[k].high : candles[k].low;
+      extreme = kind === "high" ? Math.max(extreme, v) : Math.min(extreme, v);
+    }
+    out[i] = extreme;
+  }
+  return out;
+}
+
+function stochasticK(candles: Candle[], period: number): (number | null)[] {
+  const highs = windowExtreme(candles, period, "high");
+  const lows = windowExtreme(candles, period, "low");
+  return candles.map((c, i) => {
+    const hi = highs[i];
+    const lo = lows[i];
+    if (hi == null || lo == null || hi === lo) return null;
+    return ((c.close - lo) / (hi - lo)) * 100;
+  });
+}
+
+function rateOfChange(values: number[], period: number): (number | null)[] {
+  const span = Math.max(1, period);
+  return values.map((v, i) => {
+    if (i < span) return null;
+    const base = values[i - span];
+    if (!base) return null;
+    return ((v - base) / base) * 100;
+  });
+}
+
+function bollinger(values: number[], period: number): { mid: (number | null)[]; upper: (number | null)[]; lower: (number | null)[] } {
+  const mid = sma(values, period);
+  const span = Math.max(1, period);
+  const upper: (number | null)[] = values.map(() => null);
+  const lower: (number | null)[] = values.map(() => null);
+  for (let i = span - 1; i < values.length; i++) {
+    const mean = mid[i];
+    if (mean == null) continue;
+    let acc = 0;
+    for (let k = i - span + 1; k <= i; k++) {
+      const d = values[k] - mean;
+      acc += d * d;
+    }
+    const sd = Math.sqrt(acc / span);
+    upper[i] = mean + 2 * sd;
+    lower[i] = mean - 2 * sd;
+  }
+  return { mid, upper, lower };
+}
 
 function seriesFor(
   indicator: IndicatorId,
@@ -1128,10 +1254,36 @@ function seriesFor(
   switch (indicator) {
     case "rsi":
       return rsi(closes, period);
+    case "stoch":
+      return stochasticK(candles, period);
     case "ema":
       return ema(closes, period);
+    case "sma":
+      return sma(closes, period);
     case "atr":
-      return atr(candles, period);
+      return atr(candles as Bar[], period);
+    case "adx":
+    case "plus_di":
+    case "minus_di": {
+      const points = adx(candles as Bar[], period);
+      if (indicator === "plus_di") return points.map((p) => p.plusDi);
+      if (indicator === "minus_di") return points.map((p) => p.minusDi);
+      return points.map((p) => p.adx);
+    }
+    case "bb_mid":
+    case "bb_upper":
+    case "bb_lower": {
+      const bands = bollinger(closes, period);
+      if (indicator === "bb_upper") return bands.upper;
+      if (indicator === "bb_lower") return bands.lower;
+      return bands.mid;
+    }
+    case "highest":
+      return windowExtreme(candles, period, "high");
+    case "lowest":
+      return windowExtreme(candles, period, "low");
+    case "roc":
+      return rateOfChange(closes, period);
     case "price":
       return closes;
     case "volume":
@@ -1181,7 +1333,16 @@ function compareSeries(
 ): (number | null)[] {
   if (compareTo === "value") return closes.map(() => value);
   if (compareTo === "ema") return ema(closes, comparePeriod);
+  if (compareTo === "sma") return sma(closes, comparePeriod);
   return closes;
+}
+
+function flipOp(op: CompareOp): CompareOp {
+  if (op === "crosses_above") return "crosses_below";
+  if (op === "crosses_below") return "crosses_above";
+  if (op === "above") return "below";
+  if (op === "below") return "above";
+  return op;
 }
 
 function evalCondition(
@@ -1190,6 +1351,7 @@ function evalCondition(
   volumes: number[],
   candles: Candle[],
   i: number,
+  flip = false,
 ): boolean {
   if (i < 1) return false;
   const left = seriesFor(c.indicator, c.period, closes, volumes, candles);
@@ -1199,8 +1361,9 @@ function evalCondition(
   const bPrev = right[i - 1];
   const bNow = right[i];
   if (aNow == null || bNow == null) return false;
+  const op = flip ? flipOp(c.operator) : c.operator;
 
-  switch (c.operator) {
+  switch (op) {
     case "crosses_above":
       return crossDirection(aPrev, aNow, bPrev, bNow) === "up";
     case "crosses_below":
@@ -1222,14 +1385,15 @@ function evalGroups(
   volumes: number[],
   candles: Candle[],
   i: number,
+  flip = false,
 ): boolean {
   if (!groups.length) return false;
   return groups.some((g) => {
     if (!g.conditions.length) return false;
     if (g.join === "or") {
-      return g.conditions.some((c) => evalCondition(c, closes, volumes, candles, i));
+      return g.conditions.some((c) => evalCondition(c, closes, volumes, candles, i, flip));
     }
-    return g.conditions.every((c) => evalCondition(c, closes, volumes, candles, i));
+    return g.conditions.every((c) => evalCondition(c, closes, volumes, candles, i, flip));
   });
 }
 
@@ -1238,7 +1402,7 @@ export function evaluateStrategyLive(s: CustomStrategy, candles: Candle[]): Live
     return {
       tone: "neutral",
       headline: "Waiting for data",
-      detail: "Signal evaluate karne ke liye zyada candles chahiye.",
+      detail: "Need more candles to evaluate the signal.",
       readouts: [],
     };
   }
@@ -1247,6 +1411,9 @@ export function evaluateStrategyLive(s: CustomStrategy, candles: Candle[]): Live
   const volumes = candles.map((c) => c.volume ?? 0);
   const i = candles.length - 1;
   const fired = evalGroups(s.signal.entryGroups, closes, volumes, candles, i);
+  const shortFired = s.market.direction === "both"
+    ? evalGroups(s.signal.entryGroups, closes, volumes, candles, i, true)
+    : false;
 
   const rsi14 = rsi(closes, 14);
   const ema21 = ema(closes, 21);
@@ -1273,7 +1440,19 @@ export function evaluateStrategyLive(s: CustomStrategy, candles: Candle[]): Live
   const wantsLong = s.market.direction !== "short";
   const wantsShort = s.market.direction !== "long";
 
-  if (fired && wantsLong) {
+  if (s.market.direction === "both") {
+    if (fired && !shortFired) {
+      return { tone: "buy", headline: "Entry long", detail: "The long rules are true on this bar. The short side is the same rules, flipped.", readouts };
+    }
+    if (shortFired && !fired) {
+      return { tone: "sell", headline: "Entry short", detail: "The flipped rules are true on this bar.", readouts };
+    }
+    if (fired && shortFired) {
+      return { tone: "buy", headline: "Entry long", detail: "Both sides are true on this bar. The long side is taken.", readouts };
+    }
+  }
+
+  if (fired && wantsLong && s.market.direction !== "both") {
     return {
       tone: "buy",
       headline: "Entry long",
@@ -1293,7 +1472,7 @@ export function evaluateStrategyLive(s: CustomStrategy, candles: Candle[]): Live
   return {
     tone: "neutral",
     headline: "No signal",
-    detail: "Entry conditions abhi match nahi kar rahi.",
+    detail: "Entry conditions are not matching yet.",
     readouts,
   };
 }
@@ -1484,23 +1663,23 @@ function analyzeCustomStrategy(
   const wantsShort = custom.market.direction !== "long";
   let tone: "buy" | "sell" | "neutral" = "neutral";
   let headline = "No signal — conditions wait";
-  let detail = "Entry conditions abhi match nahi kar rahi.";
+  let detail = "Entry conditions are not matching yet.";
 
   if (custom.signal.triggerType === "time") {
     headline = `Time entry · ${custom.signal.entryTime ?? "—"} IST`;
-    detail = "Time-based entries session clock par fire hoti hain; indicator wait nahi.";
+    detail = "Time-based entries fire on the session clock; no indicator wait.";
   } else if (fired && wantsLong && !wantsShort) {
     tone = "buy";
     headline = "BUY — entry conditions true";
-    detail = "Long setup aapki builder rules se match ho raha hai.";
+    detail = "Long setup matches your builder rules.";
   } else if (fired && wantsShort && !wantsLong) {
     tone = "sell";
     headline = "SELL — entry conditions true";
-    detail = "Short setup aapki builder rules se match ho raha hai.";
+    detail = "Short setup matches your builder rules.";
   } else if (fired) {
     tone = "buy";
     headline = "Signal — both-sides entry armed";
-    detail = "Conditions true hain; direction Both hai.";
+    detail = "Conditions are true; direction is Both.";
   }
 
   const last = candles[i];
@@ -1547,7 +1726,7 @@ export interface SimulationTrade {
   exitIndex: number;
   exitTime: number;
   exitPrice: number;
-  exitReason: "Take Profit" | "Stop Loss" | "Trailing Stop" | "Signal Reversal" | "End of Period";
+  exitReason: "Take Profit" | "Stop Loss" | "Trailing Stop" | "Signal Reversal" | "Exit rule" | "Time stop" | "End of Period";
   pnlPct: number;
   pnlUsd: number;
 }
@@ -1614,7 +1793,7 @@ export function simulateStrategy(
     score: 0,
     grade: "F",
     status: "Ineffective",
-    summary: "Candle data na-kafi hai ya koi trades trigger nahi hui.",
+    summary: "Not enough candle data, or no trades were triggered.",
     checklist: [
       { label: "Win Rate Consistency", passed: false, value: "0%", hint: "Target is ≥ 45% win rate" },
       { label: "Profit Factor", passed: false, value: "0.00x", hint: "Target is ≥ 1.3x profit factor" },
@@ -1679,6 +1858,27 @@ export function simulateStrategy(
   const slVal = overrides?.slVal ?? (s.risk.stopLoss.value || 1.2);
   const useTrailing = overrides?.trailing ?? s.risk.trailing;
   const trailingPct = overrides?.trailingPct ?? (s.risk.trailingPct || 0.8);
+  const trailAtr = s.market.strategyType === "futures" && s.market.futuresConfig?.trailingType === "atr";
+  const atrSeries = atr(candles as Bar[], 14);
+  const exitGroups = s.signal.exitGroups ?? [];
+
+  const offsetPrice = (
+    entry: number,
+    dir: "long" | "short",
+    side: "tp" | "sl",
+    value: number,
+    unit: string,
+    atrNow: number | null,
+    slDistance: number,
+  ) => {
+    const sign = dir === "long" ? 1 : -1;
+    const way = side === "tp" ? sign : -sign;
+    if (unit === "pts") return entry + way * value;
+    if (unit === "price") return value;
+    if (unit === "atr") return entry + way * value * (atrNow && atrNow > 0 ? atrNow : entry * 0.01);
+    if (unit === "rr" && side === "tp") return entry + sign * Math.max(slDistance, entry * 0.001) * value;
+    return entry * (1 + way * value / 100);
+  };
 
   for (let i = 30; i < candles.length; i++) {
     const c = candles[i];
@@ -1687,42 +1887,53 @@ export function simulateStrategy(
       let exitPrice: number | null = null;
       let exitReason: SimulationTrade["exitReason"] = "Take Profit";
 
-      // Trailing stop update
       if (useTrailing && trailingPct > 0) {
+        const atrNow = atrSeries[i];
         if (inTrade.direction === "long") {
           if (c.high > inTrade.trailingPeak) {
             inTrade.trailingPeak = c.high;
-            const newSl = c.high * (1 - trailingPct / 100);
+            const newSl = trailAtr
+              ? inTrade.trailingPeak - (atrNow && atrNow > 0 ? atrNow : inTrade.entryPrice * 0.01) * trailingPct
+              : inTrade.trailingPeak * (1 - trailingPct / 100);
             if (newSl > inTrade.slPrice) inTrade.slPrice = newSl;
           }
-        } else {
-          if (c.low < inTrade.trailingPeak) {
-            inTrade.trailingPeak = c.low;
-            const newSl = c.low * (1 + trailingPct / 100);
-            if (newSl < inTrade.slPrice) inTrade.slPrice = newSl;
-          }
+        } else if (c.low < inTrade.trailingPeak) {
+          inTrade.trailingPeak = c.low;
+          const newSl = trailAtr
+            ? inTrade.trailingPeak + (atrNow && atrNow > 0 ? atrNow : inTrade.entryPrice * 0.01) * trailingPct
+            : inTrade.trailingPeak * (1 + trailingPct / 100);
+          if (newSl < inTrade.slPrice) inTrade.slPrice = newSl;
         }
       }
 
-      if (inTrade.direction === "long") {
-        if (s.risk.takeProfit.enabled && c.high >= inTrade.tpPrice) {
-          exitPrice = inTrade.tpPrice;
-          exitReason = "Take Profit";
-        } else if (s.risk.stopLoss.enabled && c.low <= inTrade.slPrice) {
-          exitPrice = inTrade.slPrice;
-          exitReason = useTrailing && inTrade.slPrice > inTrade.entryPrice ? "Trailing Stop" : "Stop Loss";
-        }
-      } else {
-        if (s.risk.takeProfit.enabled && c.low <= inTrade.tpPrice) {
-          exitPrice = inTrade.tpPrice;
-          exitReason = "Take Profit";
-        } else if (s.risk.stopLoss.enabled && c.high >= inTrade.slPrice) {
-          exitPrice = inTrade.slPrice;
-          exitReason = useTrailing && inTrade.slPrice < inTrade.entryPrice ? "Trailing Stop" : "Stop Loss";
-        }
+      const stopTouched = inTrade.direction === "long"
+        ? s.risk.stopLoss.enabled && c.low <= inTrade.slPrice
+        : s.risk.stopLoss.enabled && c.high >= inTrade.slPrice;
+      const targetTouched = inTrade.direction === "long"
+        ? s.risk.takeProfit.enabled && c.high >= inTrade.tpPrice
+        : s.risk.takeProfit.enabled && c.low <= inTrade.tpPrice;
+
+      if (stopTouched) {
+        exitPrice = inTrade.slPrice;
+        const trailed = inTrade.direction === "long"
+          ? inTrade.slPrice > inTrade.entryPrice
+          : inTrade.slPrice < inTrade.entryPrice;
+        exitReason = useTrailing && trailed ? "Trailing Stop" : "Stop Loss";
+      } else if (targetTouched) {
+        exitPrice = inTrade.tpPrice;
+        exitReason = "Take Profit";
       }
 
-      // Check reversal exit
+      if (!exitPrice && s.risk.timeStop && i - inTrade.entryIndex >= Math.max(1, s.risk.timeStopCandles)) {
+        exitPrice = c.close;
+        exitReason = "Time stop";
+      }
+
+      if (!exitPrice && exitGroups.length && evalGroups(exitGroups, closes, volumes, candles, i)) {
+        exitPrice = c.close;
+        exitReason = "Exit rule";
+      }
+
       if (!exitPrice && s.signal.exitOnReversal) {
         const fired = evalGroups(s.signal.entryGroups, closes, volumes, candles, i);
         if (fired) {
@@ -1766,24 +1977,29 @@ export function simulateStrategy(
         inTrade = null;
       }
     } else {
-      // Evaluate entry
-      const fired = evalGroups(s.signal.entryGroups, closes, volumes, candles, i);
-      const wantsLong = s.market.direction !== "short";
-      const wantsShort = s.market.direction === "short" || s.market.direction === "both";
+      const longFired = evalGroups(s.signal.entryGroups, closes, volumes, candles, i);
+      const shortFired = s.market.direction === "both"
+        ? evalGroups(s.signal.entryGroups, closes, volumes, candles, i, true)
+        : s.market.direction === "short" && longFired;
+      let dir: "long" | "short" | null = null;
+      if (s.market.direction === "short") dir = shortFired ? "short" : null;
+      else if (s.market.direction === "long") dir = longFired ? "long" : null;
+      else if (longFired && !shortFired) dir = "long";
+      else if (shortFired && !longFired) dir = "short";
+      else if (longFired && shortFired) dir = "long";
 
-      if (fired) {
-        const dir: "long" | "short" = wantsLong ? "long" : "short";
+      if (dir) {
         const entryPrice = c.close;
-        let tpPrice = entryPrice;
-        let slPrice = entryPrice;
-
-        if (dir === "long") {
-          tpPrice = entryPrice * (1 + tpVal / 100);
-          slPrice = entryPrice * (1 - slVal / 100);
-        } else {
-          tpPrice = entryPrice * (1 - tpVal / 100);
-          slPrice = entryPrice * (1 + slVal / 100);
-        }
+        const atrNow = atrSeries[i];
+        const slUnit = s.risk.stopLoss.unit;
+        const tpUnit = s.risk.takeProfit.unit;
+        const slPrice = s.risk.stopLoss.enabled
+          ? offsetPrice(entryPrice, dir, "sl", slVal, overrides?.slVal != null ? "%" : slUnit, atrNow, 0)
+          : dir === "long" ? entryPrice * 0.5 : entryPrice * 1.5;
+        const slDistance = Math.abs(entryPrice - slPrice);
+        const tpPrice = s.risk.takeProfit.enabled
+          ? offsetPrice(entryPrice, dir, "tp", tpVal, overrides?.tpVal != null ? "%" : tpUnit, atrNow, slDistance)
+          : dir === "long" ? entryPrice * 1.5 : entryPrice * 0.5;
 
         inTrade = {
           direction: dir,
@@ -1811,7 +2027,7 @@ export function simulateStrategy(
   const targetHits = trades.filter((t) => t.exitReason === "Take Profit").length;
   const slHits = trades.filter((t) => t.exitReason === "Stop Loss").length;
   const trailingHits = trades.filter((t) => t.exitReason === "Trailing Stop").length;
-  const signalExitHits = trades.filter((t) => t.exitReason === "Signal Reversal").length;
+  const signalExitHits = trades.filter((t) => t.exitReason === "Signal Reversal" || t.exitReason === "Exit rule" || t.exitReason === "Time stop").length;
   const endOfPeriodHits = trades.filter((t) => t.exitReason === "End of Period").length;
   const riskRewardRatio = slVal > 0 ? Number((tpVal / slVal).toFixed(2)) : 2.0;
   const avgWinUsd = winningTrades > 0 ? grossProfitUsd / winningTrades : 0;

@@ -149,7 +149,7 @@ export default function FeeCalculator() {
 
       <Field
         label="Quantity"
-        hint="Coins / contracts ki sankhya"
+        hint="Number of coins or contracts"
         value={quantity}
         onChange={setQuantity}
         min={0}
@@ -232,7 +232,7 @@ export default function FeeCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Receipt}>
-      Buy price, sell price aur fees daalein — calculation live dikhega.
+      Enter buy price, sell price and fees — results update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -251,8 +251,8 @@ export default function FeeCalculator() {
 
       {res.feeShareOfGrossPct != null && res.feeShareOfGrossPct > 25 && (
         <Notice kind="warn">
-          Fees aapke gross profit ka <b>{res.feeShareOfGrossPct.toFixed(1)}%</b> hissa le rahi hain.
-          Maker (limit) orders use karke aap fees bacha sakte hain.
+          Fees take <b>{res.feeShareOfGrossPct.toFixed(1)}%</b> of gross profit.
+          Limit (maker) orders can reduce fees.
         </Notice>
       )}
 
@@ -284,7 +284,7 @@ export default function FeeCalculator() {
       />
 
       {/* P&L to Fee Flow */}
-      <SectionTitle>Gross se Net tak ka hisaab</SectionTitle>
+      <SectionTitle>From gross to net</SectionTitle>
       <Flow
         rows={[
           { label: "Gross P&L", value: res.grossPnl, text: fmtSigned(res.grossPnl) },
@@ -345,7 +345,7 @@ export default function FeeCalculator() {
             }
           : null
       }
-      note="Exchanges spot aur futures ke liye alag fees charge karte hain. Limit orders maker fee trigger karte hain jabki market orders taker fee trigger karte hain."
+      note="Exchanges charge different fees for spot vs futures. Limit orders usually pay maker; market orders pay taker."
     />
   );
 }

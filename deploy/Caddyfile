@@ -7,10 +7,10 @@
 	@www expression `{host}.startsWith("www.")`
 	redir @www https://{labels.1}.{labels.0}{uri} permanent
 
-	# /api/mukul/* Next.js ke apne route handlers hain, backend ke nahi.
+	# /api/mukul/*, /api/overview* aur /api/lab/* Next.js ke apne route handlers hain, backend ke nahi.
 	@backend {
 		path /health /api/*
-		not path /api/mukul/*
+		not path /api/mukul/* /api/overview* /api/lab/*
 	}
 
 	handle @backend {

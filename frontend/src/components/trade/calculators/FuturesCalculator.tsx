@@ -272,7 +272,7 @@ export default function FuturesCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Activity}>
-      Margin, leverage, entry aur exit price enter karein — position value, quantity, maintenance margin aur net P&L live calculate hoga.
+      Enter margin, leverage, entry and exit — position value, quantity, maintenance margin and net P&L update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -296,10 +296,10 @@ export default function FuturesCalculator() {
       {/* Critical Futures Warning Notice */}
       <Notice kind={res.leverage >= 20 ? "warn" : "info"}>
         <span>
-          <strong>Leverage & Liquidation Notice:</strong> Leverage margin ke mukable position exposure ko{" "}
-          <strong>{res.leverage}×</strong> bada deta hai. Estimated Liquidation Price ≈{" "}
+          <strong>Leverage & Liquidation Notice:</strong> Leverage multiplies exposure vs margin by{" "}
+          <strong>{res.leverage}×</strong>. Estimated liquidation price ≈{" "}
           <strong className="text-amber-300">{fmtMoney(res.estLiquidationPrice)}</strong> (
-          {res.liqDistancePct.toFixed(2)}% adverse price move door hai).
+          {res.liqDistancePct.toFixed(2)}% adverse move away).
         </span>
       </Notice>
 
@@ -420,7 +420,7 @@ export default function FuturesCalculator() {
             }
           : null
       }
-      note="Crypto futures mein high leverage liquidation risk ko tezi se badha deta hai. Funding rate har 8 ghante mein adjust hoti hai aur long/short imbalance par depend karti hai. Trading advice nahi."
+      note="High leverage on crypto futures raises liquidation risk quickly. Funding adjusts every ~8h with long/short imbalance. Not trading advice."
     />
   );
 }

@@ -165,7 +165,7 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
     setCreating(false);
     setNewName("");
     sync();
-    flash(`"${list.name}" ban gayi`);
+    flash(`Created "${list.name}"`);
   };
 
   const onRenameSave = () => {
@@ -177,13 +177,13 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
 
   const onDeleteList = () => {
     if (!active || lists.length <= 1) {
-      flash("Kam se kam ek watchlist chahiye");
+      flash("At least one watchlist is required");
       return;
     }
-    if (!window.confirm(`"${active.name}" delete karein?`)) return;
+    if (!window.confirm(`Delete "${active.name}"?`)) return;
     deleteWatchlist(active.id);
     sync();
-    flash("Watchlist delete ho gayi");
+    flash("Watchlist deleted");
   };
 
   const onAdd = (symbol: string) => {
@@ -198,7 +198,7 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
 
   const onAddAll = () => {
     if (!active || addMatches.length === 0) return;
-    if (addMatches.length > 25 && !window.confirm(`${addMatches.length} pairs "${active.name}" mein add karein?`)) return;
+    if (addMatches.length > 25 && !window.confirm(`Add ${addMatches.length} pairs to "${active.name}"?`)) return;
     const { added } = addSymbolsToWatchlist(active.id, addMatches.map((o) => o.key));
     setAddQuery("");
     sync();
@@ -219,9 +219,7 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
         <div>
           <div className="trade-page-kicker">Your markets</div>
           <h2 className="trade-page-title">Watchlists</h2>
-          <p className="trade-page-sub">
-            Apne coins ek jagah — Delta perps aur CoinDCX spot, kitne bhi pairs. Pair par click karke chart kholo.
-          </p>
+          <p className="trade-page-line">Apni coins yahan rakho. Pair kholo, chart dekho.</p>
         </div>
         <div className="trade-page-actions">
           <button
@@ -357,9 +355,9 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
                 <Star className="w-5 h-5" />
               </span>
               <p className="text-[14px] font-semibold mt-1" style={{ color: "var(--text-secondary)" }}>
-                {query ? "Filter se kuch nahi mila" : "Is list mein abhi koi pair nahi"}
+                {query ? "No matches for this filter" : "No pairs in this list yet"}
               </p>
-              <p className="max-w-[300px]">{query ? "Doosra naam try karo." : "Side ke panel se pairs search karke + dabao."}</p>
+              <p className="max-w-[300px]">{query ? "Try another name." : "Search pairs in the side panel and press +."}</p>
             </div>
           ) : (
             <div className="overflow-x-auto lg:overflow-y-auto lg:max-h-[70vh]">
@@ -381,7 +379,7 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
                     return (
                       <tr key={sym}>
                         <td>
-                          <button type="button" className="wl-pair-btn" onClick={() => onPickSymbol(sym)} title="Markets mein kholo">
+                          <button type="button" className="wl-pair-btn" onClick={() => onPickSymbol(sym)} title="Open in Markets">
                             <Coin base={label.split("/")[0]} />
                             <span className="wl-pair-text">
                               <span className="wl-pair-name">{label}</span>
@@ -478,10 +476,10 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
             {!universeLoading && addSuggestions.length === 0 && !customKey && (
               <div className="trade-empty trade-empty-md">
                 {universe.length === 0
-                  ? "Pair list nahi aayi — symbol type karke (jaise SOLUSDT) Enter dabao."
+                  ? "Pair list unavailable — type a symbol (e.g. SOLUSDT) and press Enter."
                   : q
-                    ? "Koi naya pair nahi mila"
-                    : "Is filter ke saare pairs list mein hain"}
+                    ? "No new pairs found"
+                    : "All pairs for this filter are already in the list"}
               </div>
             )}
             {customKey && addSuggestions.length === 0 && !universeLoading && (
@@ -489,7 +487,7 @@ export default function WatchlistDesk({ onPickSymbol }: Props) {
                 <Coin base={customKey} />
                 <span className="wl-pair-text">
                   <span className="wl-pair-name">{customKey}</span>
-                  <span className="wl-pair-sub">Jaisa hai waisa add karo</span>
+                  <span className="wl-pair-sub">Add as typed</span>
                 </span>
                 <span className="wl-add-chip" aria-hidden>
                   <Plus className="w-3.5 h-3.5" />

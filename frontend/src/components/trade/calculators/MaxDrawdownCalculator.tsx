@@ -53,7 +53,7 @@ export default function MaxDrawdownCalculator() {
       <div className="cx-field">
         <label className="cx-label" htmlFor="equity-series-input">
           Equity Curve Points
-          <em>comma, space ya line break se alag karein</em>
+          <em>separate with comma, space or line break</em>
         </label>
         <textarea
           id="equity-series-input"
@@ -64,7 +64,7 @@ export default function MaxDrawdownCalculator() {
           onChange={(e) => setRawText(e.target.value)}
         />
         <span className="cx-hint">
-          Portfolio ki chronological equity history enter karein (kam se kam 2 points).
+          Enter chronological equity history (at least 2 points).
         </span>
       </div>
 
@@ -93,7 +93,7 @@ export default function MaxDrawdownCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={AlertOctagon}>
-      Apni account equity ya backtest trade curve ke sequential points enter karein (e.g. 100000, 120000, 90000, 130000).
+      Enter sequential equity or backtest curve points (e.g. 100000, 120000, 90000, 130000).
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -115,11 +115,11 @@ export default function MaxDrawdownCalculator() {
 
       <Notice kind={res.maxDrawdownPct > 30 ? "error" : res.maxDrawdownPct > 15 ? "warn" : "info"}>
         <span>
-          <strong>Recovery Math:</strong> -{res.maxDrawdownPct.toFixed(1)}% drawdown se recover hokar wapas peak par aane ke liye{" "}
-          <strong className="text-cyan-400">+{res.gainNeededToRecoverFromMaxDD.toFixed(1)}% gain</strong> ki zaroorat hoti hai.
+          <strong>Recovery Math:</strong> To recover a -{res.maxDrawdownPct.toFixed(1)}% drawdown back to peak you need{" "}
+          <strong className="text-cyan-400">+{res.gainNeededToRecoverFromMaxDD.toFixed(1)}% gain</strong>.
           {res.isRecovered
-            ? " Equity curve ne successfully is drawdown ko overcome karke naya All-Time High banaya."
-            : " Equity abhi bhi historical peak se neeche hai."}
+            ? " Equity curve recovered and made a new all-time high."
+            : " Equity is still below the historical peak."}
         </span>
       </Notice>
 
@@ -244,7 +244,7 @@ export default function MaxDrawdownCalculator() {
             }
           : null
       }
-      note="Max Drawdown portfolio risk ka standard benchmark hai. Drawdown jitna gehra hota hai, recover karne ke liye utna hi exponentially zyada profit gain chahiye hota hai. Trading advice nahi."
+      note="Max drawdown is a standard risk benchmark. Deeper drawdowns require exponentially larger gains to recover. Not trading advice."
     />
   );
 }

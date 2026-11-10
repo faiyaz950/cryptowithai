@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Archive,
-  ExternalLink,
   FlaskConical,
   Pause,
   Pencil,
@@ -25,6 +24,7 @@ import {
   type CustomStrategy,
   type StrategyStatus,
 } from "@/lib/strategyBuilder";
+import { useTradingMode } from "@/lib/tradingMode";
 
 type Filter = "all" | "live" | "paper" | "paused" | "draft" | "archived";
 
@@ -48,7 +48,8 @@ function statusBadge(status: StrategyStatus): string {
 
 export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
   const [items, setItems] = useState<CustomStrategy[]>([]);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [mode] = useTradingMode();
+  const [filter, setFilter] = useState<Filter>(mode);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"updated" | "name" | "pnl">("updated");
   const [selected, setSelected] = useState<string | null>(null);
@@ -66,6 +67,10 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
       window.removeEventListener("storage", sync);
     };
   }, [sync]);
+
+  useEffect(() => {
+    setFilter(mode);
+  }, [mode]);
 
   const counts = useMemo(() => {
     const c = { all: items.length, live: 0, paper: 0, paused: 0, draft: 0, archived: 0 };
@@ -115,12 +120,6 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
     ];
   }, [items]);
 
-  const monthLine = useMemo(() => {
-    const closed = items.reduce((a, s) => a + (s.stats?.closedPnl30d ?? 0), 0);
-    const trades = items.reduce((a, s) => a + (s.stats?.closedTrades ?? 0), 0);
-    return `Closed ${fmtMoney(closed)} this month · ${trades} trades`;
-  }, [items]);
-
   const filters: { id: Filter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "live", label: "Live" },
@@ -138,7 +137,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
           <h2 className="trade-page-title">
             {items.length === 0 ? "No strategies yet" : `${items.length} strateg${items.length === 1 ? "y" : "ies"}`}
           </h2>
-          <p className="trade-page-sub">{monthLine}</p>
+          <p className="trade-page-line">Jo aapne save ki hain. Start se paper ya live par chalti hain.</p>
         </div>
         <div className="trade-page-actions">
           <button type="button" className="trade-btn trade-btn-primary" onClick={onCreate}>
@@ -208,7 +207,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
               </div>
               <p className="text-[13px] mt-1.5 max-w-sm" style={{ color: "var(--text-muted)" }}>
                 {items.length === 0
-                  ? "Market, indicator conditions, aur risk rules drag-free cockpit mein set karo — phir Deploy."
+                  ? "Set market, indicator conditions, and risk rules in the cockpit — then Deploy."
                   : "Filter ya search change karke dekho."}
               </p>
               {items.length === 0 && (
@@ -339,7 +338,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                   <Pencil className="w-4 h-4" />
                   Edit
                 </button>
-                {selectedStrategy.status === "live" ? (
+                {selectedStrategy.status === mode ? (
                   <button
                     type="button"
                     className="trade-btn trade-btn-ghost"
@@ -349,17 +348,20 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                     }}
                   >
                     <Pause className="w-4 h-4" />
-                    Pause
+                    Stop
                   </button>
                 ) : selectedStrategy.status !== "archived" ? (
-                  <Link
-                    href={customStrategyHref(selectedStrategy.id)}
+                  <button
+                    type="button"
                     className="trade-btn trade-btn-ghost"
-                    onClick={() => setCustomStrategyStatus(selectedStrategy.id, "live")}
+                    onClick={() => {
+                      setCustomStrategyStatus(selectedStrategy.id, mode);
+                      sync();
+                    }}
                   >
-                    <ExternalLink className="w-4 h-4" />
-                    Go live
-                  </Link>
+                    <Play className="w-4 h-4" />
+                    Start {mode}
+                  </button>
                 ) : null}
                 {selectedStrategy.status !== "archived" && (
                   <button

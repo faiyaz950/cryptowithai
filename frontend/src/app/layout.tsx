@@ -1,7 +1,29 @@
 import type { Metadata } from "next";
+import { Inter, Playfair_Display, Plus_Jakarta_Sans } from "next/font/google";
 import { AuthProvider } from "@/context/AuthContext";
+import ThemeToggle from "@/components/ThemeToggle";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 import "./mukul-club.css";
+import "./theme.css";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-playfair",
+  display: "swap",
+});
+
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  variable: "--font-jakarta",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Cryptomantra — Dr. Mukul Agrawal",
@@ -15,17 +37,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="h-full">
+    <html
+      lang="en"
+      className={`${inter.variable} ${playfair.variable} ${jakarta.variable} h-full`}
+      data-theme="dark"
+      suppressHydrationWarning
+    >
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500;1,600;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="h-full antialiased font-sans">
+      <body className="h-full antialiased">
         <AuthProvider>{children}</AuthProvider>
+        <ThemeToggle />
       </body>
     </html>
   );

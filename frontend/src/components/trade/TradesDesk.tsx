@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   AlertCircle,
   ArrowRight,
-  FlaskConical,
   Inbox,
   ListOrdered,
   Loader2,
@@ -29,9 +28,9 @@ import {
 } from "@/lib/accountApi";
 import { symbolLabel } from "@/lib/cryptoApi";
 import PaperDesk from "@/components/trade/PaperDesk";
+import { useTradingMode } from "@/lib/tradingMode";
 
 type DeskTab = "open" | "history" | "positions";
-type Source = "paper" | "exchange";
 
 const OPEN_STATES = new Set([
   "pending",
@@ -48,20 +47,13 @@ interface Props {
 }
 
 export default function TradesDesk({ onPickSymbol }: Props) {
-  const [source, setSource] = useState<Source>("paper");
+  const [mode] = useTradingMode();
   return (
     <div className="space-y-3">
-      <div className="trade-seg pp-source" role="tablist" aria-label="Trades source">
-        <button type="button" role="tab" aria-selected={source === "paper"} data-active={source === "paper"} onClick={() => setSource("paper")} className="trade-seg-btn">
-          <FlaskConical className="w-3.5 h-3.5" />
-          Paper trading
-        </button>
-        <button type="button" role="tab" aria-selected={source === "exchange"} data-active={source === "exchange"} onClick={() => setSource("exchange")} className="trade-seg-btn">
-          <Plug className="w-3.5 h-3.5" />
-          Exchange
-        </button>
-      </div>
-      {source === "paper" ? <PaperDesk onPickSymbol={onPickSymbol} /> : <ExchangeTrades onPickSymbol={onPickSymbol} />}
+      <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+        {mode === "paper" ? "Paper book — virtual fills, live exchange orders yahan nahi aate." : "Live book — exchange orders aur positions. Paper fills alag hain."}
+      </p>
+      {mode === "paper" ? <PaperDesk onPickSymbol={onPickSymbol} /> : <ExchangeTrades onPickSymbol={onPickSymbol} />}
     </div>
   );
 }
@@ -159,7 +151,7 @@ function ExchangeTrades({ onPickSymbol }: Props) {
         handleExpiredSession();
         return;
       }
-      setError(err instanceof Error ? err.message : "Trades load nahi hui");
+      setError(err instanceof Error ? err.message : "Could not load trades");
     } finally {
       setLoading(false);
     }
@@ -338,7 +330,7 @@ function ExchangeTrades({ onPickSymbol }: Props) {
                   <span className="trade-empty-icon">
                     <Inbox className="w-4 h-4" />
                   </span>
-                  Abhi koi open order nahi
+                  No open orders
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -385,7 +377,7 @@ function ExchangeTrades({ onPickSymbol }: Props) {
                 <span className="trade-empty-icon">
                   <Inbox className="w-4 h-4" />
                 </span>
-                Abhi koi BYOK order history nahi
+                No order history
               </div>
             ) : (
               <div className="space-y-2">
@@ -422,7 +414,7 @@ function ExchangeTrades({ onPickSymbol }: Props) {
                 <span className="trade-empty-icon">
                   <Wallet className="w-4 h-4" />
                 </span>
-                Koi open position nahi hai
+                No open positions
               </div>
             ) : (
               <div className="space-y-2">

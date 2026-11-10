@@ -78,7 +78,7 @@ export default function ProfitFactorCalculator() {
     <>
       <Field
         label="Gross Profit"
-        hint="Winning trades ka total profit ($ / ₹)"
+        hint="Total profit from winning trades ($ / ₹)"
         value={grossProfit}
         onChange={setGrossProfit}
         prefix="$"
@@ -88,7 +88,7 @@ export default function ProfitFactorCalculator() {
 
       <Field
         label="Gross Loss"
-        hint="Losing trades ka total loss ($ / ₹)"
+        hint="Total loss from losing trades ($ / ₹)"
         value={grossLoss}
         onChange={setGrossLoss}
         prefix="$"
@@ -114,7 +114,7 @@ export default function ProfitFactorCalculator() {
       <Optional>
         <Field
           label="Winning Trades Count"
-          hint="Kul jeetne wale trades ki sankhya"
+          hint="Total number of winning trades"
           value={winningTrades}
           onChange={setWinningTrades}
           min={1}
@@ -123,7 +123,7 @@ export default function ProfitFactorCalculator() {
         />
         <Field
           label="Losing Trades Count"
-          hint="Kul haarne wale trades ki sankhya"
+          hint="Total number of losing trades"
           value={losingTrades}
           onChange={setLosingTrades}
           min={1}
@@ -147,7 +147,7 @@ export default function ProfitFactorCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Award}>
-      Apne backtest ya trading journal ka Gross Profit aur Gross Loss enter karein — strategy quality aur profitability live dikhegi.
+      Enter gross profit and gross loss from backtest or journal — strategy quality updates live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -166,20 +166,20 @@ export default function ProfitFactorCalculator() {
       <Notice kind={res.profitFactor >= 1.5 ? "info" : res.profitFactor >= 1.0 ? "warn" : "error"}>
         {res.profitFactor >= 2.0 ? (
           <span>
-            <strong>Excellent Performance!</strong> Aapka system har $1 ke loss par $
-            {res.profitFactor.toFixed(2)} ka profit generate kar raha hai. Ye ek high-edge trading strategy ka sign hai.
+            <strong>Excellent Performance!</strong> Your system earns $
+            {res.profitFactor.toFixed(2)} gross profit per $1 of loss — sign of a high-edge strategy.
           </span>
         ) : res.profitFactor >= 1.5 ? (
           <span>
-            <strong>Solid Strategy!</strong> 1.5 - 2.0 ka Profit Factor live market trading ke liye healthy aur sustainable maana jata hai.
+            <strong>Solid Strategy!</strong> A profit factor of 1.5–2.0 is considered healthy for live trading.
           </span>
         ) : res.profitFactor >= 1.0 ? (
           <span>
-            <strong>Marginal Edge:</strong> 1.0 - 1.5 ka factor tight hai. Exchange fees, slippage aur funding costs aapke profits ko khatam kar sakti hain.
+            <strong>Marginal Edge:</strong> A 1.0–1.5 factor is tight. Fees, slippage and funding can erase profits.
           </span>
         ) : (
           <span>
-            <strong>Losing System:</strong> Profit Factor 1.0 se kam hone ka matlab hai strategy net loss mein hai.
+            <strong>Losing System:</strong> Profit factor below 1.0 means the strategy is net losing.
           </span>
         )}
       </Notice>
@@ -268,7 +268,7 @@ export default function ProfitFactorCalculator() {
             }
           : null
       }
-      note="Profit Factor backtesting aur trading journal evaluation ka key metric hai. 1.5 se zyada hone par strategy robust maani jaati hai. Trading advice nahi."
+      note="Profit factor is a key backtest/journal metric. Above 1.5 is often considered robust. Not trading advice."
     />
   );
 }

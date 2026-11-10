@@ -145,7 +145,7 @@ export function computeDca(i: DcaInput): DcaOutcome | null {
   // Case 1: Custom price series (e.g. from historical dataset or user entered prices)
   if (Array.isArray(priceSeries) && priceSeries.length > 0) {
     if (!Number.isFinite(recurringInvestment) || recurringInvestment <= 0) {
-      return { ok: false, error: "Investment per purchase 0 se bada hona chahiye." };
+      return { ok: false, error: "Investment per purchase must be greater than 0." };
     }
 
     priceSeries.forEach((p, idx) => {

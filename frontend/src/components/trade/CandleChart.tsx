@@ -15,6 +15,7 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { Eye, EyeOff, Pencil, Settings2, Trash2, X } from "lucide-react";
+import { getTheme, onThemeChange, type Theme } from "@/lib/theme";
 import { DESK_TZ, DESK_TZ_LABEL, DESK_VENUE_SHORT, type Candle } from "@/lib/cryptoApi";
 import { subscribeLiveCandles, type LiveBar, type LiveStatus } from "@/lib/deltaLive";
 import { DRAW_COLORS, DRAW_WIDTHS, DrawingsPrimitive, useChartDrawings, type DrawTool } from "@/lib/chartDrawings";
@@ -130,6 +131,15 @@ interface Props {
   onIndicatorToggle?: (uid: string) => void;
   onIndicatorSettings?: (uid: string) => void;
   onIndicatorRemove?: (uid: string) => void;
+  /** Entry, stop, aur targets. Order se pehle dashed, khuli deal par solid. */
+  levels?: ChartLevel[];
+}
+
+export interface ChartLevel {
+  price: number;
+  title: string;
+  color: string;
+  dashed?: boolean;
 }
 
 interface Readout {
@@ -141,15 +151,15 @@ interface Readout {
 }
 
 const DRAW_HINTS: Record<Exclude<DrawTool, "cursor">, string> = {
-  trend: "Trend line: kheencho, ya do jagah click karo · Esc = band",
-  ray: "Ray: shuru ka point, phir disha — aage tak badhti hai · Esc = band",
-  hline: "Horizontal line: price par click karo",
-  vline: "Vertical line: time par click karo",
-  rect: "Rectangle: ek kone se doosre kone tak kheencho",
-  fib: "Fib retracement: swing ke ek sire se doosre tak kheencho",
-  fibext: "Fib extension: A se B tak kheencho (move), phir C (pullback) par click karo",
+  trend: "Trend line: drag or click two points · Esc = cancel",
+  ray: "Ray: start point, then direction — extends forward · Esc = cancel",
+  hline: "Horizontal line: click on price",
+  vline: "Vertical line: click on time",
+  rect: "Rectangle: drag from one corner to the other",
+  fib: "Fib retracement: drag from one swing end to the other",
+  fibext: "Fib extension: drag A to B (move), then click C (pullback)",
   brush: "Brush: daba kar chalao · Esc = band",
-  text: "Text: jahan likhna hai wahan click karo",
+  text: "Text: click where you want to type",
 };
 
 const UP = "#00e676";
@@ -257,7 +267,29 @@ const MAIN_COMMON = {
   priceLineStyle: LineStyle.Dotted,
   priceLineWidth: 1 as const,
 };
-const LINE_BLUE = "#19a2dd";
+const LINE_BLUE = "#f97316";
+
+/** Chart ka frame (background, grid, axis) — `data-theme` ke saath badalta hai. */
+const CHROME = {
+  dark: { bg: "#161514", text: "#64748b", grid: "#212020", border: "#363534" },
+  light: { bg: "#ffffff", text: "#78716c", grid: "#f3f2f1", border: "#d7d4d3" },
+} as const;
+
+function chartChrome(theme: Theme) {
+  const c = CHROME[theme];
+  return {
+    layout: {
+      background: { type: ColorType.Solid, color: c.bg },
+      textColor: c.text,
+      fontSize: 11,
+      fontFamily: "Inter, system-ui, sans-serif",
+    },
+    grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+    rightPriceScale: { borderColor: c.border },
+    leftPriceScale: { borderColor: c.border },
+    timeScale: { borderColor: c.border },
+  };
+}
 
 function createMain(chart: IChartApi, type: ChartType, closesInView: () => { lo: number; hi: number } | null): MainRefs {
   const state: MainState = { type, haPrev: null, haLast: null, lastTime: null, avgVol: 0 };
@@ -290,8 +322,8 @@ function createMain(chart: IChartApi, type: ChartType, closesInView: () => { lo:
       series = chart.addAreaSeries({
         ...MAIN_COMMON,
         lineColor: LINE_BLUE,
-        topColor: "rgba(25, 162, 221, 0.38)",
-        bottomColor: "rgba(25, 162, 221, 0.02)",
+        topColor: "rgba(249, 115, 22, 0.38)",
+        bottomColor: "rgba(249, 115, 22, 0.02)",
         lineWidth: 2,
       });
       break;
@@ -484,6 +516,9 @@ const TAIL_MAX = 30;
  */
 function tailStart(prev: Ohlc[], next: Ohlc[]): number {
   if (prev.length < 2 || !next.length || prev[0].time !== next[0].time) return -1;
+  // Same timestamps across coins (BTC→SOL) — don't treat as a poll tail or
+  // overlay lines stay at the old price and crush the new candles on the scale.
+  if (priceRegimeChanged(prev, next)) return -1;
   const lastPrev = prev[prev.length - 1].time;
   let lo = 0;
   let hi = next.length;
@@ -495,6 +530,21 @@ function tailStart(prev: Ohlc[], next: Ohlc[]): number {
   if (lo !== prev.length - 1 || next.length - lo > TAIL_MAX) return -1;
   if (lo > 0 && next[lo - 1].time !== prev[lo - 1].time) return -1;
   return lo;
+}
+
+/** Median close of the last bars — used to catch symbol switches that share candle times. */
+function medianClose(bars: Ohlc[], sample = 40): number {
+  if (!bars.length) return 0;
+  const slice = bars.slice(-Math.min(sample, bars.length)).map((b) => b.close).sort((a, b) => a - b);
+  return slice[Math.floor(slice.length / 2)] || 0;
+}
+
+function priceRegimeChanged(prev: Ohlc[], next: Ohlc[]): boolean {
+  const a = medianClose(prev);
+  const b = medianClose(next);
+  if (a <= 0 || b <= 0) return true;
+  const ratio = a > b ? a / b : b / a;
+  return ratio > 1.4;
 }
 
 function toUnix(timeMs: number): UTCTimestamp {
@@ -601,6 +651,7 @@ export default function CandleChart({
   onIndicatorToggle,
   onIndicatorSettings,
   onIndicatorRemove,
+  levels,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -695,35 +746,26 @@ export default function CandleChart({
     const chart = createChart(el, {
       width: el.clientWidth,
       height: el.clientHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: "#0a0e14" },
-        textColor: "#64748b",
-        fontSize: 11,
-        fontFamily: "Inter, system-ui, sans-serif",
-      },
-      grid: {
-        vertLines: { color: "#121821" },
-        horzLines: { color: "#121821" },
-      },
+      ...chartChrome(getTheme()),
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: { color: "#475569", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#00e676" },
         horzLine: { color: "#475569", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#00e676" },
       },
       rightPriceScale: {
-        borderColor: "#1a2230",
+        borderColor: CHROME.dark.border,
         scaleMargins: { top: 0.06, bottom: 0.18 },
         entireTextOnly: true,
       },
       leftPriceScale: {
         visible: false,
-        borderColor: "#1a2230",
+        borderColor: CHROME.dark.border,
       },
       localization: {
         timeFormatter: formatCrosshairTime,
       },
       timeScale: {
-        borderColor: "#1a2230",
+        borderColor: CHROME.dark.border,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 4,
@@ -760,6 +802,8 @@ export default function CandleChart({
     });
 
     chartRef.current = chart;
+    chart.applyOptions(chartChrome(getTheme()));
+    const offTheme = onThemeChange((t) => chart.applyOptions(chartChrome(t)));
     chart.subscribeCrosshairMove((param) => {
       // Readout asal OHLC se — Heikin Ashi / line par series ka data asli candle nahi hota.
       const t = typeof param.time === "number" ? param.time : null;
@@ -804,6 +848,7 @@ export default function CandleChart({
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
       observer.disconnect();
+      offTheme();
       chart.remove();
       chartRef.current = null;
       mainRef.current = null;
@@ -843,6 +888,39 @@ export default function CandleChart({
     // Nayi series data ke bina hai — data effect ko dobara poora setData karna hai.
     lastCandlesRef.current = null;
   }, [chartType, drawPrim]);
+
+  useEffect(() => {
+    const series = mainRef.current?.series;
+    if (!series) return;
+    // Levels jo candles se kai guna door hain (dusre coin ke TP/SL) scale tod dete hain.
+    const mid = medianClose(mainBarsRef.current);
+    const drawn = (levels ?? [])
+      .filter((level) => {
+        if (!Number.isFinite(level.price) || level.price <= 0) return false;
+        if (!(mid > 0)) return true;
+        const ratio = level.price > mid ? level.price / mid : mid / level.price;
+        return ratio <= 20;
+      })
+      .map((level) =>
+        series.createPriceLine({
+          price: level.price,
+          color: level.color,
+          lineWidth: 1,
+          lineStyle: level.dashed ? LineStyle.Dashed : LineStyle.Solid,
+          axisLabelVisible: true,
+          title: level.title,
+        }),
+      );
+    return () => {
+      for (const line of drawn) {
+        try {
+          series.removePriceLine(line);
+        } catch {
+          /* series recreate pe line pehle hi ja chuki hoti hai */
+        }
+      }
+    };
+  }, [levels, chartType, candles]);
 
   useEffect(() => {
     // Drawing ke beech chart khiske nahi; crosshair Normal hi, taaki point
@@ -896,15 +974,6 @@ export default function CandleChart({
     // par wo "refresh" maani jaati.
     const candlesChanged = lastCandlesRef.current !== candles;
     lastCandlesRef.current = candles;
-    const isNewView = candlesChanged && viewKeyRef.current !== key;
-
-    // Refresh se pehle user kahan dekh raha tha. Time range (bar index nahi)
-    // isliye ki har poll par sabse purani candle hat-ti hai aur nayi judti hai —
-    // index wala range har minute ek candle aage khisak jaata.
-    const prevLogical = isNewView ? null : timeScale?.getVisibleLogicalRange() ?? null;
-    const prevTimeRange = isNewView ? null : timeScale?.getVisibleRange() ?? null;
-    const prevBarCount = barCountRef.current;
-    const followingLive = prevLogical == null || prevLogical.to >= prevBarCount - 2;
 
     const valid = candles
       .filter((c) => c.open && c.high && c.low && c.close)
@@ -919,9 +988,22 @@ export default function CandleChart({
       volume: c.volume,
     }));
 
+    const prevBars = mainBarsRef.current;
+    // Symbol/timeframe change, OR same key with a different price (BTC→SOL race
+    // where the label flips before candles arrive).
+    const regimeShift = priceRegimeChanged(prevBars, ohlc);
+    const isNewView = (candlesChanged && viewKeyRef.current !== key) || regimeShift;
+
+    // Refresh se pehle user kahan dekh raha tha. Time range (bar index nahi)
+    // isliye ki har poll par sabse purani candle hat-ti hai aur nayi judti hai —
+    // index wala range har minute ek candle aage khisak jaata.
+    const prevLogical = isNewView ? null : timeScale?.getVisibleLogicalRange() ?? null;
+    const prevTimeRange = isNewView ? null : timeScale?.getVisibleRange() ?? null;
+    const prevBarCount = barCountRef.current;
+    const followingLive = prevLogical == null || prevLogical.to >= prevBarCount - 2;
+
     // Purani view ka "langar": left kinare wali candle ka time. Data aage-peeche
     // khiske (history judi / hati) to bhi wahi candle wahin rahe — zoom same.
-    const prevBars = mainBarsRef.current;
     const anchorIdx = prevLogical && prevBars.length
       ? Math.min(prevBars.length - 1, Math.max(0, Math.round(prevLogical.from)))
       : -1;
@@ -1486,10 +1568,10 @@ export default function CandleChart({
             </>
           )}
           <span className="cm-draw-sep" />
-          <button type="button" className="cm-draw-icon" data-tone="danger" onClick={drawings.remove} aria-label="Drawing delete karein" title="Delete (Del)">
+          <button type="button" className="cm-draw-icon" data-tone="danger" onClick={drawings.remove} aria-label="Delete drawing" title="Delete (Del)">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
-          <button type="button" className="cm-draw-icon" onClick={drawings.deselect} aria-label="Band karein" title="Band (Esc)">
+          <button type="button" className="cm-draw-icon" onClick={drawings.deselect} aria-label="Cancel" title="Cancel (Esc)">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>

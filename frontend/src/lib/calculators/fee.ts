@@ -64,11 +64,11 @@ export function computeCryptoFee(i: FeeInput): FeeOutcome | null {
 
   if (![buyPrice, sellPrice, quantity, makerFeePct, takerFeePct].every(Number.isFinite)) return null;
 
-  if (buyPrice <= 0) return { ok: false, error: "Buy price 0 se bada hona chahiye." };
-  if (sellPrice <= 0) return { ok: false, error: "Sell price 0 se bada hona chahiye." };
-  if (quantity <= 0) return { ok: false, error: "Quantity 0 se badi honi chahiye." };
-  if (makerFeePct < 0 || takerFeePct < 0) return { ok: false, error: "Fees negative nahi ho sakti." };
-  if (makerFeePct >= 50 || takerFeePct >= 50) return { ok: false, error: "Fees 50% se zyada nahi ho sakti." };
+  if (buyPrice <= 0) return { ok: false, error: "Buy price must be greater than 0." };
+  if (sellPrice <= 0) return { ok: false, error: "Sell price must be greater than 0." };
+  if (quantity <= 0) return { ok: false, error: "Quantity must be greater than 0." };
+  if (makerFeePct < 0 || takerFeePct < 0) return { ok: false, error: "Fees cannot be negative." };
+  if (makerFeePct >= 50 || takerFeePct >= 50) return { ok: false, error: "Fees cannot exceed 50%." };
 
   const buyFeePct = buyRole === "maker" ? makerFeePct : takerFeePct;
   const sellFeePct = sellRole === "maker" ? makerFeePct : takerFeePct;

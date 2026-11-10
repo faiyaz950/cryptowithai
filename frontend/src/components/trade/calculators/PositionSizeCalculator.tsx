@@ -64,7 +64,7 @@ export default function PositionSizeCalculator() {
       <Field label="Account balance" value={balance} onChange={setBalance} prefix="$" min={0} invalid={bad.balance} />
 
       <div>
-        <Field label="Risk per trade" hint="Is trade mein account ka kitna % khona manzoor hai." value={riskPct} onChange={setRiskPct} suffix="%" min={0} invalid={bad.riskPct} />
+        <Field label="Risk per trade" hint="Percent of account you accept losing on this trade." value={riskPct} onChange={setRiskPct} suffix="%" min={0} invalid={bad.riskPct} />
         <Slider value={n.riskPct} onChange={setRiskPct} min={0.1} max={5} step={0.1} scale={["0.1%", "5%"]} />
         <Chips options={RISK_PRESETS} value={riskPct} onPick={setRiskPct} label="Risk presets" />
       </div>
@@ -74,7 +74,7 @@ export default function PositionSizeCalculator() {
         <Field label="Stop loss" value={stopLoss} onChange={setStopLoss} prefix="$" min={0} invalid={bad.stopLoss} />
       </div>
       <p className="cx-hint" style={{ marginTop: -10 }}>
-        Stop loss entry se neeche ho to Long, upar ho to Short — direction apne aap pata chalta hai.
+        Stop below entry → Long; above entry → Short — direction is inferred automatically.
       </p>
 
       <Optional>
@@ -84,7 +84,7 @@ export default function PositionSizeCalculator() {
         </div>
         <Field
           label="Leverage"
-          hint="Sirf margin dikhane ke liye. Leverage se position size ya loss nahi badalta."
+          hint="For margin display only. Leverage does not change size or loss at the stop."
           value={leverage}
           onChange={setLeverage}
           suffix="x"
@@ -99,7 +99,7 @@ export default function PositionSizeCalculator() {
   const body = error ? (
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
-    <EmptyState icon={Scale}>Balance, risk %, entry aur stop loss daalein — position size yahan live dikhega.</EmptyState>
+    <EmptyState icon={Scale}>Enter balance, risk %, entry and stop loss — position size updates live here.</EmptyState>
   ) : (
     <div className="cx-body">
       <Hero
@@ -140,18 +140,18 @@ export default function PositionSizeCalculator() {
 
       {res.marginExceedsBalance && (
         <Notice kind="error">
-          Itne leverage par bhi margin (<b>{fmtMoney(res.margin ?? 0)}</b>) account balance se zyada hai. Leverage badhao ya stop loss entry se thoda door rakho.
+          Even at this leverage, margin (<b>{fmtMoney(res.margin ?? 0)}</b>) exceeds balance. Raise leverage or widen stop from entry.
         </Notice>
       )}
       {!res.marginExceedsBalance && res.margin == null && res.minLeverage > 1 && (
         <Notice kind="warn">
-          Ye position account balance se bada hai — khulne ke liye kam se kam <b>{res.minLeverage.toFixed(2)}x</b> leverage chahiye. Risk phir bhi {fmtMoney(res.riskAmount)} hi rahega.
+          Position notional exceeds balance — need at least <b>{res.minLeverage.toFixed(2)}x</b> leverage to open. Risk at stop stays {fmtMoney(res.riskAmount)}.
         </Notice>
       )}
       {hasCosts && (
         <Notice kind="info">
-          Fees <b>{fmtMoney(res.feesAtStop)}</b> + slippage <b>{fmtMoney(res.slippageAtStop)}</b> stop loss ke loss mein jodi gayi hain — risk per coin {fmtMoney(res.riskPerUnit)} se
-          badhkar <b>{fmtMoney(res.effectiveRiskPerUnit)}</b> hua, isliye quantity thodi kam aayi. Stop hit hone par kul loss {fmtMoney(res.riskAmount)} hi rahega.
+          Fees <b>{fmtMoney(res.feesAtStop)}</b> + slippage <b>{fmtMoney(res.slippageAtStop)}</b> are included in stop loss — risk per coin rises from {fmtMoney(res.riskPerUnit)}
+          to <b>{fmtMoney(res.effectiveRiskPerUnit)}</b>, so quantity is slightly lower. Total loss at stop remains {fmtMoney(res.riskAmount)}.
         </Notice>
       )}
 
@@ -159,7 +159,7 @@ export default function PositionSizeCalculator() {
         steps={[
           { title: "Step 1 — Risk amount = Balance × Risk %", math: `${fmtMoney(n.balance)} × ${fmtNum(n.riskPct)}% = ${fmtMoney(res.riskAmount)}` },
           { title: "Step 2 — Risk per unit = |Entry − Stop loss|", math: `|${fmtNum(n.entry)} − ${fmtNum(n.stopLoss)}| = ${fmtMoney(res.riskPerUnit)}` },
-          ...(hasCosts ? [{ title: "Fee + slippage ke baad risk per unit", math: fmtMoney(res.effectiveRiskPerUnit) }] : []),
+          ...(hasCosts ? [{ title: "Risk per unit after fees + slippage", math: fmtMoney(res.effectiveRiskPerUnit) }] : []),
           { title: "Step 3 — Quantity = Risk amount ÷ Risk per unit", math: `${fmtMoney(res.riskAmount)} ÷ ${fmtMoney(res.effectiveRiskPerUnit)} = ${fmtQty(res.quantity)} coins` },
           { title: "Position value = Quantity × Entry", math: `${fmtQty(res.quantity)} × ${fmtNum(n.entry)} = ${fmtMoney(res.positionValue)}` },
         ]}
@@ -178,7 +178,7 @@ export default function PositionSizeCalculator() {
       badge={res ? <SideBadge side={res.side} /> : undefined}
       result={body}
       dock={res ? { label: "Position size", value: `${fmtQty(res.quantity)} coins`, sub: `${fmtMoney(res.positionValue)} · risk ${fmtMoney(res.riskAmount)}` } : null}
-      note="Leverage risk % ka vikalp nahi hai — loss stop loss se tay hota hai, leverage sirf margin badalta hai. Exchange ki lot size / minimum quantity ke hisaab se quantity round karni pad sakti hai. Trading advice nahi."
+      note="Leverage does not replace risk % — loss is set by the stop; leverage only changes margin. Round quantity to exchange lot/min size. Not trading advice."
     />
   );
 }

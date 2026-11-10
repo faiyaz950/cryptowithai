@@ -129,11 +129,11 @@ export function computeTokenUnlock(input: TokenUnlockInput): TokenUnlockOutcome 
     return null;
   }
 
-  if (price <= 0) return { ok: false, error: "Price 0 se bada hona chahiye." };
-  if (circulatingSupply <= 0) return { ok: false, error: "Circulating supply 0 se badi honi chahiye." };
-  if (unlockAmount <= 0) return { ok: false, error: "Unlock amount 0 se bada hona chahiye." };
+  if (price <= 0) return { ok: false, error: "Price must be greater than 0." };
+  if (circulatingSupply <= 0) return { ok: false, error: "Circulating supply must be greater than 0." };
+  if (unlockAmount <= 0) return { ok: false, error: "Unlock amount must be greater than 0." };
   if (totalSupply < circulatingSupply) {
-    return { ok: false, error: "Total supply circulating supply se kam nahi ho sakti." };
+    return { ok: false, error: "Total supply cannot be less than circulating supply." };
   }
 
   const currentMarketCap = price * circulatingSupply;

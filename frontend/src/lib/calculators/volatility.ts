@@ -109,7 +109,7 @@ export function computeVolatility(input: VolatilityInput): VolatilityOutcome | n
   const { timeframe, lookbackPeriods, prices } = input;
 
   if (!prices || prices.length < 2) {
-    return { ok: false, error: "Kam se kam 2 price points hone chahiye volatility calculate karne ke liye." };
+    return { ok: false, error: "At least 2 price points are required to calculate volatility." };
   }
 
   // Slice to lookback + 1 prices to calculate lookback returns
@@ -117,7 +117,7 @@ export function computeVolatility(input: VolatilityInput): VolatilityOutcome | n
   const activePrices = prices.slice(prices.length - sliceLength);
 
   if (activePrices.some((p) => !Number.isFinite(p) || p <= 0)) {
-    return { ok: false, error: "Price values valid positive numbers hone chahiye." };
+    return { ok: false, error: "Prices must be valid positive numbers." };
   }
 
   // Calculate percentage returns
@@ -130,7 +130,7 @@ export function computeVolatility(input: VolatilityInput): VolatilityOutcome | n
   }
 
   if (returns.length < 2) {
-    return { ok: false, error: "Returns calculate karne ke liye minimum 2 intervals required hain." };
+    return { ok: false, error: "At least 2 intervals are required to compute returns." };
   }
 
   // Mean return

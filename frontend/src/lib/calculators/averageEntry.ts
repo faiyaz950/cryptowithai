@@ -64,7 +64,7 @@ export function computeAverageEntry(i: AverageEntryInput): AverageEntryOutcome |
     if (p.price < lowestPrice) lowestPrice = p.price;
   }
 
-  if (totalQuantity <= 0) return { ok: false, error: "Total quantity 0 se badi honi chahiye." };
+  if (totalQuantity <= 0) return { ok: false, error: "Total quantity must be greater than 0." };
 
   const averagePrice = totalCost / totalQuantity;
 

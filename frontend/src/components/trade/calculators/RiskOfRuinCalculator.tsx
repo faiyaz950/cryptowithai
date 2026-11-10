@@ -194,7 +194,7 @@ export default function RiskOfRuinCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={ShieldAlert}>
-      Win rate, average win/loss aur risk per trade enter karein — Monte Carlo engine probability of ruin calculate karega.
+      Enter win rate, average win/loss and risk per trade — Monte Carlo estimates probability of ruin.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -217,9 +217,9 @@ export default function RiskOfRuinCalculator() {
       {res.riskPctPerTrade > res.kellyCriterionPct && (
         <Notice kind="warn">
           <span>
-            <strong>Over-betting Alert:</strong> Aapka per-trade risk (
+            <strong>Over-betting Alert:</strong> Your per-trade risk (
             <strong>{res.riskPctPerTrade}%</strong>) full Kelly Criterion limit (
-            <strong>{res.kellyCriterionPct.toFixed(1)}%</strong>) se zyada hai. Long-term run mein over-betting capital wipe-out kar sakti hai. Professional traders generally Half-Kelly (≤{Math.max(0.5, res.kellyCriterionPct / 2).toFixed(1)}%) trade karte hain.
+            <strong>{res.kellyCriterionPct.toFixed(1)}%</strong>) exceeds full Kelly. Over-betting can wipe capital over time. Many pros use half-Kelly (≤{Math.max(0.5, res.kellyCriterionPct / 2).toFixed(1)}%).
           </span>
         </Notice>
       )}
@@ -333,7 +333,7 @@ export default function RiskOfRuinCalculator() {
             }
           : null
       }
-      note="Path dependency trading mein critical factor hoti hai. Positive expected value hone par bhi high leverage / oversized risk se capital wipe out ho sakta hai."
+      note="Path dependency matters in trading. Even with positive expectancy, oversized risk or high leverage can still wipe capital."
     />
   );
 }

@@ -47,7 +47,7 @@ export default function RiskRewardCalculator() {
         <Field label="Take profit" value={takeProfit} onChange={setTakeProfit} prefix="$" min={0} invalid={bad.takeProfit} />
       </div>
       <p className="cx-hint" style={{ marginTop: -10 }}>
-        {side === "long" ? "Long: stop loss entry se neeche, take profit upar." : "Short: stop loss entry se upar, take profit neeche."}
+        {side === "long" ? "Long: stop below entry, take profit above." : "Short: stop above entry, take profit below."}
       </p>
     </>
   );
@@ -55,7 +55,7 @@ export default function RiskRewardCalculator() {
   const body = error ? (
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
-    <EmptyState icon={Target}>Entry, stop loss aur take profit daalein — R:R yahan live dikhega.</EmptyState>
+    <EmptyState icon={Target}>Enter entry, stop loss and take profit — R:R updates live here.</EmptyState>
   ) : (
     <div className="cx-body">
       <Hero
@@ -85,7 +85,7 @@ export default function RiskRewardCalculator() {
 
       <Meter label="Break-even win rate" valueText={pct(res.breakevenWinRate)} pct={res.breakevenWinRate} />
       <p className="cx-hint" style={{ marginTop: -8 }}>
-        Itne % trades jeetne par (fees ke bina) na profit na loss — isse zyada win rate rakhoge to profit.
+        Win rate needed to break even (before fees) — above this, the strategy is profitable.
       </p>
 
       <Walkthrough
@@ -116,7 +116,7 @@ export default function RiskRewardCalculator() {
       badge={<SideBadge side={side} />}
       result={body}
       dock={res ? { label: "Risk : Reward", value: fmtRatio(res.ratio), sub: `${fmtMoney(res.risk)} → ${fmtMoney(res.reward)}` } : null}
-      note="Sab kuch per coin ke hisaab se hai (fees aur slippage ke bina). Trading advice nahi."
+      note="All figures are per coin (excluding fees and slippage). Not trading advice."
     />
   );
 }

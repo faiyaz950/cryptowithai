@@ -123,7 +123,7 @@ export default function PortfolioAllocationCalculator() {
     <>
       <Field
         label="Total Capital"
-        hint="Kul nivesh rashi jo allocate karni hai"
+        hint="Total capital to allocate"
         value={totalCapital}
         onChange={setTotalCapital}
         prefix="$"
@@ -238,7 +238,7 @@ export default function PortfolioAllocationCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={PieChart}>
-      Total capital aur asset allocation % daalein — calculation live dikhega.
+      Enter total capital and allocation % — results update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -267,7 +267,7 @@ export default function PortfolioAllocationCalculator() {
 
       {res.isValid && (
         <Notice kind="info">
-          <strong>Perfect Allocation!</strong> Total portfolio exactly 100% balanced hai.
+          <strong>Perfect Allocation!</strong> Portfolio totals exactly 100%.
         </Notice>
       )}
 
@@ -307,7 +307,7 @@ export default function PortfolioAllocationCalculator() {
         steps={[
           {
             title: "Formula: Asset Amount = Total Capital × Allocation %",
-            math: `Har asset ke liye: Capital × (Pct ÷ 100)`,
+            math: `Per asset: Capital × (Pct ÷ 100)`,
           },
           ...res.items.map((it) => ({
             title: `${it.name} Amount = ${fmtMoney(res.totalCapital)} × ${it.pct}%`,
@@ -337,7 +337,7 @@ export default function PortfolioAllocationCalculator() {
             }
           : null
       }
-      note="Portfolio diversification risk management ka ek tareeqa hai. Allocation decisions apne risk tolerance aur financial goals ke anusaar lein."
+      note="Diversification is one risk tool. Size allocations to your risk tolerance and goals."
     />
   );
 }

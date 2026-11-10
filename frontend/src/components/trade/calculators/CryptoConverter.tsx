@@ -268,7 +268,7 @@ export default function CryptoConverter() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Coins}>
-      Cryptocurrency aur conversion target select karein — live exchange rate aur converted value live dikhegi.
+      Select crypto and conversion target — live rate and converted value update here.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -368,7 +368,7 @@ export default function CryptoConverter() {
             }
           : null
       }
-      note="Crypto exchange rates live market orderbooks par depend karte hain. Actual execution rates slippage, liquidity depth aur exchange fee tier ke hisaab se minor vary kar sakte hain. Trading advice nahi."
+      note="Rates follow live order books. Execution may differ with slippage, depth and fee tier. Not trading advice."
     />
   );
 }

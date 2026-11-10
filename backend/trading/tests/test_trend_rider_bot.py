@@ -429,7 +429,7 @@ class ExchangeSim(FakeClient):
         self.stop = None
 
 
-def walk_forward(times, o, h, l, c, start_i, skip_bars=(), extra=None):
+def walk_forward(times, o, h, l, c, start_i, skip_bars=(), extra=None, btc=None):
     """Har candle khulne ke 30s baad worker ki tarah plan + reconcile. `skip_bars`: worker band tha.
     Steady (`extra` mein tp1) par candle ke beech wali tick bhi: stop na laga ho aur price tp1 chhoo
     le to wahin hissa book — backtest jaisa (stop pehle, phir tp1)."""
@@ -451,8 +451,12 @@ def walk_forward(times, o, h, l, c, start_i, skip_bars=(), extra=None):
         # Chalu candle ke 30s — abhi sirf open hi bana hai.
         ft, fo, fh, fl, fc = (np.append(times[:i], times[i]), np.append(o[:i], o[i]), np.append(h[:i], o[i]),
                               np.append(l[:i], o[i]), np.append(c[:i], o[i]))
+        btc_now = None
+        if btc is not None:
+            # BTC ki chalu candle bhi abhi sirf open hai.
+            btc_now = (btc[0][:i + 1], np.append(btc[4][:i], btc[1][i]))
         p = bot.plan(ft, fo, fh, fl, fc, params=params, capital=1000.0, start_time_ms=start_time,
-                     bar_ms=BAR, now_ms=now)
+                     bar_ms=BAR, now_ms=now, btc=btc_now)
         assert p["error"] is None and not p["stale"]
         ex.mark_price = o[i]
         ex.now_bar = int(times[i])
@@ -545,6 +549,57 @@ class SteadyParityTest(unittest.TestCase):
             self.assertEqual(self.ex.open_trade["entry_time"], pos["entry_time"])
             self.assertEqual(self.ex.open_trade["tp1"], pos["tp1_done"])
             self.assertAlmostEqual(self.ex.stop, pos["stop_loss"], places=6)
+
+
+class ProParityTest(unittest.TestCase):
+    """Pro bot (weekend filter + BTC confirmation + pehla profit) — backtest jaise hi trades."""
+    extra = {"tp1_r": 1.0, "tp1_frac": 0.25, "skip_weekend": True, "btc_confirm": True}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = synthetic_candles()
+        cls.btc = synthetic_candles(seed=11)
+        cls.start_i = 700
+        cls.ex = walk_forward(*cls.data, cls.start_i, extra=cls.extra, btc=cls.btc)
+        t, o, h, l, c = (x[:-1] for x in cls.data)
+        conf = trend_rider.btc_confirm_arrays(t, cls.btc[0][:-1], cls.btc[4][:-1], cls.extra)
+        cls.sim = trend_rider.simulate(t, o, h, l, c, params=cls.extra, capital=1000.0,
+                                       start_index=cls.start_i, bar_hours=4.0, confirm=conf)
+        cls.plain = trend_rider.simulate(t, o, h, l, c, params={"tp1_r": 1.0, "tp1_frac": 0.25}, capital=1000.0,
+                                         start_index=cls.start_i, bar_hours=4.0)
+
+    def test_filters_actually_remove_trades(self):
+        self.assertGreaterEqual(len(self.sim["trades"]), 4)
+        self.assertLess(len(self.sim["trades"]), len(self.plain["trades"]))
+
+    def test_no_weekend_signal_entries(self):
+        for t in self.sim["trades"]:
+            signal_bar = t["entry_time"] - BAR
+            self.assertTrue(bool(trend_rider.weekday_mask([signal_bar])[0]))
+
+    def test_same_trades_as_backtest(self):
+        sim = self.sim["trades"]
+        self.assertEqual(len(self.ex.trades), len(sim))
+        for s, b in zip(sim, self.ex.trades):
+            self.assertEqual(b["entry_time"], s["entry_time"])
+            self.assertEqual(b["exit_time"], s["exit_time"])
+            self.assertEqual(b["tp1"], s["tp1_hit"])
+            d = 1 if b["side"] == "long" else -1
+            self.assertAlmostEqual(b["exit_raw"] * (1 - d * trend_rider.SLIPPAGE), s["exit_price"], places=3)
+
+
+class FilterTest(unittest.TestCase):
+    def test_weekday_mask(self):
+        # 25 Oct 2026 Sunday, 26 Oct Monday, 24 Oct Saturday, 23 Oct Friday (UTC midnight)
+        ms = [1792886400000, 1792972800000, 1792800000000, 1792713600000]
+        self.assertEqual(list(trend_rider.weekday_mask(ms)), [False, True, False, True])
+
+    def test_btc_confirm_uses_last_btc_bar_at_or_before(self):
+        p = dict(trend_rider.DEFAULTS, ema_fast=2, ema_slow=3)
+        bt = np.array([0, 10, 20, 30], dtype=np.int64)
+        bc = np.array([100.0, 100.0, 100.0, 130.0])  # last bar breaks above its slow EMA
+        conf = trend_rider.btc_confirm_arrays(np.array([5, 25, 35, -1]), bt, bc, p)
+        self.assertEqual(list(conf["long"]), [False, False, True, False])
 
 
 if __name__ == "__main__":

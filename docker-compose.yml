@@ -58,6 +58,8 @@ services:
         NEXT_PUBLIC_MUKUL_REFERRAL_URL: ${NEXT_PUBLIC_MUKUL_REFERRAL_URL:-}
         BACKEND_URL: http://backend:8000
     restart: unless-stopped
+    environment:
+      BACKEND_URL: http://backend:8000
     depends_on:
       - backend
 

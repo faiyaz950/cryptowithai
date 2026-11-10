@@ -100,8 +100,8 @@ export function computeMarketCap(input: MarketCapInput): MarketCapOutcome | null
     return null;
   }
 
-  if (price <= 0) return { ok: false, error: "Price 0 se bada hona chahiye." };
-  if (circulatingSupply <= 0) return { ok: false, error: "Circulating supply 0 se badi honi chahiye." };
+  if (price <= 0) return { ok: false, error: "Price must be greater than 0." };
+  if (circulatingSupply <= 0) return { ok: false, error: "Circulating supply must be greater than 0." };
 
   const currentMarketCap = price * circulatingSupply;
   const effectiveMax = Number.isFinite(maxSupply) && (maxSupply as number) > 0 ? (maxSupply as number) : null;

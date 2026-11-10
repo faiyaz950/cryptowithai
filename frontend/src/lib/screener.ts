@@ -227,6 +227,6 @@ export function buildAiPrompt(rows: ScreenerRow[], interval: string): string {
     "",
     "In numbers ko samjhao: kaunse setups sabse solid lagte hain aur kyun, kahan risk hai, " +
       "aur kis coin par kaunsi strategy behtar baithegi. Koi bhi price target invent mat karna — " +
-      "sirf diye gaye data par baat karo.",
+      "only discuss the data provided.",
   ].join("\n");
 }

@@ -120,7 +120,7 @@ export default function DcaCalculator() {
 
       <Field
         label="Investment per Purchase"
-        hint="Har cycle par kitna amount invest karna hai"
+        hint="Amount to invest each cycle"
         value={recurringInvestment}
         onChange={setRecurringInvestment}
         prefix="$"
@@ -161,14 +161,14 @@ export default function DcaCalculator() {
             onChange={(e) => setCustomPriceInput(e.target.value)}
           />
           <span className="cx-hint">
-            Har purchase ka price daalein (e.g. 100, 80).
+            Enter each purchase price (e.g. 100, 80).
           </span>
         </div>
       )}
 
       <Field
         label="Current Market / Exit Price"
-        hint="P&L aur portfolio value calculate karne ke liye current price"
+        hint="Current price for P&L and portfolio value"
         value={currentPriceOverride || String(selectedDataset.currentPrice)}
         onChange={setCurrentPriceOverride}
         prefix="$"
@@ -198,7 +198,7 @@ export default function DcaCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Repeat}>
-      Investment amount aur historical ya custom price data select karein — average entry aur returns live dikhenge.
+      Enter investment and historical or custom prices — average entry and returns update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -226,7 +226,7 @@ export default function DcaCalculator() {
           <strong className="text-cyan-400">{fmtQty(res.totalQuantity)} coins</strong> accumulate kiye.
           {res.dcaAdvantage > 0 ? (
             <span>
-              {" "}Lump-sum (pehla price) ke mukable DCA ne aapko{" "}
+              {" "} vs lump-sum at the first price, DCA {" "}
               <strong className="text-emerald-400">+{fmtMoney(res.dcaAdvantage)}</strong> ka advantage diya.
             </span>
           ) : (
@@ -340,7 +340,7 @@ export default function DcaCalculator() {
             }
           : null
       }
-      note="Dollar Cost Averaging (DCA) market volatility aur FOMO emotional mistakes ko reduce karta hai. Historical simulation past performance par based hai aur future returns ki guarantee nahi deta. Trading advice nahi."
+      note="DCA can reduce volatility and FOMO mistakes. Historical simulation is not a guarantee of future returns. Not trading advice."
     />
   );
 }

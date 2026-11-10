@@ -265,7 +265,7 @@ export default function LiquidationCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Flame}>
-      Entry, leverage aur margin parameters daalein — liquidation price yahan live dikhega.
+      Enter entry, leverage and margin — liquidation price updates live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -283,14 +283,6 @@ export default function LiquidationCalculator() {
           </>
         }
       />
-
-      {/* Explicit disclaimer required by prompt */}
-      <Notice kind="warn">
-        <strong>Estimated value. Actual liquidation price may vary based on exchange rules, fees, maintenance margin and position tier.</strong>
-        <p style={{ marginTop: 4, fontSize: "12px", opacity: 0.9 }}>
-          Alag-alag exchanges ({res.exchangeName}, Bybit, OKX, Delta) ke maintenance margin tiers, liquidation clearance fees aur funding rates ke kaaran real liquidation price mein thoda farq ho sakta hai.
-        </p>
-      </Notice>
 
       <SectionTitle>Price levels &amp; liquidation ladder</SectionTitle>
       <PriceRuler stop={res.estLiquidationPrice} entry={n.entry} fmt={fmtMoney} />
@@ -363,7 +355,7 @@ export default function LiquidationCalculator() {
             }
           : null
       }
-      note="Estimated value. Actual liquidation price may vary based on exchange rules, fees, maintenance margin and position tier. Trading advice nahi."
+      note="Estimated value. Actual liquidation price may vary based on exchange rules, fees, maintenance margin and position tier. Not trading advice."
     />
   );
 }

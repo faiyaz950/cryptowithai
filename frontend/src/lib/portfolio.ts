@@ -373,7 +373,7 @@ export function fmtDate(iso: string): string {
 // ── Build AI analysis prompt ──────────────────────────────────────────────
 
 export function buildPortfolioPrompt(holdings: PricedHolding[], usdInr: number): string {
-  const lines = ["Mera portfolio analyze karo aur detailed insights do:\n"];
+  const lines = ["Analyze my portfolio and give detailed insights:\n"];
 
   const stocks = holdings.filter((h) => h.type === "stock" && !h.priceError);
   const cryptos = holdings.filter((h) => h.type === "crypto" && !h.priceError);
@@ -411,7 +411,7 @@ export function buildPortfolioPrompt(holdings: PricedHolding[], usdInr: number):
   lines.push(`Total Current Value: ${fmtINR(summary.totalCurrentINR)}`);
   lines.push(`Overall P&L: ${fmtINR(summary.totalPnlINR)} (${fmtPct(summary.totalPnlPct)})`);
   lines.push(`\nUSD/INR rate used: ₹${usdInr}`);
-  lines.push("\nKripya batao: diversification kaisi hai, koi concentrated risk hai, kya changes karne chahiye?");
+  lines.push("\nPlease cover: diversification quality, any concentrated risk, and what to change.");
 
   return lines.join("\n");
 }

@@ -336,17 +336,17 @@ export default function PriceImpactCalculator() {
             {/* Impact Alerts */}
             {outcome.severity === "extreme" && (
               <Notice kind="error">
-                Extreme Price Impact Alert: Is swap par <b>{outcome.priceImpactPct.toFixed(2)}%</b> price impact aa raha hai! Pool reserves ke mukable swap size bohot bada hai. Swap ko chhota karein ya multi-pool aggregator use karein.
+                Extreme Price Impact Alert: This swap has <b>{outcome.priceImpactPct.toFixed(2)}%</b> price impact — size is very large vs pool reserves. Reduce swap size or use a multi-pool aggregator.
               </Notice>
             )}
             {outcome.severity === "high" && (
               <Notice kind="warn">
-                High Price Impact: Swap size pool depth ka significant portion consume kar raha hai (<b>{outcome.priceImpactPct.toFixed(2)}%</b> impact). Aggregator ke through split routing consider karein.
+                High Price Impact: Swap size consumes a large share of pool depth (<b>{outcome.priceImpactPct.toFixed(2)}%</b> impact). Consider split routing via an aggregator.
               </Notice>
             )}
             {outcome.severity === "minimal" && (
               <Notice kind="info">
-                Optimal Liquidity: Price impact negligible (<b>{outcome.priceImpactPct.toFixed(2)}%</b>) hai. Pool depth aapke swap size ke mukable kaafi strong hai.
+                Optimal Liquidity: Price impact is negligible (<b>{outcome.priceImpactPct.toFixed(2)}%</b>). Pool depth is strong relative to your swap size.
               </Notice>
             )}
 
@@ -374,7 +374,7 @@ export default function PriceImpactCalculator() {
           </div>
         ) : (
           <EmptyState icon={Waves}>
-            Dono tokens ke pool reserves aur swap amount bharein. System constant-product AMM formula se output, average execution price aur price impact calculate karega.
+            Enter pool reserves for both tokens and swap amount. Output, average execution price and price impact use the constant-product AMM formula.
           </EmptyState>
         )
       }
@@ -388,7 +388,7 @@ export default function PriceImpactCalculator() {
             }
           : null
       }
-      note="Note: Ye formula standard x × y = k pools (jaise Uniswap v2) ke liye hai. Concentrated liquidity (Uniswap v3) ya curve pools mein dynamic ticks ke hisaab se calculation alag hoti hai."
+      note="Note: This formula applies to standard x × y = k pools (e.g. Uniswap v2). Concentrated liquidity (Uniswap v3) and curve pools use different tick-based math."
     />
   );
 }

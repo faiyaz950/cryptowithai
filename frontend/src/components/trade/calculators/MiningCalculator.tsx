@@ -202,7 +202,7 @@ export default function MiningCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Cpu}>
-      Mining hashrate, power consumption aur electricity rate enter karein — daily revenue aur payback live calculate hoga.
+      Enter hashrate, power draw and electricity rate — daily revenue and payback update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -226,15 +226,15 @@ export default function MiningCalculator() {
         <span>
           {res.isProfitable ? (
             <span>
-              <strong>Profitable Rig:</strong> Daily revenue <strong>{fmtMoney(res.dailyRevenue)}</strong> me se power cost <strong>-{fmtMoney(res.dailyElectricityCost)}</strong> nikalne ke baad{" "}
-              <strong className="text-emerald-400">+{fmtMoney(res.dailyNetProfit)}/day ({fmtMoney(res.monthlyNetProfit)}/mo)</strong> profit banta hai.
+              <strong>Profitable Rig:</strong> After power <strong>-{fmtMoney(res.dailyElectricityCost)}</strong> from daily revenue <strong>{fmtMoney(res.dailyRevenue)}</strong>,{" "}
+              <strong className="text-emerald-400">+{fmtMoney(res.dailyNetProfit)}/day ({fmtMoney(res.monthlyNetProfit)}/mo)</strong> net profit.
               {res.paybackMonths != null && (
                 <span> Estimated hardware payback period: <strong>~{res.paybackMonths} months ({res.paybackDays} days)</strong>.</span>
               )}
             </span>
           ) : (
             <span>
-              <strong>Unprofitable Operation:</strong> Electricity cost ({fmtMoney(res.dailyElectricityCost)}/day) mined coins revenue ({fmtMoney(res.dailyRevenue)}/day) se zyada hai! Lower electricity tariff ($0.04 - $0.06/kWh) ki zarurat hai.
+              <strong>Unprofitable Operation:</strong> Power ({fmtMoney(res.dailyElectricityCost)}/day) exceeds mining revenue ({fmtMoney(res.dailyRevenue)}/day)! Need lower tariff (~$0.04–$0.06/kWh).
             </span>
           )}
         </span>
@@ -318,7 +318,7 @@ export default function MiningCalculator() {
             }
           : null
       }
-      note="Mining output global network difficulty, halving schedule aur pool luck ke saath dynamic rehta hai. Actual profitability continuous market updates par depend karti hai. Trading/Mining advice nahi."
+      note="Mining output shifts with difficulty, halvings and pool luck. Profitability depends on ongoing market conditions. Not trading or mining advice."
     />
   );
 }

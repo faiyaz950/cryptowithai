@@ -135,7 +135,7 @@ export default function MarketCapCalculator() {
 
       <Field
         label="Circulating Supply"
-        hint="Market mein freely trade hone wale coins"
+        hint="Coins freely trading in the market"
         value={circulatingSupply}
         onChange={(v) => {
           setCirculatingSupply(v);
@@ -178,7 +178,7 @@ export default function MarketCapCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Globe}>
-      Price, circulating supply aur target market cap enter karein — implied token price aur valuation multiples dikhenge.
+      Enter price, circulating supply and target market cap — implied price and valuation multiples appear here.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -202,8 +202,8 @@ export default function MarketCapCalculator() {
       {res.circulatingRatioPct != null && res.circulatingRatioPct < 60 && (
         <Notice kind="warn">
           <span>
-            <strong>Low Float / High FDV Warning:</strong> Is token ki sirf{" "}
-            <strong>{res.circulatingRatioPct.toFixed(1)}% supply</strong> market mein circulate ho rahi hai. Future token unlocks se market cap badhne ke bawajood per-token price dilute ho sakti hai.
+            <strong>Low Float / High FDV Warning:</strong> Only{" "}
+            <strong>{res.circulatingRatioPct.toFixed(1)}% of supply</strong> is circulating. Future unlocks can dilute per-token price even if market cap rises.
           </span>
         </Notice>
       )}
@@ -292,7 +292,7 @@ export default function MarketCapCalculator() {
             math:
               res.maxSupply != null
                 ? `FDV = Price (${fmtMoney(res.price)}) × Max Supply (${fmtNum(res.maxSupply)}) = ${fmtMoney(res.fdv)}`
-                : "Max supply unconstrained hai, isliye FDV circulating market cap ke barabar consider hoti hai.",
+                : "Max supply is unconstrained, so FDV equals circulating market cap.",
           },
         ]}
       />
@@ -319,7 +319,7 @@ export default function MarketCapCalculator() {
             }
           : null
       }
-      note="Market cap circulating supply aur price ka product hota hai. Large cap coins ko double hone ke liye massive liquidity inflows ki zarurat hoti hai."
+      note="Market cap is circulating supply × price. Large caps need massive inflows to double."
     />
   );
 }

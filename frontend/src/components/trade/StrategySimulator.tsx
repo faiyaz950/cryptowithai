@@ -239,7 +239,7 @@ export default function StrategySimulator({
 
       // 1. Save strategy as Paper
       const deployed = deployStrategyToPaper(strategy.id, settings);
-      if (!deployed) throw new Error("Strategy save nahi ho saki");
+      if (!deployed) throw new Error("Could not save strategy");
 
       // 2. If authenticated, place an initial demo order so position appears in PaperDesk
       if (token && currentPrice > 0) {

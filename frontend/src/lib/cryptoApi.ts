@@ -301,9 +301,61 @@ export interface BacktestResult {
   symbols?: string[];
   portfolio?: BacktestPortfolioRow[];
   open_positions?: (BacktestOpenPosition & { symbol: string })[];
-  rules?: { channel: number; exit_channel: number; stop_atr: number; ema_fast: number; ema_slow: number; allow_shorts: boolean };
+  rules?: {
+    /** Trend Rider ke — Trident ke result mein nahi aate. */
+    channel?: number;
+    exit_channel?: number;
+    /** Trident: teen momentum horizon (candles). */
+    h1?: number;
+    h2?: number;
+    h3?: number;
+    stop_atr?: number;
+    ema_fast?: number;
+    ema_slow?: number;
+    allow_shorts?: boolean;
+    tp1_r?: number | null;
+    tp1_frac?: number | null;
+    skip_weekend?: boolean;
+    btc_confirm?: boolean;
+    /** AVPT */
+    swing_len?: number;
+    max_pb_per_anchor?: number;
+    min_impulse_atr?: number;
+    filter_mode?: string;
+    target_mode?: string;
+    sl_buffer_atr?: number;
+    use_be_ratchet?: boolean;
+  };
+  /** Fractions of notional (0.00059 = 0.059%). UI multiplies by 100 for "%/side". */
   costs?: { fee_pct_per_side: number; slippage_pct_per_side: number; long_funding_pct_per_8h: number };
+  /**
+   * Separate testing environments (Master Spec Part I).
+   * Paper / live stay NOT TESTED until real fills exist — never fabricate.
+   */
+  validation?: {
+    historical?: ValidationEnvBlock;
+    oos?: ValidationEnvBlock;
+    walk_forward?: ValidationEnvBlock & { folds?: ValidationEnvBlock[] };
+    paper?: ValidationEnvBlock;
+    live?: ValidationEnvBlock;
+  };
   error?: string;
+}
+
+export interface ValidationEnvBlock {
+  label?: string;
+  status: "PASS" | "FAIL" | "NOT TESTED" | "No Data" | "verified";
+  period?: string;
+  start_ms?: number;
+  end_ms?: number;
+  candles?: number;
+  closed_trades?: number;
+  net_return_pct?: number | null;
+  max_drawdown_pct?: number | null;
+  win_rate?: number | null;
+  profit_factor?: number | null;
+  note?: string;
+  folds?: ValidationEnvBlock[];
 }
 
 export interface BacktestStats {
@@ -346,7 +398,7 @@ export interface BacktestOpenPosition {
 }
 
 export interface BacktestParams {
-  strategy: "ema-crossover" | "range-breakout" | "trend-rider";
+  strategy: "ema-crossover" | "range-breakout" | "trend-rider" | "trident-momentum" | "avpt-pullback";
   /** Trend Rider: capital ($) aur har trade ka risk (%) — P&L inhi par banta hai. */
   capital?: number;
   risk_pct?: number;
@@ -359,6 +411,22 @@ export interface BacktestParams {
   /** Steady: pehla profit kitne R par aur kitna hissa (0–1). */
   tp1_r?: number;
   tp1_frac?: number;
+  /** Pro: weekend signal nahi, aur alt ka trade BTC ke regime ke saath. */
+  skip_weekend?: boolean;
+  btc_confirm?: boolean;
+  /** Trident: chhota / beech ka / lamba momentum horizon (candles). */
+  h1?: number;
+  h2?: number;
+  h3?: number;
+  /** AVPT (Anchored VWAP Pullback) knobs. */
+  swing_len?: number;
+  filter_mode?: string;
+  min_impulse_atr?: number;
+  sl_buffer_atr?: number;
+  target_mode?: string;
+  use_be_ratchet?: boolean;
+  custom_min_er?: number;
+  custom_band_sig?: number;
   symbol: string;
   timeframe: string;
   days: number;
@@ -476,6 +544,9 @@ export async function placeDemoOrder(
     price?: number | null;
     stop_loss?: number | null;
     take_profit?: number | null;
+    /** Pehle target ke baad ke targets. Paper deal inhe ek-ek karke kaat-ta hai. */
+    targets?: number[];
+    trail?: boolean;
   },
 ): Promise<{ success: boolean; order_id?: string; message?: string; error?: string; data?: DemoOrder }> {
   return cryptoFetch("/place-order", {
@@ -513,6 +584,9 @@ export interface PaperPosition {
   opened_at: string | null;
   stop_loss?: number | null;
   take_profit?: number | null;
+  /** Agla target pehle, phir bache hue. */
+  targets?: number[];
+  trail?: boolean;
 }
 
 export interface PaperStats {
@@ -648,15 +722,11 @@ export async function deployStrategyBot(
     timeframe: string;
     capital: number;
     risk_pct: number;
-    channel: number;
-    exit_channel: number;
-    stop_atr: number;
-    allow_shorts: boolean;
-    tp1_r?: number;
-    tp1_frac?: number;
     mode: "paper" | "live";
     confirm_live?: boolean;
     exchange_account_id?: number;
+    /** Trend Rider / Trident knobs — server ignores unknown keys. */
+    [key: string]: string | number | boolean | undefined;
   },
 ): Promise<{ success: boolean; message?: string; data: StrategyBot }> {
   return cryptoFetch("/bots", {
@@ -723,6 +793,19 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
     symbols: params.symbols,
     tp1_r: params.tp1_r,
     tp1_frac: params.tp1_frac,
+    skip_weekend: params.skip_weekend,
+    btc_confirm: params.btc_confirm,
+    h1: params.h1,
+    h2: params.h2,
+    h3: params.h3,
+    swing_len: params.swing_len,
+    filter_mode: params.filter_mode,
+    min_impulse_atr: params.min_impulse_atr,
+    sl_buffer_atr: params.sl_buffer_atr,
+    target_mode: params.target_mode,
+    use_be_ratchet: params.use_be_ratchet,
+    custom_min_er: params.custom_min_er,
+    custom_band_sig: params.custom_band_sig,
   };
   for (const [key, value] of Object.entries(extra)) {
     if (value !== undefined) q.set(key, String(value));
@@ -734,7 +817,7 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
 export async function fetchOptionsBacktestCandles(symbol: string, timeframe: string, days: number): Promise<Candle[]> {
   const q = new URLSearchParams({ symbol, timeframe, days: String(days) });
   const res = await cryptoFetch<{ success: boolean; candles?: Candle[]; error?: string }>(`/options/backtest/candles?${q}`);
-  if (!res.success) throw new Error(res.error || "Candles nahi mili");
+  if (!res.success) throw new Error(res.error || "Could not load candles");
   return res.candles ?? [];
 }
 
@@ -1060,7 +1143,7 @@ export async function fetchMarketTickers(): Promise<MarketTicker[]> {
     throw new Error(res.error || "tickers empty");
   } catch {
     const res = await fetchFunding(CRYPTO_SYMBOLS.map((s) => s.value));
-    if (!res.success) throw new Error(res.error || "Market data nahi mila");
+    if (!res.success) throw new Error(res.error || "Could not load market data");
     return res.rates
       .map((r) => {
         const base = fundingBase(r.symbol);

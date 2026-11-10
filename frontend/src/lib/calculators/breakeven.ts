@@ -101,9 +101,9 @@ export function computeBreakEven(i: BreakEvenInput): BreakEvenOutcome | null {
   const { side, entry, entryFeePct, exitFeePct, quantity: rawQty = 1, otherCosts: rawOther = 0 } = i;
 
   if (!Number.isFinite(entry) || !Number.isFinite(entryFeePct) || !Number.isFinite(exitFeePct)) return null;
-  if (entry <= 0) return { ok: false, error: "Entry price 0 se bada hona chahiye." };
-  if (entryFeePct < 0 || exitFeePct < 0) return { ok: false, error: "Fee negative nahi ho sakti." };
-  if (entryFeePct >= 50 || exitFeePct >= 50) return { ok: false, error: "Fee 50% se zyada nahi ho sakti." };
+  if (entry <= 0) return { ok: false, error: "Entry price must be greater than 0." };
+  if (entryFeePct < 0 || exitFeePct < 0) return { ok: false, error: "Fee cannot be negative." };
+  if (entryFeePct >= 50 || exitFeePct >= 50) return { ok: false, error: "Fee cannot exceed 50%." };
 
   const qty = Number.isFinite(rawQty) && rawQty > 0 ? rawQty : 1;
   const otherCosts = Number.isFinite(rawOther) && rawOther >= 0 ? rawOther : 0;

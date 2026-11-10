@@ -31,7 +31,12 @@ from datetime import datetime, timezone
 
 import numpy as np
 
+import avpt
 import trend_rider
+import trident
+
+# Bot ki strategy ka replay engine — Trident / AVPT apna, baaki sab (Steady / Pro bhi) Trend Rider.
+ENGINES = {trident.STRATEGY: trident, avpt.STRATEGY: avpt}
 
 STATE_KEYS = ("entry_time", "trade_state", "side", "quantity", "entry_price", "stop_loss", "stop_order_id",
               "tp1_price", "tp1_done")
@@ -65,7 +70,11 @@ def _dir(side):
     return 1 if side == "long" else -1
 
 
-def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
+def engine_for(strategy):
+    return ENGINES.get(strategy, trend_rider)
+
+
+def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, btc=None, strategy=None):
     """
     Strategy abhi kya chahti hai.
 
@@ -73,6 +82,8 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
     signal sirf band candles par banta hai, chalu candle sirf late entry ki jaanch ke liye hai.
     start_time_ms: bot kab deploy hua. Replay usi candle se shuru hota hai jo us waqt chal
     rahi thi; pehle ki candles sirf EMA warmup hain.
+    btc: (times, close) — Pro ke BTC confirmation ke liye (alt coins); None = filter nahi.
+    strategy: bot ki strategy id — Trident / AVPT ka apna engine, baaki Trend Rider.
 
     Returns:
       position: replay mein chalu trade {side, entry_time, entry_price, stop, initial_stop} | None
@@ -82,8 +93,10 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
       last_closed: aakhri band candle ka open time
       stale:    exchange ne abhi aakhri band candle nahi di — thodi der baad dobara
       error:    itni history hi nahi ki EMA settle ho
+      flat_reason: Trident — momentum aakhri band candle par toota, trade abhi band karna hai
     """
-    p = dict(trend_rider.DEFAULTS)
+    eng = engine_for(strategy)
+    p = dict(eng.DEFAULTS)
     p.update(params or {})
     times = np.asarray(times, dtype=np.int64)
     o, h, l, c = (np.asarray(x, dtype=float) for x in (o, h, l, c))
@@ -97,9 +110,14 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
 
     if n < len(times) and times[n] <= now_ms:
         out["forming"] = {"time": int(times[n]), "open": float(o[n]), "high": float(h[n]), "low": float(l[n])}
-    min_bars = p["ema_slow"] + 10
+    if eng is trident or eng is avpt:
+        min_bars = eng.min_bars(p)
+        need_label = f"warmup {min_bars}"
+    else:
+        min_bars = p["ema_slow"] + 10
+        need_label = f"EMA {p['ema_slow']}"
     if n < min_bars + 1:
-        out["error"] = f"Sirf {n} band candles mili — EMA {p['ema_slow']} ke liye kam se kam {min_bars + 1} chahiye."
+        out["error"] = f"Sirf {n} band candles mili — {need_label} ke liye kam se kam {min_bars + 1} chahiye."
         return out
 
     tc, oc, hc, lc, cc = times[:n], o[:n], h[:n], l[:n], c[:n]
@@ -108,13 +126,29 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
 
     # Deploy ke waqt chal rahi candle (ya uske baad ki pehli) — backtest ka start_index yahi hai.
     start_index = max(int(np.searchsorted(tc, start_time_ms - bar_ms, side="right")), min_bars)
-    res = trend_rider.simulate(tc, oc, hc, lc, cc, params=p, capital=capital,
-                               start_index=start_index, bar_hours=bar_ms / 3_600_000)
+    confirm = (trend_rider.btc_confirm_arrays(tc, btc[0], btc[1], p)
+               if p.get("btc_confirm") and btc is not None else None)
+    res = eng.simulate(tc, oc, hc, lc, cc, params=p, capital=capital,
+                       start_index=start_index, bar_hours=bar_ms / 3_600_000, confirm=confirm)
     out["trades"] = res["trades"]
     if res["equity"]:
         out["equity"] = float(res["equity"][-1][1])
 
+    k = n - 1
+    ind = eng.indicators(oc, hc, lc, cc, p, times=tc, confirm=confirm)
     pos = res["open_position"]
+    if pos and "exit_long" in ind and ind["exit_long" if pos["side"] == "buy" else "exit_short"][k]:
+        # Trident: momentum is band candle par toota — simulate agli candle ke open par band karta
+        # hai, to bot ke liye trade abhi khatam. Equity bhi us exit ke baad wali (agla size isi se).
+        d = 1 if pos["side"] == "buy" else -1
+        forming = out["forming"]
+        px = (forming["open"] if forming and forming["time"] == int(tc[k]) + bar_ms else float(cc[k]))
+        px *= 1 - d * trend_rider.SLIPPAGE
+        qty, entry = pos["quantity"], pos["entry_price"]
+        cash = out["equity"] - d * qty * (float(cc[k]) - entry)
+        out["equity"] = cash + d * qty * (px - entry) - trend_rider.FEE_RATE * qty * px
+        out["flat_reason"] = "Momentum toot gaya (teen mein se do horizon palte) — trade band"
+        pos = None
     if pos:
         out["position"] = {
             "side": "long" if pos["side"] == "buy" else "short",
@@ -128,18 +162,27 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms):
         return out
 
     # simulate jaisa hi gate: signal candle replay ke andar (ya theek pehle) ki ho.
-    k = n - 1
     if k >= max(start_index, 1) - 1:
-        ind = trend_rider.indicators(oc, hc, lc, cc, p)
         if ind["long"][k] or ind["short"][k]:
             d = 1 if ind["long"][k] else -1
-            stop = float(cc[k] - d * p["stop_atr"] * ind["atr"][k])
             entry_time = int(tc[k]) + bar_ms
             tp1 = None
-            forming = out["forming"]
-            if steady and forming and forming["time"] == entry_time:
-                # simulate jaisa: entry candle ka open + slippage se tp1.
-                tp1 = _tp1_level(forming["open"] * (1 + d * trend_rider.SLIPPAGE), stop, out["tp1_r"])
+            if eng is avpt:
+                # AVPT stop/TP1 reclaim plan se aate hain — ATR×stop_atr nahi.
+                stop_arr, tp1_arr = ind.get("stop"), ind.get("tp1")
+                atr_k = float(ind["atr"][k]) if ind.get("atr") is not None and math.isfinite(ind["atr"][k]) else 0.0
+                if stop_arr is not None and math.isfinite(stop_arr[k]):
+                    stop = float(stop_arr[k])
+                else:
+                    stop = float(cc[k] - d * max(atr_k, abs(cc[k]) * 0.005))
+                if tp1_arr is not None and math.isfinite(tp1_arr[k]):
+                    tp1 = float(tp1_arr[k])
+            else:
+                stop = float(cc[k] - d * p["stop_atr"] * ind["atr"][k])
+                forming = out["forming"]
+                if steady and forming and forming["time"] == entry_time:
+                    # simulate jaisa: entry candle ka open + slippage se tp1.
+                    tp1 = _tp1_level(forming["open"] * (1 + d * trend_rider.SLIPPAGE), stop, out["tp1_r"])
             out["pending"] = {
                 "side": "long" if d > 0 else "short",
                 "entry_time": entry_time,
@@ -215,7 +258,8 @@ def reconcile(state, plan_, client, *, now_ms, bar_ms, risk_pct, allow_entries=T
             return s, events, s["trade_state"] != "entering"
 
         if s["trade_state"] in ("open", "entering"):
-            why = "Strategy ka stop lag gaya" if not desired else "Strategy naye trade par hai — purana trade band"
+            why = plan_.get("flat_reason") or (
+                "Strategy ka stop lag gaya" if not desired else "Strategy naye trade par hai — purana trade band")
             _flatten(s, ctx, events, why)
         if not desired:
             return s, events, True

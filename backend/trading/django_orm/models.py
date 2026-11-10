@@ -62,6 +62,8 @@ class PaperBracket(models.Model):
     symbol = models.CharField(max_length=32)
     stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     take_profit = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    # rest = baaki targets, entry, trail, dist, armed, extreme. take_profit agla target hai.
+    plan = models.JSONField(blank=True, default=dict)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

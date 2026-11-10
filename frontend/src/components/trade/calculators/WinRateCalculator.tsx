@@ -107,7 +107,7 @@ export default function WinRateCalculator() {
       <div className="cx-row-2">
         <Field
           label="Winning Trades"
-          hint="Munafa wale trades (W)"
+          hint="Profitable trades (W)"
           value={wins}
           onChange={setWins}
           min={0}
@@ -115,7 +115,7 @@ export default function WinRateCalculator() {
         />
         <Field
           label="Losing Trades"
-          hint="Nuksaan wale trades (L)"
+          hint="Losing trades (L)"
           value={losses}
           onChange={setLosses}
           min={0}
@@ -125,7 +125,7 @@ export default function WinRateCalculator() {
 
       <Field
         label="Breakeven Trades"
-        hint="Zero P&L trades (Win Rate se alag rakha jata hai)"
+        hint="Breakeven trades (excluded from win rate)"
         value={breakeven}
         onChange={setBreakeven}
         min={0}
@@ -134,13 +134,13 @@ export default function WinRateCalculator() {
 
       <Optional>
         <span className="text-xs text-slate-400 block mb-2">
-          Expectancy aur Profit Factor nikalne ke liye optional average amounts:
+          Optional average amounts for expectancy and profit factor:
         </span>
         <div className="cx-row-2">
           <Field
             label="Average Win ($)"
             optional
-            hint="Per winning trade munafa"
+            hint="Profit per winning trade"
             value={avgWin}
             onChange={setAvgWin}
             prefix="$"
@@ -151,7 +151,7 @@ export default function WinRateCalculator() {
           <Field
             label="Average Loss ($)"
             optional
-            hint="Per losing trade nuksaan"
+            hint="Loss per losing trade"
             value={avgLoss}
             onChange={setAvgLoss}
             prefix="$"
@@ -168,7 +168,7 @@ export default function WinRateCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Trophy}>
-      Winning aur losing trades ki sankhya daalein — strategy win rate live dikhega.
+      Enter winning and losing trade counts — win rate updates live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -230,11 +230,11 @@ export default function WinRateCalculator() {
         <Notice kind={res.expectancyPerTrade > 0 ? "info" : "warn"}>
           {res.expectancyPerTrade > 0 ? (
             <span>
-              <strong>Positive Edge!</strong> Aapki strategy ka har trade average <b>{fmtSigned(res.expectancyPerTrade)}</b> ka positive edge banata hai.
+              <strong>Positive Edge!</strong> Your strategy averages <b>{fmtSigned(res.expectancyPerTrade)}</b> edge per trade.
             </span>
           ) : (
             <span>
-              <strong>Negative Edge!</strong> Har trade average <b>{fmtSigned(res.expectancyPerTrade)}</b> lose kar raha hai. Stop-loss tighten karein ya higher R:R trades lein.
+              <strong>Negative Edge!</strong> Har trade average <b>{fmtSigned(res.expectancyPerTrade)}</b> loses per trade. Tighten stops or take higher R:R trades.
             </span>
           )}
         </Notice>
@@ -283,7 +283,7 @@ export default function WinRateCalculator() {
             }
           : null
       }
-      note="Trading mein sirf win rate kaafi nahi hota — risk-reward ratio (payoff) aur position sizing ke saath positive mathematical expectancy hona sabse zaroori hai."
+      note="Win rate alone is not enough — you need positive expectancy with payoff ratio and position sizing."
     />
   );
 }

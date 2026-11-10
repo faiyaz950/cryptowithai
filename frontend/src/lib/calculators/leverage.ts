@@ -60,10 +60,10 @@ export function computeLeverage(i: LeverageInput): LeverageOutcome | null {
   if (!Number.isFinite(leverage) || !Number.isFinite(entry)) return null;
   if (!hasMargin && !hasPosSize) return null;
 
-  if (leverage < 1) return { ok: false, error: "Leverage kam se kam 1× hona chahiye." };
-  if (leverage > 200) return { ok: false, error: "Leverage 200× se zyada support nahi hai." };
-  if (entry <= 0) return { ok: false, error: "Entry price 0 se bada hona chahiye." };
-  if (Number.isFinite(margin) && margin < 0) return { ok: false, error: "Margin 0 ya usse bada hona chahiye." };
+  if (leverage < 1) return { ok: false, error: "Leverage must be at least 1×." };
+  if (leverage > 200) return { ok: false, error: "Leverage above 200× is not supported." };
+  if (entry <= 0) return { ok: false, error: "Entry price must be greater than 0." };
+  if (Number.isFinite(margin) && margin < 0) return { ok: false, error: "Margin must be 0 or greater." };
 
   let effectiveMargin = hasMargin ? margin : (positionSize as number) / leverage;
   let effectivePosValue = hasMargin ? margin * leverage : (positionSize as number);

@@ -229,7 +229,7 @@ export default function BreakEvenCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Equal}>
-      Entry price aur fees daalein — break-even price yahan live dikhega.
+      Enter entry price and fees — break-even updates live here.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -327,7 +327,7 @@ export default function BreakEvenCalculator() {
             }
           : null
       }
-      note="Actual break-even price exchange fee tiers, VIP levels aur funding/slippage costs ke hisaab se minor vary kar sakta hai. Trading advice nahi."
+      note="Actual break-even may vary with fee tiers, VIP levels and funding/slippage. Not trading advice."
     />
   );
 }

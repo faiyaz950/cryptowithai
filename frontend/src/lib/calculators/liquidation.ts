@@ -151,8 +151,8 @@ export function computeLiquidation(i: LiquidationInput): LiquidationOutcome | nu
   } = i;
 
   if (!Number.isFinite(entry) || !Number.isFinite(leverage)) return null;
-  if (entry <= 0) return { ok: false, error: "Entry price 0 se bada hona chahiye." };
-  if (leverage < 1) return { ok: false, error: "Leverage kam se kam 1× hona chahiye." };
+  if (entry <= 0) return { ok: false, error: "Entry price must be greater than 0." };
+  if (leverage < 1) return { ok: false, error: "Leverage must be at least 1×." };
 
   const exConfig = EXCHANGES[exchange] ?? EXCHANGES.binance;
   if (leverage > exConfig.maxLeverage) {

@@ -60,15 +60,15 @@ export function computeProfitTarget(input: ProfitTargetInput): ProfitTargetOutco
     return null;
   }
 
-  if (investment <= 0) return { ok: false, error: "Investment amount 0 se bada hona chahiye." };
-  if (entry <= 0) return { ok: false, error: "Entry price 0 se bada hona chahiye." };
-  if (targetPrice <= 0) return { ok: false, error: "Target price 0 se bada hona chahiye." };
+  if (investment <= 0) return { ok: false, error: "Investment amount must be greater than 0." };
+  if (entry <= 0) return { ok: false, error: "Entry price must be greater than 0." };
+  if (targetPrice <= 0) return { ok: false, error: "Target price must be greater than 0." };
 
   if (side === "long" && targetPrice <= entry) {
-    return { ok: false, error: "Long trade ke liye Target Price entry price se zyada hona chahiye." };
+    return { ok: false, error: "For a long, target price must be above entry." };
   }
   if (side === "short" && targetPrice >= entry) {
-    return { ok: false, error: "Short trade ke liye Target Price entry price se kam hona chahiye." };
+    return { ok: false, error: "For a short, target price must be below entry." };
   }
 
   const quantity = investment / entry;

@@ -84,7 +84,7 @@ export default function AverageDownCalculator() {
     <>
       <Field
         label="Existing Coin Quantity"
-        hint="Pehle se hold ki gayi coins ki sankhya"
+        hint="Number of coins already held"
         value={existingQuantity}
         onChange={setExistingQuantity}
         min={0.000001}
@@ -103,7 +103,7 @@ export default function AverageDownCalculator() {
 
       <Field
         label="Additional Investment Amount"
-        hint="Dip par kitna aur naya capital lagana hai ($)"
+        hint="Additional capital to add on the dip ($)"
         value={additionalInvestment}
         onChange={setAdditionalInvestment}
         prefix="$"
@@ -164,7 +164,7 @@ export default function AverageDownCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={ArrowDownRight}>
-      Existing holdings aur additional investment details enter karein — new average entry price aur breakeven live calculate hoga.
+      Enter existing holdings and new investment — average entry and breakeven update live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -186,19 +186,19 @@ export default function AverageDownCalculator() {
       {/* Critical Averaging Down Risk Warning (Spec Requirement) */}
       <Notice kind="warn">
         <span>
-          <strong>Capital Risk Warning:</strong> Averaging down se aapki entry price zaroor neeche aati hai, lekin{" "}
-          <strong>total capital at risk badh jata hai</strong> (Total Invested:{" "}
+          <strong>Capital Risk Warning:</strong> Averaging down lowers entry, but{" "}
+          <strong>total capital at risk increases</strong> (Total Invested:{" "}
           <strong className="text-amber-300">{fmtMoney(res.totalInvestment)}</strong>).
-          Agar market aur neeche girti hai toh losses tezi se multiply ho sakte hain. Sirf strong fundamentals wale assets par strict portfolio limits ke andar karein.
+          If price keeps falling, losses compound faster. Only average down on strong names within strict limits.
         </span>
       </Notice>
 
       {/* Break-even Edge Notice */}
       <Notice kind="info">
         <span>
-          <strong>Breakeven Advantage:</strong> Pehle break-even ke liye market ko{" "}
-          <strong>+{res.requiredGainWithoutAveraging.toFixed(1)}%</strong> pump karna padta. Naye purchase ke baad sirf{" "}
-          <strong className="text-cyan-400">+{res.requiredGainFromNewPriceToBreakeven.toFixed(1)}% gain</strong> par aapka poora portfolio zero-loss / break-even ho jayega.
+          <strong>Breakeven Advantage:</strong> Previously the market needed{" "}
+          <strong>+{res.requiredGainWithoutAveraging.toFixed(1)}%</strong> to break even. After the new buy, only{" "}
+          <strong className="text-cyan-400">+{res.requiredGainFromNewPriceToBreakeven}%</strong> brings the whole portfolio to break-even.
         </span>
       </Notice>
 
@@ -271,7 +271,7 @@ export default function AverageDownCalculator() {
             }
           : null
       }
-      note="Averaging down position ke average entry price ko kam karta hai, par portfolio exposure ko badhata hai. Spot assets par hi karein; high-leverage futures par averaging down liquidation risk ko barha deta hai. Trading advice nahi."
+      note="Averaging down lowers average entry but increases exposure. Prefer spot; on leveraged futures it raises liquidation risk. Not trading advice."
     />
   );
 }

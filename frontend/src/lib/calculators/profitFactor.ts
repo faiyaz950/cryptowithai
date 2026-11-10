@@ -47,13 +47,13 @@ export function computeProfitFactor(input: ProfitFactorInput): ProfitFactorOutco
 
   if (!Number.isFinite(grossProfit) || !Number.isFinite(grossLoss)) return null;
   if (grossProfit < 0) {
-    return { ok: false, error: "Gross Profit negative nahi ho sakta (0 ya usse bada enter karein)." };
+    return { ok: false, error: "Gross profit cannot be negative (enter 0 or more)." };
   }
   if (grossLoss < 0) {
-    return { ok: false, error: "Gross Loss negative nahi ho sakta (0 ya usse bada enter karein)." };
+    return { ok: false, error: "Gross loss cannot be negative (enter 0 or more)." };
   }
   if (grossProfit === 0 && grossLoss === 0) {
-    return { ok: false, error: "Gross Profit aur Gross Loss dono zero nahi ho sakte." };
+    return { ok: false, error: "Gross profit and gross loss cannot both be zero." };
   }
 
   const netProfit = grossProfit - grossLoss;

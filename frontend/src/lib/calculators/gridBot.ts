@@ -69,15 +69,15 @@ export function computeGridBot(input: GridBotInput): GridBotOutcome | null {
     return null;
   }
 
-  if (lowerPrice <= 0) return { ok: false, error: "Lower price 0 se badi honi chahiye." };
+  if (lowerPrice <= 0) return { ok: false, error: "Lower price must be greater than 0." };
   if (upperPrice <= lowerPrice) {
-    return { ok: false, error: "Upper price lower price se zyada honi chahiye." };
+    return { ok: false, error: "Upper price must be greater than lower price." };
   }
   if (gridLevels < 2 || gridLevels > 200) {
-    return { ok: false, error: "Grid levels 2 se 200 ke beech hone chahiye." };
+    return { ok: false, error: "Grid levels must be between 2 and 200." };
   }
   if (investmentAmount <= 0) {
-    return { ok: false, error: "Investment amount 0 se bada hona chahiye." };
+    return { ok: false, error: "Investment amount must be greater than 0." };
   }
 
   const intervals = gridLevels - 1;

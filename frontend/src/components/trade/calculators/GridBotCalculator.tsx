@@ -116,7 +116,7 @@ export default function GridBotCalculator() {
       <div className="cx-row-2">
         <Field
           label="Lower Price Boundary"
-          hint="Grid range ka minimum price ($)"
+          hint="Minimum price of the grid range ($)"
           value={lowerPrice}
           onChange={setLowerPrice}
           prefix="$"
@@ -125,7 +125,7 @@ export default function GridBotCalculator() {
         />
         <Field
           label="Upper Price Boundary"
-          hint="Grid range ka maximum price ($)"
+          hint="Maximum price of the grid range ($)"
           value={upperPrice}
           onChange={setUpperPrice}
           prefix="$"
@@ -210,7 +210,7 @@ export default function GridBotCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Bot}>
-      Lower & upper price, investment amount aur grid levels enter karein — per-cycle net profit aur projected annual APR calculate hoga.
+      Enter lower/upper price, investment and grid levels — per-cycle net profit and projected APR are computed.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -233,24 +233,24 @@ export default function GridBotCalculator() {
       {!res.isProfitablePerCycle ? (
         <Notice kind="error">
           <span>
-            <strong>Loss Making Grid:</strong> Grid spacing itni tight hai ki roundtrip exchange fees (
-            <strong>{fmtMoney(res.tradingFeesPerCycle)}</strong>) gross profit (
-            <strong>{fmtMoney(res.grossProfitPerCycle)}</strong>) se zyada ho gayi hain. Grid levels kam karein ya price range badhayein!
+            <strong>Loss Making Grid:</strong> Grid spacing is so tight that roundtrip fees (
+            <strong>{fmtMoney(res.tradingFeesPerCycle)}</strong>) exceed gross profit per cycle (
+            <strong>{fmtMoney(res.grossProfitPerCycle)}</strong>). Reduce grid levels or widen the price range!
           </span>
         </Notice>
       ) : res.gridSpacingPct < 0.3 ? (
         <Notice kind="warn">
           <span>
-            <strong>Narrow Grid Warning:</strong> Grid spacing sirf{" "}
-            <strong>{res.gridSpacingPct.toFixed(2)}%</strong> hai. Exchange fees ke baad net margin kafi kam bachega. Standard recommended spacing 0.5% se 2.5% hoti hai.
+            <strong>Narrow Grid Warning:</strong> Grid spacing is only{" "}
+            <strong>{res.gridSpacingPct.toFixed(2)}%</strong>. Net margin after fees will be thin. Typical spacing is 0.5%–2.5%.
           </span>
         </Notice>
       ) : (
         <Notice kind="info">
           <span>
             <strong>{res.gridType === "geometric" ? "Geometric Grid" : "Arithmetic Grid"}:</strong> Total{" "}
-            <strong>{res.gridIntervals} intervals</strong> mein se har level par lagbhag{" "}
-            <strong>{fmtMoney(res.allocationPerGrid)}</strong> allocate hoga. Spacing:{" "}
+            Across <strong>{res.gridIntervals} intervals</strong>, about{" "}
+            <strong>{fmtMoney(res.allocationPerGrid)}</strong> per level. Spacing:{" "}
             <strong>±{fmtMoney(res.gridSpacingDollar)} ({res.gridSpacingPct.toFixed(2)}%)</strong>.
           </span>
         </Notice>
@@ -395,7 +395,7 @@ export default function GridBotCalculator() {
             }
           : null
       }
-      note="Grid trading sideways ranges mein best perform karta hai. Range se bahar breakdown hone par inventory loss aur breakout hone par opportunity loss ho sakta hai."
+      note="Grid trading works best in sideways ranges. Breakouts and breakdowns outside the range cause inventory or opportunity loss."
     />
   );
 }

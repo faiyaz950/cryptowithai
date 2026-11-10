@@ -55,12 +55,12 @@ export function parseEquitySeries(text: string): number[] {
 export function computeMaxDrawdown(equitySeries: number[]): MaxDrawdownOutcome | null {
   if (!equitySeries || equitySeries.length === 0) return null;
   if (equitySeries.length < 2) {
-    return { ok: false, error: "Drawdown calculate karne ke liye kam se kam 2 equity points hone chahiye." };
+    return { ok: false, error: "Need at least 2 equity points to calculate drawdown." };
   }
 
   const initialEquity = equitySeries[0];
   if (initialEquity <= 0) {
-    return { ok: false, error: "Starting equity 0 se zyada honi chahiye." };
+    return { ok: false, error: "Starting equity must be greater than 0." };
   }
 
   let runningPeak = equitySeries[0];

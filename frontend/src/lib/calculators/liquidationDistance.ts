@@ -57,9 +57,9 @@ export function computeLiquidationDistance(
     return null;
   }
 
-  if (entry <= 0) return { ok: false, error: "Entry price 0 se bada hona chahiye." };
-  if (markPrice <= 0) return { ok: false, error: "Mark price 0 se bada hona chahiye." };
-  if (liqPrice <= 0) return { ok: false, error: "Liquidation price 0 se bada hona chahiye." };
+  if (entry <= 0) return { ok: false, error: "Entry price must be greater than 0." };
+  if (markPrice <= 0) return { ok: false, error: "Mark price must be greater than 0." };
+  if (liqPrice <= 0) return { ok: false, error: "Liquidation price must be greater than 0." };
 
   let isLiquidated = false;
   let distancePrice = 0;
@@ -100,38 +100,38 @@ export function computeLiquidationDistance(
   let riskLevel: RiskLevel = "safe";
   let riskTitle = "Healthy Buffer (> 15%)";
   let riskMessage =
-    "Position liquidation price se safe doori par hai aur ek healthy cushion maintain kar rahi hai.";
+    "Position is a safe distance from liquidation and maintains a healthy cushion.";
   let riskTone: "up" | "down" | "flat" | "warn" = "up";
 
   if (isLiquidated) {
     riskLevel = "liquidated";
     riskTitle = "Position Liquidated 🚨";
     riskMessage =
-      "Current Mark Price liquidation price ko cross kar chuki hai. Position liquidate ho chuki hai.";
+      "Mark price has crossed liquidation. The position is liquidated.";
     riskTone = "down";
   } else if (distancePct < 2.0) {
     riskLevel = "critical";
     riskTitle = "Critical Liquidation Danger (🚨 < 2%)";
     riskMessage =
-      "Mark Price liquidation price se sirf 2% se bhi kam door hai! Thodi si market volatility par position liquidate ho sakti hai. Turant margin add karein ya position reduce karein.";
+      "Mark price is less than 2% from liquidation! A small move can liquidate the position. Add margin or reduce size immediately.";
     riskTone = "down";
   } else if (distancePct < 5.0) {
     riskLevel = "high";
     riskTitle = "High Liquidation Risk (⚠️ 2% – 5%)";
     riskMessage =
-      "High volatility wick ya sudden spike aapki position ko liquidate kar sakti hai. Stop loss monitor karein.";
+      "A volatility wick or sudden spike can liquidate your position. Monitor your stop loss.";
     riskTone = "warn";
   } else if (distancePct < 15.0) {
     riskLevel = "moderate";
     riskTitle = "Moderate Risk Cushion (⚡ 5% – 15%)";
     riskMessage =
-      "Position ke paas ek standard futures buffer hai. Market reversal par dhyan rakhein.";
+      "Position has a typical futures buffer. Watch for reversals.";
     riskTone = "flat";
   } else {
     riskLevel = "safe";
     riskTitle = "Safe Liquidation Cushion (🛡️ > 15%)";
     riskMessage =
-      "Position liquidation price se kaafi door hai aur ek strong margin buffer maintain kar rahi hai.";
+      "Position is well away from liquidation with a strong margin buffer.";
     riskTone = "up";
   }
 

@@ -57,10 +57,10 @@ export function computeAverageDown(input: AverageDownInput): AverageDownOutcome 
     return null;
   }
 
-  if (existingQuantity <= 0) return { ok: false, error: "Existing quantity 0 se badi honi chahiye." };
-  if (existingAveragePrice <= 0) return { ok: false, error: "Existing average price 0 se bada hona chahiye." };
-  if (additionalInvestment <= 0) return { ok: false, error: "Additional investment 0 se bada hona chahiye." };
-  if (newPurchasePrice <= 0) return { ok: false, error: "New purchase price 0 se bada hona chahiye." };
+  if (existingQuantity <= 0) return { ok: false, error: "Existing quantity must be greater than 0." };
+  if (existingAveragePrice <= 0) return { ok: false, error: "Existing average price must be greater than 0." };
+  if (additionalInvestment <= 0) return { ok: false, error: "Additional investment must be greater than 0." };
+  if (newPurchasePrice <= 0) return { ok: false, error: "New purchase price must be greater than 0." };
 
   const existingCost = existingQuantity * existingAveragePrice;
   const additionalQuantity = additionalInvestment / newPurchasePrice;

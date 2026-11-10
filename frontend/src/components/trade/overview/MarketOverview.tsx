@@ -191,38 +191,98 @@ export default function MarketOverview() {
         </div>
       )}
 
-      {/* ── Hero: market pulse ─────────────────────────────── */}
-      <section className="mo-card mo-hero" aria-label="Market pulse">
-        <div className="mo-hero-main">
-          <div className="mo-hero-top">
-            <div>
-              <Eyebrow icon={<Layers />}>Total crypto market cap</Eyebrow>
-              <div className="mo-hero-value-row">
-                {meta ? (
-                  <span className="mo-hero-value">{fmtUsdLarge(meta.marketCapUsd)}</span>
-                ) : (
-                  <span className="mo-skel" style={{ width: 200, height: 44 }} />
-                )}
-                {meta?.marketCapChange24h != null && (
-                  <DeltaPill value={meta.marketCapChange24h} suffix="24H" />
-                )}
-              </div>
-              <p className="mo-hero-sub">
-                {meta?.activeCryptos != null && (
-                  <>
-                    <strong>{meta.activeCryptos.toLocaleString("en-US")}</strong> assets listed
-                    <span className="mo-sep" aria-hidden>/</span>
-                  </>
-                )}
-                BTC dominance{" "}
-                <strong>{meta?.btcDominance != null ? `${meta.btcDominance.toFixed(1)}%` : "—"}</strong>
-              </p>
-            </div>
-          </div>
-          <TrendChart values={meta?.marketCapSpark ?? []} title="BTC / USD" windowLabel="48H" />
-        </div>
+      {/* ── Global: aggregators (CoinGecko + Fear & Greed) ─── */}
+      <section className="mo-band" aria-labelledby="mo-band-global">
+        <BandLabel
+          id="mo-band-global"
+          title="Global market"
+          source="CoinGecko · alternative.me"
+        />
 
-        <div className="mo-hero-side">
+        <div className="mo-global-row">
+          <section className="mo-card mo-hero mo-hero-solo" aria-label="Total crypto market cap">
+            <div className="mo-hero-main">
+              <div className="mo-hero-top">
+                <div>
+                  <Eyebrow icon={<Layers />}>Total crypto market cap</Eyebrow>
+                  <div className="mo-hero-value-row">
+                    {meta ? (
+                      <span className="mo-hero-value">{fmtUsdLarge(meta.marketCapUsd)}</span>
+                    ) : (
+                      <span className="mo-skel" style={{ width: 200, height: 44 }} />
+                    )}
+                    {meta?.marketCapChange24h != null && (
+                      <DeltaPill value={meta.marketCapChange24h} suffix="24H" />
+                    )}
+                  </div>
+                  <p className="mo-hero-sub">
+                    {meta?.activeCryptos != null && (
+                      <>
+                        <strong>{meta.activeCryptos.toLocaleString("en-US")}</strong> assets listed
+                        <span className="mo-sep" aria-hidden>·</span>
+                      </>
+                    )}
+                    BTC dominance{" "}
+                    <strong>
+                      {meta?.btcDominance != null ? `${meta.btcDominance.toFixed(1)}%` : "—"}
+                    </strong>
+                    <span className="mo-sep" aria-hidden>·</span>
+                    CoinGecko
+                  </p>
+                </div>
+              </div>
+              <TrendChart
+                values={meta?.marketCapSpark ?? []}
+                title="BTC trend proxy"
+                windowLabel="48H"
+                note="Bitcoin price · risk proxy, not market-cap history"
+              />
+            </div>
+          </section>
+
+          <section className="mo-card mo-panel mo-instrument" aria-label="Fear and greed index">
+            <PanelHead
+              icon={<Gauge />}
+              title="Fear & Greed"
+              right={
+                <Segmented
+                  label="Fear and greed reading"
+                  value={fngMode}
+                  onChange={setFngMode}
+                  options={[
+                    { value: "now", label: "Now" },
+                    { value: "prev", label: "Yesterday" },
+                  ]}
+                />
+              }
+            />
+            <FearGauge value={fearValue} label={fearText} />
+            <p className="mo-foot">
+              {fearDelta == null ? (
+                "alternative.me · daily · global mood"
+              ) : (
+                <>
+                  <span className={toneClass(fearDelta)}>
+                    {fearDelta > 0 ? "+" : ""}
+                    {fearDelta} pts
+                  </span>{" "}
+                  vs yesterday · alternative.me
+                </>
+              )}
+            </p>
+          </section>
+        </div>
+      </section>
+
+      {/* ── Desk: Delta / CoinDCX USDT pairs ───────────────── */}
+      <section className="mo-band" aria-labelledby="mo-band-desk">
+        <BandLabel
+          id="mo-band-desk"
+          title="Desk universe"
+          source="Delta · CoinDCX · USDT pairs"
+        />
+
+        <section className="mo-card mo-desk-pulse" aria-label="Desk market pulse">
           <div className="mo-stat-grid">
             <Stat
               label="24H volume"
@@ -233,13 +293,7 @@ export default function MarketOverview() {
               label="Avg 24H move"
               value={hasCoins ? fmtPct(stats.avgChange) : null}
               tone={toneAttr(stats.avgChange)}
-              sub="equal-weight mean"
-            />
-            <Stat
-              label="BTC dominance"
-              value={meta?.btcDominance != null ? `${meta.btcDominance.toFixed(1)}%` : meta ? "—" : null}
-              sub="share of total cap"
-              meter={meta?.btcDominance ?? null}
+              sub="equal-weight · desk"
             />
             <Stat
               label="Advance / decline"
@@ -247,238 +301,218 @@ export default function MarketOverview() {
               sub={stats.up >= stats.down ? "buyers in control" : "sellers in control"}
               tone={hasCoins ? (stats.up >= stats.down ? "up" : "down") : undefined}
             />
+            <Stat
+              label="Pairs green"
+              value={hasCoins ? `${stats.up}/${stats.tracked}` : null}
+              tone={hasCoins ? (stats.up >= stats.down ? "up" : "down") : undefined}
+              sub={`${stats.down} red · ${stats.flat} flat`}
+            />
           </div>
           <Breadth up={stats.up} flat={stats.flat} down={stats.down} loading={loading} />
+        </section>
+
+        <div className="mo-grid-2">
+          <section className="mo-card mo-panel mo-instrument" aria-label="Average RSI">
+            <PanelHead
+              icon={<Activity />}
+              title="Average RSI"
+              right={
+                avgRsi != null ? (
+                  <span className="mo-chip" data-tone={avgRsi >= 70 ? "down" : avgRsi <= 30 ? "up" : undefined}>
+                    {rsiZone(avgRsi)}
+                  </span>
+                ) : rsiState === "offline" ? (
+                  <span className="mo-chip" data-tone="warn">OFFLINE</span>
+                ) : null
+              }
+            />
+            <div className="mo-inst-value">
+              {avgRsi != null ? (
+                avgRsi.toFixed(1)
+              ) : rsiState === "loading" ? (
+                <span className="mo-skel" style={{ width: 96, height: 36 }} />
+              ) : (
+                <span className="mo-inst-na">No data</span>
+              )}
+              <span className="mo-inst-unit">RSI 14 · 1H</span>
+            </div>
+            <ZoneMeter
+              value={avgRsi}
+              ariaLabel={avgRsi != null ? `Average RSI ${avgRsi.toFixed(1)}` : "Average RSI unavailable"}
+              zones={[
+                { from: 0, to: 30, color: "var(--green)", label: "Oversold" },
+                { from: 30, to: 70, color: "#6f6b67", label: "Neutral" },
+                { from: 70, to: 100, color: "var(--red)", label: "Overbought" },
+              ]}
+              ticks={[
+                { at: 0, label: "0" },
+                { at: 30, label: "30" },
+                { at: 70, label: "70" },
+                { at: 100, label: "100" },
+              ]}
+            />
+            <p className="mo-foot">
+              {rsiState === "offline"
+                ? "Screener feed offline — RSI sample unavailable"
+                : "Mean of top-40 desk pairs by volume"}
+            </p>
+          </section>
+
+          <section className="mo-card mo-panel mo-instrument" aria-label="Altcoin season index">
+            <PanelHead
+              icon={<Bitcoin />}
+              title="Altcoin season"
+              right={
+                alt ? (
+                  <span className="mo-chip" data-tone={alt.index >= 75 ? "alt" : alt.index <= 25 ? "btc" : undefined}>
+                    {altZone(alt.index)}
+                  </span>
+                ) : null
+              }
+            />
+            <div className="mo-inst-value">
+              {alt ? alt.index.toFixed(0) : loading ? <span className="mo-skel" style={{ width: 80, height: 36 }} /> : "—"}
+              <span className="mo-inst-unit">/ 100</span>
+            </div>
+            <ZoneMeter
+              value={alt?.index ?? null}
+              ariaLabel={alt ? `Altcoin season index ${alt.index.toFixed(0)}` : "Altcoin season index unavailable"}
+              zones={[
+                { from: 0, to: 25, color: "#f7931a", label: "Bitcoin season" },
+                { from: 25, to: 75, color: "#6f6b67", label: "Neutral" },
+                { from: 75, to: 100, color: "#8b7cf6", label: "Altcoin season" },
+              ]}
+              ticks={[
+                { at: 0, label: "BTC season" },
+                { at: 50, label: "50" },
+                { at: 100, label: "Alt season" },
+              ]}
+            />
+            <p className="mo-foot">
+              {alt ? (
+                <>
+                  <strong>{alt.beat}</strong> of {alt.sample} desk alts beat BTC ({fmtPct(alt.btcChange)}) · 24H
+                </>
+              ) : (
+                "Share of top-50 desk alts beating BTC · 24H"
+              )}
+            </p>
+          </section>
         </div>
-      </section>
 
-      {/* ── Sentiment instruments ─────────────────────────── */}
-      <div className="mo-grid-3">
-        <section className="mo-card mo-panel mo-instrument" aria-label="Fear and greed index">
+        <div className="mo-grid-movers">
+          <MoverCard
+            title="Top gainers"
+            icon={<ArrowUpRight />}
+            tone="up"
+            coins={stats.gainers}
+            mode="change"
+            loading={loading}
+            empty="No desk pair is green over 24H"
+          />
+          <MoverCard
+            title="Top losers"
+            icon={<ArrowDownRight />}
+            tone="down"
+            coins={stats.losers}
+            mode="change"
+            loading={loading}
+            empty="No desk pair is red over 24H"
+          />
+          <MoverCard
+            title="Most traded"
+            icon={<Flame />}
+            coins={volumeLeaders}
+            mode="volume"
+            loading={loading}
+            empty="Waiting for desk volume"
+          />
+        </div>
+
+        <section className="mo-card mo-panel" aria-label="Market heatmap">
           <PanelHead
-            icon={<Gauge />}
-            title="Fear & Greed"
+            icon={<Grid3x3 />}
+            title="Market heatmap"
+            sub="Desk volume · colour = 24H change"
             right={
-              <Segmented
-                label="Fear and greed reading"
-                value={fngMode}
-                onChange={setFngMode}
-                options={[
-                  { value: "now", label: "Now" },
-                  { value: "prev", label: "Yesterday" },
-                ]}
-              />
-            }
-          />
-          <FearGauge value={fearValue} label={fearText} />
-          <p className="mo-foot">
-            {fearDelta == null ? (
-              "alternative.me · daily"
-            ) : (
-              <>
-                <span className={toneClass(fearDelta)}>
-                  {fearDelta > 0 ? "+" : ""}
-                  {fearDelta} pts
-                </span>{" "}
-                vs yesterday · alternative.me
-              </>
-            )}
-          </p>
-        </section>
-
-        <section className="mo-card mo-panel mo-instrument" aria-label="Average RSI">
-          <PanelHead
-            icon={<Activity />}
-            title="Average RSI"
-            right={
-              avgRsi != null ? (
-                <span className="mo-chip" data-tone={avgRsi >= 70 ? "down" : avgRsi <= 30 ? "up" : undefined}>
-                  {rsiZone(avgRsi)}
-                </span>
-              ) : rsiState === "offline" ? (
-                <span className="mo-chip" data-tone="warn">OFFLINE</span>
-              ) : null
-            }
-          />
-          <div className="mo-inst-value">
-            {avgRsi != null ? (
-              avgRsi.toFixed(1)
-            ) : rsiState === "loading" ? (
-              <span className="mo-skel" style={{ width: 96, height: 36 }} />
-            ) : (
-              <span className="mo-inst-na">No data</span>
-            )}
-            <span className="mo-inst-unit">RSI 14 · 1H</span>
-          </div>
-          <ZoneMeter
-            value={avgRsi}
-            ariaLabel={avgRsi != null ? `Average RSI ${avgRsi.toFixed(1)}` : "Average RSI unavailable"}
-            zones={[
-              { from: 0, to: 30, color: "var(--green)", label: "Oversold" },
-              { from: 30, to: 70, color: "#6f6b67", label: "Neutral" },
-              { from: 70, to: 100, color: "var(--red)", label: "Overbought" },
-            ]}
-            ticks={[
-              { at: 0, label: "0" },
-              { at: 30, label: "30" },
-              { at: 70, label: "70" },
-              { at: 100, label: "100" },
-            ]}
-          />
-          <p className="mo-foot">
-            {rsiState === "offline" ? "Screener feed offline — RSI sample unavailable" : "Mean of top-40 pairs by volume"}
-          </p>
-        </section>
-
-        <section className="mo-card mo-panel mo-instrument" aria-label="Altcoin season index">
-          <PanelHead
-            icon={<Bitcoin />}
-            title="Altcoin season"
-            right={
-              alt ? (
-                <span className="mo-chip" data-tone={alt.index >= 75 ? "alt" : alt.index <= 25 ? "btc" : undefined}>
-                  {altZone(alt.index)}
-                </span>
-              ) : null
-            }
-          />
-          <div className="mo-inst-value">
-            {alt ? alt.index.toFixed(0) : loading ? <span className="mo-skel" style={{ width: 80, height: 36 }} /> : "—"}
-            <span className="mo-inst-unit">/ 100</span>
-          </div>
-          <ZoneMeter
-            value={alt?.index ?? null}
-            ariaLabel={alt ? `Altcoin season index ${alt.index.toFixed(0)}` : "Altcoin season index unavailable"}
-            zones={[
-              { from: 0, to: 25, color: "#f7931a", label: "Bitcoin season" },
-              { from: 25, to: 75, color: "#6f6b67", label: "Neutral" },
-              { from: 75, to: 100, color: "#8b7cf6", label: "Altcoin season" },
-            ]}
-            ticks={[
-              { at: 0, label: "BTC season" },
-              { at: 50, label: "50" },
-              { at: 100, label: "Alt season" },
-            ]}
-          />
-          <p className="mo-foot">
-            {alt ? (
-              <>
-                <strong>{alt.beat}</strong> of {alt.sample} top alts beat BTC ({fmtPct(alt.btcChange)}) · 24H
-              </>
-            ) : (
-              "Share of top-50 alts outperforming BTC · 24H"
-            )}
-          </p>
-        </section>
-      </div>
-
-      {/* ── Movers ─────────────────────────────────────────── */}
-      <div className="mo-grid-movers">
-        <MoverCard
-          title="Top gainers"
-          icon={<ArrowUpRight />}
-          tone="up"
-          coins={stats.gainers}
-          mode="change"
-          loading={loading}
-          empty="No coin is green over 24H"
-        />
-        <MoverCard
-          title="Top losers"
-          icon={<ArrowDownRight />}
-          tone="down"
-          coins={stats.losers}
-          mode="change"
-          loading={loading}
-          empty="No coin is red over 24H"
-        />
-        <MoverCard
-          title="Most traded"
-          icon={<Flame />}
-          coins={volumeLeaders}
-          mode="volume"
-          loading={loading}
-          empty="Waiting for volume data"
-        />
-      </div>
-
-      {/* ── Heatmap ────────────────────────────────────────── */}
-      <section className="mo-card mo-panel" aria-label="Market heatmap">
-        <PanelHead
-          icon={<Grid3x3 />}
-          title="Market heatmap"
-          sub="Area = 24H volume · colour = 24H change"
-          right={
-            <div className="mo-head-tools">
-              <HeatLegend />
-              <Segmented
-                label="Heatmap universe"
-                value={heatTop}
-                onChange={setHeatTop}
-                options={[
-                  { value: 30, label: "Top 30" },
-                  { value: 60, label: "Top 60" },
-                ]}
-              />
-            </div>
-          }
-        />
-        <HeatTreemap coins={coins.slice(0, heatTop)} loading={loading} />
-      </section>
-
-      {/* ── Sectors ───────────────────────────────────────── */}
-      <section className="mo-card mo-panel" aria-label="Sector performance">
-        <PanelHead
-          icon={<BarChart3 />}
-          title="Sectors · 24H"
-          sub="Average change per sector"
-          right={
-            <Link href="/trade?tab=markets" className="mo-link">
-              Open terminal <span aria-hidden>→</span>
-            </Link>
-          }
-        />
-        <SectorBars sectors={sectors} loading={loading} />
-      </section>
-
-      {/* ── Bubble map ────────────────────────────────────── */}
-      <section className="mo-card mo-panel" aria-label="Bubble map">
-        <PanelHead
-          icon={<CircleDot />}
-          title="Bubble map"
-          info="Bubble size = 24H volume. Ring brightness = size of the 24H move. Bubbles drift live — hover to pause, click to open in the terminal."
-          right={
-            <div className="mo-head-tools">
-              <div className="mo-bubble-legend" aria-hidden>
-                <span>
-                  <i data-tone="up" />
-                  up
-                </span>
-                <span>
-                  <i data-tone="down" />
-                  down
-                </span>
-                <span className="mo-bubble-legend-note">· brighter = bigger move</span>
+              <div className="mo-head-tools">
+                <HeatLegend />
+                <Segmented
+                  label="Desk heatmap universe"
+                  value={heatTop}
+                  onChange={setHeatTop}
+                  options={[
+                    { value: 30, label: "Top 30" },
+                    { value: 60, label: "Top 60" },
+                  ]}
+                />
               </div>
-              <span className="mo-window">
-                Window <strong>24H</strong>
-              </span>
-              <span className="mo-coins-label">Coins</span>
-              <Segmented
-                label="Bubble universe"
-                value={bubbleTop}
-                onChange={setBubbleTop}
-                options={[
-                  { value: 100, label: "Top 100" },
-                  { value: 200, label: "Top 200" },
-                  { value: 250, label: "Top 250" },
-                ]}
-              />
-            </div>
-          }
-        />
-        <BubbleMap coins={coins.slice(0, bubbleTop)} loading={loading} />
+            }
+          />
+          <HeatTreemap coins={coins.slice(0, heatTop)} loading={loading} />
+        </section>
+
+        <section className="mo-card mo-panel" aria-label="Sector performance">
+          <PanelHead
+            icon={<BarChart3 />}
+            title="Sectors · 24H"
+            sub="Average change · desk pairs"
+            right={
+              <Link href="/trade?tab=markets" className="mo-link">
+                Open terminal <span aria-hidden>→</span>
+              </Link>
+            }
+          />
+          <SectorBars sectors={sectors} loading={loading} />
+        </section>
+
+        <section className="mo-card mo-panel" aria-label="Bubble map">
+          <PanelHead
+            icon={<CircleDot />}
+            title="Bubble map"
+            info="Desk pairs only. Bubble size = 24H volume. Ring brightness = size of the 24H move. Hover to pause, click to open in the terminal."
+            right={
+              <div className="mo-head-tools">
+                <div className="mo-bubble-legend" aria-hidden>
+                  <span>
+                    <i data-tone="up" />
+                    up
+                  </span>
+                  <span>
+                    <i data-tone="down" />
+                    down
+                  </span>
+                  <span className="mo-bubble-legend-note">· brighter = bigger move</span>
+                </div>
+                <span className="mo-window">
+                  Window <strong>24H</strong>
+                </span>
+                <span className="mo-coins-label">Coins</span>
+                <Segmented
+                  label="Desk bubble universe"
+                  value={bubbleTop}
+                  onChange={setBubbleTop}
+                  options={[
+                    { value: 100, label: "Top 100" },
+                    { value: 200, label: "Top 200" },
+                    { value: 250, label: "Top 250" },
+                  ]}
+                />
+              </div>
+            }
+          />
+          <BubbleMap coins={coins.slice(0, bubbleTop)} loading={loading} />
+        </section>
       </section>
+    </div>
+  );
+}
+
+function BandLabel({ id, title, source }: { id: string; title: string; source: string }) {
+  return (
+    <div className="mo-band-label">
+      <h2 id={id}>{title}</h2>
+      <span className="mo-source-chip">{source}</span>
     </div>
   );
 }
@@ -506,7 +540,7 @@ function TickerTape({
         <span className="mo-pulse" aria-hidden />
         <strong>{label}</strong>
         <span>
-          {tracked ? `${tracked} pairs` : "—"}
+          Desk · {tracked ? `${tracked} USDT pairs` : "—"}
           {age ? ` · ${age}` : ""}
         </span>
       </div>
@@ -530,7 +564,7 @@ function TickerTape({
             ))}
           </div>
         ) : (
-          <div className="mo-tape-empty">Waiting for market feed…</div>
+          <div className="mo-tape-empty">Waiting for desk feed…</div>
         )}
       </div>
     </div>
@@ -617,8 +651,18 @@ function Breadth({ up, flat, down, loading }: { up: number; flat: number; down: 
   );
 }
 
-/** Area chart + crosshair. Series CoinGecko ka BTC price (last 48 hourly points) hai. */
-function TrendChart({ values, title, windowLabel }: { values: number[]; title: string; windowLabel: string }) {
+/** Area chart + crosshair. Series CoinGecko ka BTC price (last 48 hourly points) hai — market-cap history nahi. */
+function TrendChart({
+  values,
+  title,
+  windowLabel,
+  note,
+}: {
+  values: number[];
+  title: string;
+  windowLabel: string;
+  note?: string;
+}) {
   const gid = useId().replace(/:/g, "");
   const plotRef = useRef<HTMLDivElement>(null);
   const [idx, setIdx] = useState<number | null>(null);
@@ -677,7 +721,7 @@ function TrendChart({ values, title, windowLabel }: { values: number[]; title: s
           {title} · {windowLabel}
         </span>
         <span className="mo-chart-readout">
-          <strong>{fmtPrice(active.v)}</strong>
+          <strong>BTC {fmtPrice(active.v)}</strong>
           <span>{idx == null || hoursAgo === 0 ? "now" : `${hoursAgo}h ago`}</span>
           <DeltaPill value={geo.change} suffix={windowLabel} small />
         </span>
@@ -686,9 +730,9 @@ function TrendChart({ values, title, windowLabel }: { values: number[]; title: s
         className="mo-chart"
         tabIndex={0}
         role="img"
-        aria-label={`${title} over ${windowLabel}: ${fmtPrice(geo.pts[0].v)} to ${fmtPrice(
+        aria-label={`Bitcoin USD trend proxy over ${windowLabel}: ${fmtPrice(geo.pts[0].v)} to ${fmtPrice(
           geo.pts[geo.pts.length - 1].v,
-        )} (${fmtPct(geo.change)}). Use arrow keys to inspect.`}
+        )} (${fmtPct(geo.change)}). Not market-cap history. Use arrow keys to inspect.`}
         onPointerMove={onMove}
         onPointerLeave={() => setIdx(null)}
         onKeyDown={onKey}
@@ -740,6 +784,7 @@ function TrendChart({ values, title, windowLabel }: { values: number[]; title: s
         <span>−{Math.round((values.length - 1) / 2)}h</span>
         <span>now</span>
       </div>
+      {note && <p className="mo-chart-note">{note}</p>}
     </div>
   );
 }

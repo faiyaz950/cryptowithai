@@ -41,7 +41,7 @@ async function request<T>(
     });
   } catch {
     throw new AccountApiError(
-      "Server se connect nahi ho paya. Free hosting par server jaagne mein thoda time lagta hai — dobara try karein.",
+      "Could not reach the server. On free hosting the server may take a moment to wake up — try again.",
       0,
     );
   }
@@ -49,7 +49,7 @@ async function request<T>(
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || data.success === false) {
     throw new AccountApiError(
-      String(data.error || `Request fail hui (${res.status})`),
+      String(data.error || `Request failed (${res.status})`),
       res.status,
       (data.reason as string) ?? null,
       (data.client_ip as string) ?? null,

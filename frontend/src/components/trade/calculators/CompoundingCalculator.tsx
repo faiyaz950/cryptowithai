@@ -88,7 +88,7 @@ export default function CompoundingCalculator() {
       <div className="cx-row-2">
         <Field
           label="Initial Capital"
-          hint="Shuruati rashi (P)"
+          hint="Initial principal (P)"
           value={initialCapital}
           onChange={setInitialCapital}
           prefix="$"
@@ -97,7 +97,7 @@ export default function CompoundingCalculator() {
         />
         <Field
           label="Periodic Contribution"
-          hint="Har interval par deposit (C)"
+          hint="Deposit each interval (C)"
           value={periodicContribution}
           onChange={setPeriodicContribution}
           prefix="$"
@@ -129,7 +129,7 @@ export default function CompoundingCalculator() {
       <div>
         <Field
           label="Expected Annual Return"
-          hint="Varshik apekshit return % (r)"
+          hint="Expected annual return % (r)"
           value={expectedReturnPct}
           onChange={setExpectedReturnPct}
           suffix="%"
@@ -156,7 +156,7 @@ export default function CompoundingCalculator() {
       <div>
         <Field
           label="Duration (Years)"
-          hint="Kitne saal tak invest karenge (n)"
+          hint="Years to invest (n)"
           value={durationYears}
           onChange={setDurationYears}
           suffix="yrs"
@@ -178,7 +178,7 @@ export default function CompoundingCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Sparkles}>
-      Capital, return aur duration daalein — compound growth projection live dikhega.
+      Enter capital, return and duration — compound growth projection updates live.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -199,7 +199,7 @@ export default function CompoundingCalculator() {
       <Notice kind="info">
         <strong>Illustrative projection based on the selected assumptions.</strong>
         <p style={{ marginTop: 4, fontSize: "12px", opacity: 0.9 }}>
-          Ye calculator educational purpose ke liye hai aur kisi bhi prakar ke guaranteed future profit ya returns ka claim nahi karta. Asli market returns volatile aur anishchit ho sakte hain.
+          This calculator is for education only and does not guarantee future returns. Real markets are volatile and uncertain.
         </p>
       </Notice>
 
@@ -301,7 +301,7 @@ export default function CompoundingCalculator() {
             }
           : null
       }
-      note="Illustrative projection based on the selected assumptions. Past performance and mathematical models do not guarantee future returns. Trading & investment advice nahi."
+      note="Illustrative projection based on the selected assumptions. Past performance and mathematical models do not guarantee future returns. Not trading or investment advice."
     />
   );
 }

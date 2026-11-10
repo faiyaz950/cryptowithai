@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, Bot, Clock, History, Inbox, Loader2, Pause, Pencil, Play, Target, Trash2, Wallet, X, Zap } from "lucide-react";
+import { AlertCircle, ArrowRight, Bot, Clock, History, Inbox, Loader2, Pause, Pencil, Play, Share2, Target, Trash2, Wallet, X, Zap } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { cancelPaperOrder, placeDemoOrder, symbolLabel, type Candle, type DemoOrder, type PaperAccount, type PaperPosition } from "@/lib/cryptoApi";
 import PaperOrderEditor, { type PaperEditTarget } from "./PaperOrderEditor";
+import ShareCardModal, { type ShareCardData } from "./ShareCardModal";
 import { PaperTag } from "./ModeTag";
 import {
   CUSTOM_STRATEGIES_CHANGED,
@@ -87,6 +88,7 @@ export default function PaperOrdersDock({
   const [editing, setEditing] = useState<PaperEditTarget | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shareData, setShareData] = useState<ShareCardData | null>(null);
 
   const [deployedBots, setDeployedBots] = useState<CustomStrategy[]>([]);
   const reloadBots = useCallback(() => {
@@ -124,7 +126,7 @@ export default function PaperOrdersDock({
       }
     );
     reloadBots();
-    void onChanged(`${tmpl.name} paper trading mein deploy ho gaya!`);
+    void onChanged(`${tmpl.name} deployed to paper trading!`);
   };
 
   const triggerBotTrade = async (strat: CustomStrategy) => {
@@ -155,7 +157,7 @@ export default function PaperOrdersDock({
       await onChanged(`Bot signal execute ho gaya: ${strat.name} (${side.toUpperCase()})`);
       onTab("positions");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Trade execute nahi hua");
+      setError(err instanceof Error ? err.message : "Trade failed");
     } finally {
       setBusyId(null);
     }
@@ -201,7 +203,7 @@ export default function PaperOrdersDock({
       await cancelPaperOrder(token, o.order_id);
       await onChanged("Paper order cancel ho gaya");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Cancel nahi hua");
+      setError(err instanceof Error ? err.message : "Cancel failed");
     } finally {
       setBusyId(null);
     }
@@ -213,7 +215,7 @@ export default function PaperOrdersDock({
     try {
       await onClosePosition(p);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Position band nahi hui");
+      setError(err instanceof Error ? err.message : "Could not close position");
     } finally {
       setBusyId(null);
     }
@@ -265,7 +267,7 @@ export default function PaperOrdersDock({
         <div className="pp-flash" data-kind="error" role="alert">
           <AlertCircle className="w-3.5 h-3.5 flex-none" />
           <span>{error}</span>
-          <button type="button" onClick={() => setError(null)} aria-label="Band karein">
+          <button type="button" onClick={() => setError(null)} aria-label="Close">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -274,7 +276,7 @@ export default function PaperOrdersDock({
       <div className="pd-body">
         {tab === "positions" &&
           (positions.length === 0 ? (
-            <DockEmpty icon={<Wallet className="w-4 h-4" />}>Koi open paper position nahi — ticket se Buy/Sell karein.</DockEmpty>
+            <DockEmpty icon={<Wallet className="w-4 h-4" />}>No open paper positions — Buy/Sell from the ticket.</DockEmpty>
           ) : (
             <table className="pp-table pd-table">
               <thead>
@@ -307,9 +309,40 @@ export default function PaperOrdersDock({
                       <b data-tone={tone(p.unrealized_pnl)}>{signed(p.unrealized_pnl)}</b>
                       {p.move_pct != null && <span className="pd-sub">{`${Number(p.move_pct.toFixed(2)) > 0 ? "+" : ""}${Math.abs(p.move_pct) < 0.005 ? "0.00" : p.move_pct.toFixed(2)}%`}</span>}
                     </td>
-                    <td className="num" data-tone={p.take_profit ? "up" : undefined}>{p.take_profit ? px(p.take_profit) : "—"}</td>
+                    <td className="num" data-tone={p.take_profit ? "up" : undefined}>
+                      {p.take_profit ? px(p.take_profit) : "—"}
+                      {(p.targets?.length ?? 0) > 1 ? ` +${(p.targets?.length ?? 1) - 1}` : ""}
+                      {p.trail ? " · trail" : ""}
+                    </td>
                     <td className="num" data-tone={p.stop_loss ? "down" : undefined}>{p.stop_loss ? px(p.stop_loss) : "—"}</td>
                     <td className="num pd-actions">
+                      <button
+                        type="button"
+                        className="trade-btn trade-size-sm"
+                        title="Share aesthetic card"
+                        onClick={() =>
+                          setShareData({
+                            type: "pnl",
+                            symbol: p.symbol,
+                            formattedSymbol: symbolLabel(p.symbol),
+                            side: p.side,
+                            leverage: "1x",
+                            pnl: p.unrealized_pnl,
+                            roiPct: p.move_pct,
+                            entryPrice: p.entry_price,
+                            markPrice: p.mark_price,
+                            targetPrice: p.take_profit,
+                            stopLossPrice: p.stop_loss,
+                            size: p.size,
+                            margin: p.margin,
+                            isClosed: false,
+                            openedAt: p.opened_at,
+                          })
+                        }
+                      >
+                        <Share2 className="w-3.5 h-3.5 text-[#f97316]" />
+                        Share
+                      </button>
                       <button type="button" className="trade-btn trade-size-sm" onClick={() => setEditing({ kind: "position", position: p })}>
                         <Target className="w-3.5 h-3.5" /> Target/SL
                       </button>
@@ -326,7 +359,7 @@ export default function PaperOrdersDock({
 
         {tab === "open" &&
           (openOrders.length === 0 ? (
-            <DockEmpty icon={<Clock className="w-4 h-4" />}>Koi pending limit order nahi.</DockEmpty>
+            <DockEmpty icon={<Clock className="w-4 h-4" />}>No pending limit orders.</DockEmpty>
           ) : (
             <table className="pp-table pd-table">
               <thead>
@@ -380,10 +413,10 @@ export default function PaperOrdersDock({
                 <div>
                   <h4 className="text-[13px] font-bold text-[var(--text-primary)] flex items-center gap-2">
                     <Zap className="w-4 h-4 text-amber-400" />
-                    Market Screen par Strategy Bots Deploy karein
+                    Deploy strategy bots from the market screen
                   </h4>
                   <p className="text-[11.5px] leading-relaxed mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    Ready-made indicator strategies ko 1-click se {symbolLabel(currentKey)} par paper trading mein deploy karein. Strategy ke Entry/Exit rules real-time test honge.
+                    Deploy ready-made strategies to {symbolLabel(currentKey)} paper trading in one click. Entry/Exit rules run in real time.
                   </p>
                 </div>
                 <Link
@@ -535,7 +568,7 @@ export default function PaperOrdersDock({
 
               <div className="flex flex-wrap items-center justify-between gap-2 pt-2 px-1 text-[11.5px] border-t border-[var(--tr-line-soft)]">
                 <span style={{ color: "var(--text-muted)" }}>
-                  Aur ready-made strategies deploy karne ke liye click karein:
+                  Click to deploy more ready-made strategies:
                 </span>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {[
@@ -561,7 +594,7 @@ export default function PaperOrdersDock({
 
         {tab === "history" &&
           (history.length === 0 ? (
-            <DockEmpty icon={<Inbox className="w-4 h-4" />}>Abhi koi paper order nahi.</DockEmpty>
+            <DockEmpty icon={<Inbox className="w-4 h-4" />}>No paper orders yet.</DockEmpty>
           ) : (
             <table className="pp-table pd-table">
               <thead>
@@ -573,6 +606,7 @@ export default function PaperOrdersDock({
                   <th className="num">Fill price</th>
                   <th className="num">Paper realized</th>
                   <th>Status</th>
+                  <th className="num" />
                 </tr>
               </thead>
               <tbody>
@@ -604,6 +638,36 @@ export default function PaperOrdersDock({
                           {o.status}
                         </span>
                       </td>
+                      <td className="num">
+                        <button
+                          type="button"
+                          className="trade-btn trade-size-sm"
+                          title="Share flex card"
+                          onClick={() =>
+                            setShareData({
+                              type: "pnl",
+                              symbol: o.symbol,
+                              formattedSymbol: symbolLabel(o.symbol),
+                              side: o.side === "buy" ? "long" : "short",
+                              leverage: "1x",
+                              pnl: realized ?? 0,
+                              roiPct:
+                                o.price && realized != null && o.quantity
+                                  ? (realized / (o.price * o.quantity)) * 100
+                                  : 0,
+                              entryPrice: o.price,
+                              markPrice: o.price,
+                              targetPrice: o.take_profit,
+                              stopLossPrice: o.stop_loss,
+                              size: o.quantity,
+                              isClosed: true,
+                              openedAt: o.timestamp,
+                            })
+                          }
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -622,6 +686,13 @@ export default function PaperOrdersDock({
           }
           onClose={() => setEditing(null)}
           onSaved={onChanged}
+        />
+      )}
+
+      {shareData && (
+        <ShareCardModal
+          data={shareData}
+          onClose={() => setShareData(null)}
         />
       )}
     </section>

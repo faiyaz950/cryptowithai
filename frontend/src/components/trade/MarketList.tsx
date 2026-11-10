@@ -437,7 +437,7 @@ function MarketList({ symbol, venue, onSelect, livePrice, liveChange }: Props) {
             aria-label="Search coins"
           />
           {query && (
-            <button type="button" onClick={() => setQuery("")} aria-label="Search saaf karo">
+            <button type="button" onClick={() => setQuery("")} aria-label="Clear search">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -496,12 +496,12 @@ function MarketList({ symbol, venue, onSelect, livePrice, liveChange }: Props) {
           {visible.length === 0 && (
             <div className="cm-ml-empty">
               {filter === "watch" && !query
-                ? "Watchlist khaali hai — kisi coin ke ★ par click karein."
+                ? "Watchlist is empty — click ★ on a coin."
                 : failed && rows.length <= 1
-                  ? "Prices load nahi ho paaye."
+                  ? "Prices could not be loaded."
                   : rows.length <= 1
                     ? "Load ho raha hai…"
-                    : "Koi coin nahi mila."}
+                    : "No coins found."}
             </div>
           )}
         </div>

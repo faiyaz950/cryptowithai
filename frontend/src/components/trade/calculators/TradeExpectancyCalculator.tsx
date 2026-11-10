@@ -146,7 +146,7 @@ export default function TradeExpectancyCalculator() {
             suffix="%"
             value={winRatePct}
             placeholder="55"
-            hint="Winning trades ka percentage (e.g. 55%)"
+            hint="Percentage of winning trades (e.g. 55%)"
             onChange={(v) => {
               setActivePreset(null);
               setWinRatePct(v);
@@ -160,7 +160,7 @@ export default function TradeExpectancyCalculator() {
               prefix={currency}
               value={avgWinAmount}
               placeholder="2000"
-              hint="Jeetne par average profit"
+              hint="Average profit on a win"
               onChange={(v) => {
                 setActivePreset(null);
                 setAvgWinAmount(v);
@@ -171,7 +171,7 @@ export default function TradeExpectancyCalculator() {
               prefix={currency}
               value={avgLossAmount}
               placeholder="1000"
-              hint="Haarne par average loss"
+              hint="Average loss on a loss"
               onChange={(v) => {
                 setActivePreset(null);
                 setAvgLossAmount(v);
@@ -197,7 +197,7 @@ export default function TradeExpectancyCalculator() {
               prefix={currency}
               value={feePerTrade}
               placeholder="100"
-              hint="Brokerage, taker fee aur slippage drag"
+              hint="Brokerage, taker fee and slippage drag"
               optional
               onChange={(v) => {
                 setActivePreset(null);
@@ -322,17 +322,17 @@ export default function TradeExpectancyCalculator() {
             {/* Edge Alert */}
             {!outcome.isProfitable && (
               <Notice kind="error">
-                Negative Edge: Aapki strategy har trade par average <b>{fmtCurr(Math.abs(outcome.netExpectancyPerTrade))}</b> lose kar rahi hai. Strategy ko profitable banane ke liye win rate ko <b>{outcome.breakEvenWinRatePct.toFixed(1)}%</b> se upar le jana hoga ya R:R improve karna hoga.
+                Negative Edge: Your strategy loses an average of <b>{fmtCurr(Math.abs(outcome.netExpectancyPerTrade))}</b> per trade. To become profitable, raise win rate above <b>{outcome.breakEvenWinRatePct.toFixed(1)}%</b> or improve R:R.
               </Notice>
             )}
             {outcome.isProfitable && outcome.edgeRating === "fragile_edge" && (
               <Notice kind="warn">
-                Fragile Edge Warning: Strategy profitable hai lekin fee drag <b>{outcome.feeDragPct.toFixed(1)}%</b> hai! High frequency trading ya aggressive taker orders aapka saara profit exchange fees me khatam kar sakte hain.
+                Fragile Edge Warning: Strategy is profitable but fee drag is <b>{outcome.feeDragPct.toFixed(1)}%</b>! High-frequency or aggressive taker orders can wipe out profits in exchange fees.
               </Notice>
             )}
             {outcome.isProfitable && outcome.edgeRating === "strong_edge" && (
               <Notice kind="info">
-                Solid Trader Edge: Har trade par <b>{fmtCurr(outcome.netExpectancyPerTrade)}</b> ki statistical edge hai. Kelly criterion ke mutabiq aap per-trade maximum <b>{outcome.halfKellyFractionPct.toFixed(1)}%</b> capital risk par rakh sakte hain.
+                Solid Trader Edge: Each trade has <b>{fmtCurr(outcome.netExpectancyPerTrade)}</b> statistical edge. Per Kelly, you can risk up to <b>{outcome.halfKellyFractionPct.toFixed(1)}%</b> of capital per trade (half-Kelly shown).
               </Notice>
             )}
 
@@ -353,14 +353,14 @@ export default function TradeExpectancyCalculator() {
                 },
                 {
                   title: "4. Projected Outcome over Sample",
-                  math: `${outcome.tradesCount} trades execution ke baad projected return = ${outcome.tradesCount} × ${fmtCurr(outcome.netExpectancyPerTrade)} = ${fmtCurr(outcome.expectedTotalOutcome)}. (Total fees paid: ${fmtCurr(outcome.totalFeesImpact)}).`,
+                  math: `After ${outcome.tradesCount} trades, projected return = ${outcome.tradesCount} × ${fmtCurr(outcome.netExpectancyPerTrade)} = ${fmtCurr(outcome.expectedTotalOutcome)}. (Total fees paid: ${fmtCurr(outcome.totalFeesImpact)}).`,
                 },
               ]}
             />
           </div>
         ) : (
           <EmptyState icon={Target}>
-            Apna historical win rate %, average winning trade aur average losing trade bharein. System statistical expectancy aur break-even metrics calculate karega.
+            Enter historical win rate %, average win and average loss. The tool computes expectancy and break-even metrics.
           </EmptyState>
         )
       }
@@ -374,7 +374,7 @@ export default function TradeExpectancyCalculator() {
             }
           : null
       }
-      note="Statistical Disclaimer: Expectancy historical sample par based probability model hai. Market conditions badalne par actual returns different ho sakte hain."
+      note="Statistical disclaimer: expectancy is a probability model on historical samples. Actual returns can differ if conditions change."
     />
   );
 }

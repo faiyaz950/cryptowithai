@@ -305,9 +305,6 @@ export default function ChartDeskTools({
               Clear
             </button>
           </div>
-          <p className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            {"Drawing par click karke chuno, kheench kar move karo, sire ke gol point se size badlo. Del = hatao, Esc = band. Har coin ki drawings alag save hoti hain."}
-          </p>
         </div>
       )}
 

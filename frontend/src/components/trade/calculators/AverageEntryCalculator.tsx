@@ -152,7 +152,7 @@ export default function AverageEntryCalculator() {
       <Field
         label="Current Market Price"
         optional
-        hint="Live portfolio value aur unrealized P&L janne ke liye"
+        hint="For live portfolio value and unrealized P&L"
         value={currentPrice}
         onChange={setCurrentPrice}
         prefix="$"
@@ -166,7 +166,7 @@ export default function AverageEntryCalculator() {
     <Notice kind="error">{error}</Notice>
   ) : !res ? (
     <EmptyState icon={Layers}>
-      Apne buy orders aur quantity daalein — average entry price yahan live dikhega.
+      Enter buy orders and quantities — average entry updates live here.
     </EmptyState>
   ) : (
     <div className="cx-body">
@@ -261,7 +261,7 @@ export default function AverageEntryCalculator() {
             }
           : null
       }
-      note="Average entry price calculation weighted average (Σ Price × Qty ÷ Σ Qty) par aadharit hai. Exchange trading fees aur slippage isme shamil nahi hain."
+      note="Average entry uses weighted average (Σ price × qty ÷ Σ qty). Exchange fees and slippage are not included."
     />
   );
 }

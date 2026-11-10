@@ -10,7 +10,7 @@ export default function LoadingScreen({
   return (
     <div
       className="fixed inset-0 z-[9999] flex flex-col items-center justify-center px-6"
-      style={{ background: "#05080d" }}
+      style={{ background: "#0b0a09" }}
     >
       <div className="loading-logo-wrap mb-6">
         <Logo size={88} className="justify-center" />
@@ -27,7 +27,7 @@ export default function LoadingScreen({
         <div className="loading-bar-fill" />
       </div>
 
-      <p className="text-xs mt-4" style={{ color: "#e0ad3a" }}>
+      <p className="text-xs mt-4" style={{ color: "#ffa825" }}>
         Crypto simplified · Dr. Mukul Agrawal
       </p>
     </div>

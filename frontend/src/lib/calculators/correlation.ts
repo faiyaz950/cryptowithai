@@ -100,7 +100,7 @@ export function computeCorrelation(input: CorrelationInput): CorrelationOutcome 
   const { coinA, coinB, pricesA, pricesB } = input;
 
   if (!pricesA || !pricesB || pricesA.length < 3 || pricesB.length < 3) {
-    return { ok: false, error: "Dono coins ke kam se kam 3 price points hone chahiye." };
+    return { ok: false, error: "Each coin needs at least 3 price points." };
   }
 
   const length = Math.min(pricesA.length, pricesB.length);
@@ -108,7 +108,7 @@ export function computeCorrelation(input: CorrelationInput): CorrelationOutcome 
   const pB = pricesB.slice(pricesB.length - length);
 
   if (pA.some((p) => !Number.isFinite(p) || p <= 0) || pB.some((p) => !Number.isFinite(p) || p <= 0)) {
-    return { ok: false, error: "Price values valid positive numbers hone chahiye." };
+    return { ok: false, error: "Prices must be valid positive numbers." };
   }
 
   // Calculate percentage returns
@@ -124,7 +124,7 @@ export function computeCorrelation(input: CorrelationInput): CorrelationOutcome 
 
   const n = returnsA.length;
   if (n < 2) {
-    return { ok: false, error: "Correlation ke liye minimum 2 return intervals chahiye." };
+    return { ok: false, error: "Correlation needs at least 2 return intervals." };
   }
 
   const meanA = returnsA.reduce((sum, r) => sum + r, 0) / n;
