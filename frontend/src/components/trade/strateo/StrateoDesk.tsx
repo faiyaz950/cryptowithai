@@ -8,6 +8,7 @@ import {
   ChevronRight,
   HelpCircle,
   Loader2,
+  Lock,
   Plus,
   Server,
   Settings,
@@ -38,6 +39,8 @@ import {
 import { supportsLiveCandles, type LiveBar, type LiveStatus } from "@/lib/deltaLive";
 import { STRATEGIES, bool, getStrategy, num, type StrategyDef } from "@/lib/strategies";
 import {
+  EXCHANGES_HREF,
+  LOGIN_HREF,
   closeExecution,
   dayKey,
   executeSignal,
@@ -55,6 +58,7 @@ import {
   signalKey,
   strategyTimeframe,
   toggleIn,
+  tradeGate,
   useApplied,
   useExecutions,
   usePrefs,
@@ -124,17 +128,27 @@ function errText(err: unknown): string {
 }
 
 export default function StrateoDesk() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const uid = token && user ? user.id : null;
   const prefs = usePrefs();
   const settings = useSettings();
-  const applied = useApplied();
-  const executions = useExecutions();
+  const appliedAll = useApplied();
+  const executionsAll = useExecutions();
+  // Sirf is user ke — logout ya doosre account par pichhli strategies / orders nahi dikhte.
+  const applied = useMemo(() => (uid == null ? [] : appliedAll.filter((a) => a.userId === uid)), [appliedAll, uid]);
+  const executions = useMemo(
+    () => (uid == null ? [] : executionsAll.filter((e) => e.userId === uid)),
+    [executionsAll, uid],
+  );
   const { symbol, exchange, interval } = prefs;
 
   const { stats, pending, refresh } = useStrateoStats(symbol);
 
   const [sources, setSources] = useState<MarketSourceInfo[]>(DEFAULT_MARKET_SOURCES);
-  const [accountRows, setAccounts] = useState<ExchangeAccount[]>([]);
+  /** Kis token ke liye load hua — null rows = load fail. */
+  const [acct, setAcct] = useState<{ token: string; rows: ExchangeAccount[] | null } | null>(null);
+  const [acctNonce, setAcctNonce] = useState(0);
+  const [gateOpen, setGateOpen] = useState(false);
   const [bots, setBots] = useState<StrategyBot[]>([]);
   const [liveOrdersEnabled, setLiveOrdersEnabled] = useState<boolean | null>(null);
   const [workerRunning, setWorkerRunning] = useState<boolean | null>(null);
@@ -178,11 +192,35 @@ export default function StrateoDesk() {
 
   useEffect(() => {
     if (!token) return;
-    listExchangeAccounts(token)
-      .then(setAccounts)
-      .catch(() => setAccounts([]));
-  }, [token]);
-  const accounts = useMemo(() => (token ? accountRows : []), [token, accountRows]);
+    let alive = true;
+    const load = () =>
+      listExchangeAccounts(token)
+        .then((rows) => {
+          if (alive) setAcct({ token, rows });
+        })
+        .catch(() => {
+          if (alive) setAcct({ token, rows: null });
+        });
+    void load();
+    // Exchanges par key jodkar wapas aaye (doosre tab se bhi) — gate turant khul jaaye.
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      alive = false;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [token, acctNonce]);
+  const acctLoaded = token && acct?.token === token ? acct : null;
+  const accounts = useMemo(() => acctLoaded?.rows ?? [], [acctLoaded]);
+  /** Login + kam se kam ek chalu exchange key — tabhi apply, order aur 1-Click. */
+  const gate = tradeGate({
+    signedIn: uid != null,
+    accounts: acctLoaded ? acctLoaded.rows ?? [] : null,
+    failed: Boolean(acctLoaded && acctLoaded.rows == null),
+  });
+  const canTrade = gate.ok;
+  const oneClickOn = settings.oneClick && canTrade;
+  const openGate = useCallback(() => setGateOpen(true), []);
 
   const loadBots = useCallback(async () => {
     if (!token) return;
@@ -322,9 +360,9 @@ export default function StrateoDesk() {
 
   /* ── Signal monitor ────────────────────────────────── */
 
-  const ctxRef = useRef({ token, settings, applied, executions, accounts, bells: prefs.bells, symbol, livePrice });
+  const ctxRef = useRef({ token, uid, canTrade, settings, applied, executions, accounts, bells: prefs.bells, symbol, livePrice });
   useEffect(() => {
-    ctxRef.current = { token, settings, applied, executions, accounts, bells: prefs.bells, symbol, livePrice };
+    ctxRef.current = { token, uid, canTrade, settings, applied, executions, accounts, bells: prefs.bells, symbol, livePrice };
   });
   const handledExits = useRef(new Set<string>());
 
@@ -361,11 +399,12 @@ export default function StrateoDesk() {
           const text = `${def.name}: ${open.side === "long" ? "BUY" : "SELL"} ${symbolLabel(s.symbol)} @ ${fmtPrice(open.entry)}`;
           alertOut("Strateo signal", text);
           if (row?.runner === "browser") {
-            if (ctx.settings.oneClick && ctx.token) {
+            if (ctx.settings.oneClick && ctx.canTrade && ctx.token && ctx.uid != null) {
               try {
                 const price = s.symbol === ctx.symbol && ctx.livePrice ? ctx.livePrice : open.exit;
                 const exec = await executeSignal({
                   token: ctx.token,
+                  userId: ctx.uid,
                   strategyId: def.id,
                   symbol: s.symbol,
                   trade: open,
@@ -463,8 +502,9 @@ export default function StrateoDesk() {
 
   /* ── Apply / remove ────────────────────────────────── */
 
-  const appliedRow = (def: StrategyDef): Omit<AppliedStrategy, "runner" | "botId"> => ({
+  const appliedRow = (def: StrategyDef, userId: number): Omit<AppliedStrategy, "runner" | "botId"> => ({
     id: def.id,
+    userId,
     symbol,
     timeframe: strategyTimeframe(def),
     appliedAt: Date.now(),
@@ -474,10 +514,11 @@ export default function StrateoDesk() {
   });
 
   const applyBrowser = async (def: StrategyDef) => {
+    if (uid == null || !canTrade) throw new Error("Log in and connect an exchange to apply.");
     // Jo trade abhi khula hai wo "pichhla" hai — order sirf agli entry par.
     const s = stats[def.id] ?? (await requestStats(def, symbol, { priority: true }));
     if (s?.open) markSeen(def.id, symbol, s.open.entryTime);
-    saveApplied({ ...appliedRow(def), runner: "browser", botId: null });
+    saveApplied({ ...appliedRow(def, uid), runner: "browser", botId: null });
     writePrefs({ focus: def.id });
     toast(
       `${def.name} applied on ${symbolLabel(symbol)} · ${exchangeName} — ${settings.oneClick ? "orders go out on the next entry" : "you'll get the next entry to confirm"}.`,
@@ -486,7 +527,7 @@ export default function StrateoDesk() {
   };
 
   const applyServer = async (def: StrategyDef) => {
-    if (!token) throw new Error("Log in to deploy a server bot.");
+    if (!token || uid == null || !canTrade) throw new Error("Log in and connect an exchange to deploy a bot.");
     const d = def.defaults;
     const res = await deployStrategyBot(token, {
       strategy: def.id,
@@ -504,7 +545,7 @@ export default function StrateoDesk() {
     });
     const s = stats[def.id];
     if (s?.open) markSeen(def.id, symbol, s.open.entryTime);
-    saveApplied({ ...appliedRow(def), runner: "server", botId: res.data.id });
+    saveApplied({ ...appliedRow(def, uid), runner: "server", botId: res.data.id });
     writePrefs({ focus: def.id });
     void loadBots();
     toast(`${def.name}: ${settings.mode === "live" ? "LIVE" : "paper"} bot #${res.data.id} running on ${symbolLabel(symbol)} — 24×7.`, "good");
@@ -513,6 +554,11 @@ export default function StrateoDesk() {
   const startApply = (def: StrategyDef) => {
     if (appliedIds.has(def.id)) {
       writePrefs({ focus: def.id });
+      return;
+    }
+    if (!canTrade) {
+      writePrefs({ focus: def.id });
+      openGate();
       return;
     }
     if (runsOnServer(def) || settings.mode === "live") {
@@ -536,7 +582,7 @@ export default function StrateoDesk() {
       setModal({ kind: "remove", def, row });
       return;
     }
-    removeApplied(def.id);
+    removeApplied(def.id, row.userId);
     const stillOpen = executions.some((e) => e.strategyId === def.id && !e.closed);
     toast(
       stillOpen
@@ -557,7 +603,7 @@ export default function StrateoDesk() {
       } else {
         const { row, def } = modal;
         if (token && row.botId) await stopStrategyBot(token, row.botId, flatten);
-        removeApplied(def.id);
+        removeApplied(def.id, row.userId);
         void loadBots();
         toast(`${def.name}: bot stopped${flatten ? " and position closed" : ""}.`, "info");
       }
@@ -570,8 +616,8 @@ export default function StrateoDesk() {
   };
 
   const tradeSignal = async (sig: StrateoSignal) => {
-    if (!token) {
-      toast("Log in to place orders.", "bad");
+    if (!canTrade || !token || uid == null) {
+      openGate();
       return;
     }
     if (settings.mode === "live" && !window.confirm(`Send a LIVE ${sig.trade.side === "long" ? "BUY" : "SELL"} order for ${symbolLabel(sig.symbol)}?`)) return;
@@ -581,6 +627,7 @@ export default function StrateoDesk() {
       const price = sig.symbol === symbol && lastPrice ? lastPrice : sig.trade.exit;
       const exec = await executeSignal({
         token,
+        userId: uid,
         strategyId: sig.def.id,
         symbol: sig.symbol,
         trade: sig.trade,
@@ -664,7 +711,7 @@ export default function StrateoDesk() {
       sub = `Entry ${fmtPrice(open.entry)}${open.stop ? ` · SL ${fmtPrice(open.stop)}` : ""}`;
     } else if (focusState === "signal" && open) {
       title = `${side} signal · ${fmtPrice(open.entry)}`;
-      sub = settings.oneClick ? "Placing order…" : "Place it from Signals";
+      sub = oneClickOn ? "Placing order…" : "Place it from Signals";
     } else if (focusState === "scan") {
       title = "Analyzing";
       sub = "Next Entry";
@@ -683,7 +730,7 @@ export default function StrateoDesk() {
         </span>
       </div>
     );
-  }, [focusDef, focusOpen, focusStats, focusState, lastPrice, settings.oneClick]);
+  }, [focusDef, focusOpen, focusStats, focusState, lastPrice, oneClickOn]);
 
   /* ── Render ────────────────────────────────────────── */
 
@@ -866,7 +913,11 @@ export default function StrateoDesk() {
             >
               <HelpCircle className="w-3.5 h-3.5" />
             </span>
-            <Switch on={settings.oneClick} onChange={(v) => writeSettings({ oneClick: v })} label="1-Click Trade" />
+            <Switch
+              on={oneClickOn}
+              onChange={(v) => (canTrade ? writeSettings({ oneClick: v }) : openGate())}
+              label="1-Click Trade"
+            />
           </div>
         </div>
 
@@ -944,7 +995,7 @@ export default function StrateoDesk() {
               : "Polling every 10s"}
           </span>
           <span className="st-statusbar-info">
-            {applied.length} applied · {settings.mode === "live" ? "Live" : "Paper"} · 1-Click {settings.oneClick ? "on" : "off"}
+            {applied.length} applied · {settings.mode === "live" ? "Live" : "Paper"} · 1-Click {oneClickOn ? "on" : "off"}
           </span>
           {lastPrice != null && <span className="st-statusbar-px">{fmtPrice(lastPrice)}</span>}
         </footer>
@@ -967,7 +1018,8 @@ export default function StrateoDesk() {
           onTab={openTab}
           focusId={focusId}
           busyId={busyId}
-          signedIn={Boolean(token)}
+          gate={gate}
+          onGate={openGate}
           liveOrdersEnabled={liveOrdersEnabled}
           workerRunning={workerRunning}
           onApply={startApply}
@@ -988,6 +1040,56 @@ export default function StrateoDesk() {
           onClose={() => writePrefs({ panelOpen: false })}
           scrollToken={scrollToken}
         />
+      )}
+
+      {gateOpen && !gate.ok && (
+        <div className="st-modal-back" role="presentation" onClick={() => setGateOpen(false)}>
+          <div
+            className="st-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="st-gate-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header>
+              <span className="st-card-icon">
+                <Lock className="w-4 h-4" aria-hidden />
+              </span>
+              <h2 id="st-gate-title">{gate.title}</h2>
+              <button type="button" className="st-icon-btn" aria-label="Close" onClick={() => setGateOpen(false)}>
+                <X className="w-4 h-4" />
+              </button>
+            </header>
+            <p className="st-note">{gate.body}</p>
+            <ol className="st-gate-steps">
+              <li data-done={uid != null}>Log in to your account</li>
+              <li data-done={false}>Connect your exchange API key on Exchanges</li>
+              <li data-done={false}>Apply a strategy — it trades on your exchange</li>
+            </ol>
+            <footer>
+              <button type="button" className="st-btn st-btn-outline" onClick={() => setGateOpen(false)}>
+                Not now
+              </button>
+              {gate.reason === "login" ? (
+                <Link href={LOGIN_HREF} className="st-btn st-btn-solid">
+                  Log in
+                </Link>
+              ) : gate.reason === "exchange" ? (
+                <Link href={EXCHANGES_HREF} className="st-btn st-btn-solid">
+                  Connect exchange
+                </Link>
+              ) : gate.reason === "error" ? (
+                <button type="button" className="st-btn st-btn-solid" onClick={() => setAcctNonce((n) => n + 1)}>
+                  Retry
+                </button>
+              ) : (
+                <button type="button" className="st-btn st-btn-solid" disabled>
+                  <Loader2 className="w-4 h-4 st-spin" /> Checking
+                </button>
+              )}
+            </footer>
+          </div>
+        </div>
       )}
 
       {modal && modalDef && (

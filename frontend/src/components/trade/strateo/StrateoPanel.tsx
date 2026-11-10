@@ -9,6 +9,7 @@ import {
   Flame,
   Info,
   Loader2,
+  Lock,
   RefreshCw,
   Star,
   TrendingDown,
@@ -20,6 +21,8 @@ import type { ExchangeAccount } from "@/lib/accountApi";
 import { symbolLabel } from "@/lib/cryptoApi";
 import type { StrategyDef } from "@/lib/strategies";
 import {
+  EXCHANGES_HREF,
+  LOGIN_HREF,
   authorOf,
   dayKey,
   fmtClock,
@@ -38,6 +41,7 @@ import {
   type StrateoSettings,
   type StrateoStats,
   type StrateoTrade,
+  type TradeGate,
 } from "@/lib/strateo";
 
 export type PanelTab = "signals" | "strategies" | "settings";
@@ -65,7 +69,9 @@ interface Props {
   onTab: (tab: PanelTab) => void;
   focusId: string | null;
   busyId: string | null;
-  signedIn: boolean;
+  /** Login + exchange key — na ho to apply / order ki jagah ye raasta dikhao. */
+  gate: TradeGate;
+  onGate: () => void;
   liveOrdersEnabled: boolean | null;
   workerRunning: boolean | null;
   onApply: (def: StrategyDef) => void;
@@ -103,7 +109,8 @@ export default function StrateoPanel(props: Props) {
     onTab,
     focusId,
     busyId,
-    signedIn,
+    gate,
+    onGate,
     onApply,
     onRemove,
     onFocus,
@@ -184,6 +191,7 @@ export default function StrateoPanel(props: Props) {
       bell={bells.includes(def.id)}
       focused={focusId === def.id}
       busy={busyId === def.id}
+      lockHint={!gate.ok && gate.reason !== "checking" ? gate.title : null}
       onApply={() => onApply(def)}
       onRemove={() => onRemove(def)}
       onFocus={() => onFocus(def)}
@@ -213,14 +221,22 @@ export default function StrateoPanel(props: Props) {
               <Zap className="w-5 h-5" aria-hidden /> Strateo <span>×</span> {exchangeName}
             </div>
             <p className="st-banner-line">Apply a strategy. It trades on your exchange.</p>
-            {accounts.length ? (
+            {gate.ok ? (
               <button type="button" className="st-banner-cta" onClick={() => onTab("strategies")}>
                 Trade now <ChevronRight className="w-4 h-4" />
               </button>
-            ) : (
-              <Link href="/trade?tab=exchanges" className="st-banner-cta">
-                Connect {exchangeName} <ChevronRight className="w-4 h-4" />
+            ) : gate.reason === "login" ? (
+              <Link href={LOGIN_HREF} className="st-banner-cta">
+                Log in to trade <ChevronRight className="w-4 h-4" />
               </Link>
+            ) : gate.reason === "exchange" ? (
+              <Link href={EXCHANGES_HREF} className="st-banner-cta">
+                Connect exchange <ChevronRight className="w-4 h-4" />
+              </Link>
+            ) : (
+              <button type="button" className="st-banner-cta" onClick={onGate}>
+                {gate.reason === "error" ? "Retry" : "Checking…"} <ChevronRight className="w-4 h-4" />
+              </button>
             )}
           </div>
           <div className="st-banner-side" aria-hidden>
@@ -282,6 +298,8 @@ export default function StrateoPanel(props: Props) {
               </button>
             </div>
 
+            {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
+
             {trending && (
               <section className="st-trending" aria-label="Trending strategy">
                 <div className="st-trending-head">
@@ -303,23 +321,26 @@ export default function StrateoPanel(props: Props) {
             {ordered.filter((d) => d.id !== trending?.def.id).map(card)}
           </div>
         ) : tab === "signals" ? (
+          <>
+            {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
           <SignalsList
             signals={signals}
             appliedIds={appliedIds}
             executions={executions}
             busyId={busyId}
-            signedIn={signedIn}
             symbol={symbol}
             onTrade={onTradeSignal}
             onFocus={onFocus}
           />
+          </>
         ) : (
           <SettingsView
             settings={settings}
             accounts={accounts}
             accountForLive={accountForLive}
             exchangeName={exchangeName}
-            signedIn={signedIn}
+            gate={gate}
+            onGate={onGate}
             liveOrdersEnabled={props.liveOrdersEnabled}
             workerRunning={props.workerRunning}
             symbol={symbol}
@@ -346,6 +367,7 @@ function StrategyCard({
   bell,
   focused,
   busy,
+  lockHint,
   onApply,
   onRemove,
   onFocus,
@@ -361,6 +383,8 @@ function StrategyCard({
   bell: boolean;
   focused: boolean;
   busy: boolean;
+  /** Login / exchange baaki — Apply dabane par raasta dikhega. */
+  lockHint: string | null;
   onApply: () => void;
   onRemove: () => void;
   onFocus: () => void;
@@ -486,12 +510,56 @@ function StrategyCard({
             {busy ? <Loader2 className="w-4 h-4 st-spin" /> : "Remove"}
           </button>
         ) : (
-          <button type="button" className="st-btn st-btn-solid" onClick={onApply} disabled={busy}>
-            {busy ? <Loader2 className="w-4 h-4 st-spin" /> : "Apply"}
+          <button
+            type="button"
+            className="st-btn st-btn-solid"
+            onClick={onApply}
+            disabled={busy}
+            title={lockHint ? `${lockHint} first` : undefined}
+          >
+            {busy ? (
+              <Loader2 className="w-4 h-4 st-spin" />
+            ) : (
+              <>
+                {lockHint && <Lock className="w-3.5 h-3.5 st-lock" aria-hidden />}
+                Apply
+              </>
+            )}
           </button>
         )}
       </div>
     </article>
+  );
+}
+
+/* ── Lock bar — login / exchange baaki ─────────────────── */
+
+function LockBar({ gate, onGate }: { gate: Exclude<TradeGate, { ok: true }>; onGate: () => void }) {
+  return (
+    <div className="st-lockbar" role="note">
+      <Lock className="w-4 h-4" aria-hidden />
+      <span>
+        <b>{gate.reason === "login" ? "Log in to apply strategies" : gate.title}</b>
+        {gate.reason === "login"
+          ? "Then connect your exchange — strategies trade on it."
+          : gate.reason === "exchange"
+            ? "Add an API key on Exchanges to apply and trade."
+            : gate.body}
+      </span>
+      {gate.reason === "login" ? (
+        <Link href={LOGIN_HREF} className="st-btn st-btn-solid st-btn-sm">
+          Log in
+        </Link>
+      ) : gate.reason === "exchange" ? (
+        <Link href={EXCHANGES_HREF} className="st-btn st-btn-solid st-btn-sm">
+          Connect
+        </Link>
+      ) : (
+        <button type="button" className="st-btn st-btn-outline st-btn-sm" onClick={onGate}>
+          Retry
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -502,7 +570,6 @@ function SignalsList({
   appliedIds,
   executions,
   busyId,
-  signedIn,
   symbol,
   onTrade,
   onFocus,
@@ -511,7 +578,6 @@ function SignalsList({
   appliedIds: Set<string>;
   executions: Execution[];
   busyId: string | null;
-  signedIn: boolean;
   symbol: string;
   onTrade: (signal: StrateoSignal) => void;
   onFocus: (def: StrategyDef) => void;
@@ -547,8 +613,7 @@ function SignalsList({
           const { def, trade } = sig;
           const key = signalKey(def.id, sig.symbol, trade.entryTime);
           const exec = execByKey.get(key);
-          const canTrade =
-            trade.open && appliedIds.has(def.id) && !runsOnServer(def) && !exec && signedIn;
+          const canPlace = trade.open && appliedIds.has(def.id) && !runsOnServer(def) && !exec;
           const Icon = def.icon;
           return (
             <article key={key} className="st-signal" data-open={trade.open}>
@@ -589,7 +654,7 @@ function SignalsList({
                     Placed · {exec.mode === "live" ? "Live" : "Paper"}
                     {exec.closed ? ` · closed ${fmtPrice(exec.closed.price)}` : ""}
                   </span>
-                ) : canTrade ? (
+                ) : canPlace ? (
                   <button
                     type="button"
                     className="st-btn st-btn-solid st-btn-sm"
@@ -619,7 +684,8 @@ function SettingsView({
   accounts,
   accountForLive,
   exchangeName,
-  signedIn,
+  gate,
+  onGate,
   liveOrdersEnabled,
   workerRunning,
   symbol,
@@ -632,7 +698,8 @@ function SettingsView({
   accounts: ExchangeAccount[];
   accountForLive: ExchangeAccount | null;
   exchangeName: string;
-  signedIn: boolean;
+  gate: TradeGate;
+  onGate: () => void;
   liveOrdersEnabled: boolean | null;
   workerRunning: boolean | null;
   symbol: string;
@@ -656,8 +723,8 @@ function SettingsView({
     writeSettings({ desktopAlerts: result === "granted" });
   };
 
-  const liveProblem = !signedIn
-    ? "Log in to place orders."
+  const liveProblem = !gate.ok
+    ? gate.title
     : !accounts.length
       ? `No ${exchangeName} API key connected.`
       : !accountForLive
@@ -685,6 +752,10 @@ function SettingsView({
                 data-active={settings.mode === m}
                 data-tone={m}
                 onClick={() => {
+                  if (m === "live" && !gate.ok) {
+                    onGate();
+                    return;
+                  }
                   if (m === "live" && settings.mode !== "live") {
                     const ok = window.confirm(
                       "Live mode places real orders with real money on your exchange when a strategy signals. Continue?",
@@ -733,7 +804,11 @@ function SettingsView({
             <b>1-Click Trade</b>
             <small>Place the order the moment an applied strategy signals — no confirm step.</small>
           </div>
-          <Switch on={settings.oneClick} onChange={(v) => writeSettings({ oneClick: v })} label="1-Click Trade" />
+          <Switch
+            on={settings.oneClick && gate.ok}
+            onChange={(v) => (gate.ok ? writeSettings({ oneClick: v }) : onGate())}
+            label="1-Click Trade"
+          />
         </div>
 
         <div className="st-row">

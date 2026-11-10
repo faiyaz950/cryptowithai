@@ -505,6 +505,8 @@ export interface AppliedStrategy {
   accountId: number | null;
   runner: "server" | "browser";
   botId: number | null;
+  /** Kis account ne apply kiya — ek browser par doosra user login kare to use ye na dikhe. */
+  userId?: number;
 }
 
 const APPLIED_KEY = "strateo.applied.v1";
@@ -515,11 +517,18 @@ export function readApplied(): AppliedStrategy[] {
 }
 
 export function saveApplied(row: AppliedStrategy) {
-  writeAndNotify(APPLIED_KEY, APPLIED_EVENT, [...readApplied().filter((a) => a.id !== row.id), row]);
+  writeAndNotify(APPLIED_KEY, APPLIED_EVENT, [
+    ...readApplied().filter((a) => !(a.id === row.id && a.userId === row.userId)),
+    row,
+  ]);
 }
 
-export function removeApplied(id: string) {
-  writeAndNotify(APPLIED_KEY, APPLIED_EVENT, readApplied().filter((a) => a.id !== id));
+export function removeApplied(id: string, userId: number | undefined) {
+  writeAndNotify(
+    APPLIED_KEY,
+    APPLIED_EVENT,
+    readApplied().filter((a) => !(a.id === id && a.userId === userId)),
+  );
 }
 
 export function useApplied(): AppliedStrategy[] {
@@ -630,6 +639,8 @@ export interface Execution {
   orderId: string;
   at: number;
   closed?: { at: number; price: number; reason: string; orderId?: string };
+  /** Order kis account se gaya — close bhi sirf wahi user kare. */
+  userId?: number;
 }
 
 const EXEC_KEY = "strateo.exec.v1";
@@ -672,6 +683,60 @@ export function markSeen(strategyId: string, symbol: string, entryTime: number) 
   }
 }
 
+/* ── Who may trade ─────────────────────────────────────── */
+
+export const LOGIN_HREF = "/login?next=%2Ftrade%2Fstrateo";
+export const EXCHANGES_HREF = "/trade?tab=exchanges";
+
+export type TradeGate =
+  | { ok: true }
+  | { ok: false; reason: "login" | "exchange" | "checking" | "error"; title: string; body: string };
+
+/**
+ * Apply, Place order aur 1-Click sirf tab — user logged in ho aur Exchanges par kam se
+ * kam ek chalu API key judi ho. Backtest dekhna aur bell alerts sabke liye khule hain.
+ * `accounts` null = abhi load ho rahe hain.
+ */
+export function tradeGate(opts: {
+  signedIn: boolean;
+  accounts: ExchangeAccount[] | null;
+  failed: boolean;
+}): TradeGate {
+  if (!opts.signedIn) {
+    return {
+      ok: false,
+      reason: "login",
+      title: "Log in to trade",
+      body: "Strateo trades on your own account. Log in, connect your exchange, then apply any strategy.",
+    };
+  }
+  if (opts.failed) {
+    return {
+      ok: false,
+      reason: "error",
+      title: "Couldn't load your exchanges",
+      body: "Check your connection and try again.",
+    };
+  }
+  if (opts.accounts == null) {
+    return {
+      ok: false,
+      reason: "checking",
+      title: "Checking your exchange…",
+      body: "Loading your connected exchanges — one moment.",
+    };
+  }
+  if (!opts.accounts.some((a) => a.is_active)) {
+    return {
+      ok: false,
+      reason: "exchange",
+      title: "Connect an exchange",
+      body: "Add your exchange API key once on Exchanges. After that, any strategy you apply trades on it.",
+    };
+  }
+  return { ok: true };
+}
+
 /* ── Execution on the exchange ─────────────────────────── */
 
 export class StrateoOrderError extends Error {}
@@ -692,6 +757,7 @@ function bracketFor(side: "long" | "short", price: number, stop: number | null, 
 
 export async function executeSignal(opts: {
   token: string;
+  userId: number;
   strategyId: string;
   symbol: string;
   trade: StrateoTrade;
@@ -699,7 +765,7 @@ export async function executeSignal(opts: {
   settings: StrateoSettings;
   account: ExchangeAccount | null;
 }): Promise<Execution> {
-  const { token, strategyId, symbol, trade, price, settings, account } = opts;
+  const { token, userId, strategyId, symbol, trade, price, settings, account } = opts;
   const qty = quantityFor(settings.orderUsd, price);
   if (!qty) throw new StrateoOrderError("Order size is zero — set an amount in Settings.");
   const side = trade.side === "long" ? "buy" : "sell";
@@ -715,6 +781,7 @@ export async function executeSignal(opts: {
     stop,
     target,
     at: Date.now(),
+    userId,
   };
 
   if (settings.mode === "live") {
