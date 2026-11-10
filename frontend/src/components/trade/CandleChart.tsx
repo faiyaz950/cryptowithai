@@ -133,6 +133,21 @@ interface Props {
   onIndicatorRemove?: (uid: string) => void;
   /** Entry, stop, aur targets. Order se pehle dashed, khuli deal par solid. */
   levels?: ChartLevel[];
+  /** Strategy ke trades — entry dots, "SL Hit" jaise labels. Time candle par snap hota hai. */
+  markers?: ChartMarker[];
+  /** Aakhri price ke paas, aakhri candle ke daayein — jaise "Analyzing next entry". */
+  priceAnchor?: ReactNode;
+  /** Reset / naye chart par aakhri candle ke daayein kitni khaali candles (default 4). */
+  rightGap?: number;
+}
+
+export interface ChartMarker {
+  /** ms — jis candle ke andar pade usi par lagta hai. */
+  time: number;
+  position: "aboveBar" | "belowBar" | "inBar";
+  shape: "circle" | "square" | "arrowUp" | "arrowDown";
+  color: string;
+  text?: string;
 }
 
 export interface ChartLevel {
@@ -579,16 +594,16 @@ function pctSeries(candles: Candle[]): { time: UTCTimestamp; value: number }[] {
  *  Aakhri ~150 bars, readable spacing, price usi window pe scale. */
 const RESET_BARS = 150;
 
-function showLatest(chart: IChartApi, count: number) {
+function showLatest(chart: IChartApi, count: number, gap = 4) {
   chart.priceScale("right").applyOptions({ autoScale: true });
   const ts = chart.timeScale();
-  ts.applyOptions({ barSpacing: 8, rightOffset: 4 });
+  ts.applyOptions({ barSpacing: 8, rightOffset: gap });
   if (count <= 1) {
     ts.fitContent();
     return;
   }
   const span = Math.min(RESET_BARS, count);
-  const to = count - 1 + 4;
+  const to = count - 1 + gap;
   ts.setVisibleLogicalRange({ from: to - span, to });
 }
 
@@ -652,7 +667,14 @@ export default function CandleChart({
   onIndicatorSettings,
   onIndicatorRemove,
   levels,
+  markers,
+  priceAnchor,
+  rightGap = 4,
 }: Props) {
+  const rightGapRef = useRef(rightGap);
+  useEffect(() => {
+    rightGapRef.current = rightGap;
+  }, [rightGap]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   /** Chart abhi kis dataset ka hai — isi se tay hota hai fit karna hai ya view bachana. */
@@ -852,6 +874,15 @@ export default function CandleChart({
       chart.remove();
       chartRef.current = null;
       mainRef.current = null;
+      // Naya chart khaali hota hai — "pichhli baar kya draw hua" bhool jao, warna data
+      // effect ise poll samajh kar sirf tail update karta (StrictMode remount par 1 candle).
+      viewKeyRef.current = null;
+      dataSigRef.current = "";
+      lastCandlesRef.current = null;
+      mainBarsRef.current = [];
+      barCountRef.current = 0;
+      firstBarTimeRef.current = null;
+      lastBarTimeRef.current = null;
       indEntries.clear();
       volumeSeries.current = null;
       compareSeries.current = null;
@@ -1128,7 +1159,7 @@ export default function CandleChart({
     };
     if (isNewView && chart) {
       viewKeyRef.current = key;
-      showLatest(chart, barCountRef.current);
+      showLatest(chart, barCountRef.current, rightGapRef.current);
     } else if (tailFrom >= 0) {
       /* view jaisa tha waisa */
     } else if (historyShifted && prevLogical) {
@@ -1471,7 +1502,7 @@ export default function CandleChart({
 
   const resetChart = () => {
     const chart = chartRef.current;
-    if (chart) showLatest(chart, barCountRef.current);
+    if (chart) showLatest(chart, barCountRef.current, rightGapRef.current);
   };
 
   useEffect(() => {
@@ -1482,14 +1513,89 @@ export default function CandleChart({
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
       e.preventDefault();
       const chart = chartRef.current;
-      if (chart) showLatest(chart, barCountRef.current);
+      if (chart) showLatest(chart, barCountRef.current, rightGapRef.current);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /*
+   * Markers data ke baad lagte hain (ye effect data wale ke baad define hai). Har marker
+   * us candle par snap hota hai jiske andar uska time aata hai — strategy kisi aur
+   * timeframe par chal rahi ho tab bhi dot sahi candle par dikhe.
+   */
+  useEffect(() => {
+    const series = mainRef.current?.series;
+    if (!series) return;
+    const bars = mainBarsRef.current;
+    if (!markers?.length || !bars.length) {
+      series.setMarkers([]);
+      return;
+    }
+    const snap = (t: number): number | null => {
+      if (t < bars[0].time) return null;
+      let lo = 0;
+      let hi = bars.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (bars[mid].time <= t) lo = mid;
+        else hi = mid - 1;
+      }
+      return bars[lo].time;
+    };
+    const list = markers
+      .map((m) => {
+        const at = snap(m.time);
+        return at == null ? null : { time: toUnix(at) as Time, position: m.position, shape: m.shape, color: m.color, text: m.text };
+      })
+      .filter((m): m is NonNullable<typeof m> => m !== null)
+      .sort((a, b) => Number(a.time) - Number(b.time));
+    series.setMarkers(list);
+  }, [markers, candles, chartType]);
+
+  const [anchorPos, setAnchorPos] = useState<{ x: number | null; y: number } | null>(null);
+  useEffect(() => {
+    if (!priceAnchor) return;
+    const tick = () => {
+      const chart = chartRef.current;
+      const series = mainRef.current?.series;
+      const bars = mainBarsRef.current;
+      if (!chart || !series || !bars.length) return;
+      const last = bars[bars.length - 1];
+      const price = liveBarRef.current?.close ?? last.close;
+      const y = series.priceToCoordinate(price);
+      const x = chart.timeScale().timeToCoordinate(toUnix(last.time) as Time);
+      if (y == null) return;
+      setAnchorPos((prev) =>
+        prev && Math.abs(prev.y - y) < 1 && (prev.x ?? -1) === (x == null ? -1 : Math.round(x))
+          ? prev
+          : { x: x == null ? null : Math.round(x), y },
+      );
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [priceAnchor]);
+
   return (
     <div className="relative w-full h-full trade-chart-shell">
+      {priceAnchor && anchorPos && (
+        <div
+          className="cm-price-anchor"
+          style={{
+            top: anchorPos.y,
+            // Last candle ke paas; narrow chart par bhi chart ke bahar na nikle.
+            left: anchorPos.x == null ? undefined : `clamp(4px, ${anchorPos.x + 10}px, calc(100% - 290px))`,
+            maxWidth:
+              anchorPos.x == null
+                ? "calc(100% - 100px)"
+                : `calc(100% - 8px - clamp(4px, ${anchorPos.x + 10}px, calc(100% - 290px)))`,
+            right: anchorPos.x == null ? 90 : undefined,
+          }}
+        >
+          {priceAnchor}
+        </div>
+      )}
       <div className="cm-legend-stack">
       {view && (
         <div className="trade-chart-legend">

@@ -415,6 +415,8 @@ export function placeByokOrder(
     quantity: number;
     price?: number | null;
     reduce_only?: boolean;
+    /** "live" tabhi exchange tak jaata hai jab server ka LIVE_ORDERS_ENABLED aur account ka live toggle dono on hon. */
+    mode?: "paper" | "live";
   },
 ) {
   return request<{
