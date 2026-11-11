@@ -3,21 +3,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  Activity,
   AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Crosshair,
+  Eye,
   HelpCircle,
   Loader2,
   Lock,
+  MousePointerClick,
   Plus,
+  Radar,
   Server,
-  Settings,
+  SlidersHorizontal,
   Wallet,
   X,
-  Zap,
 } from "lucide-react";
 import CandleChart, { type ChartLevel, type ChartMarker } from "@/components/trade/CandleChart";
 import StrateoPanel, { Switch, type PanelTab, type StrateoSignal } from "./StrateoPanel";
+import StrateoMark from "./StrateoMark";
 import { useAuth } from "@/context/AuthContext";
 import { listExchangeAccounts, type ExchangeAccount } from "@/lib/accountApi";
 import {
@@ -48,13 +53,18 @@ import {
   fmtPct,
   fmtPrice,
   fmtUsd,
+  fmtWhen,
+  isOptionsStrategy,
   lastSeenEntry,
   markSeen,
+  outcomeLabel,
   peekStats,
   removeApplied,
   requestStats,
   runsOnServer,
   saveApplied,
+  sideTag,
+  sideWord,
   signalKey,
   strategyTimeframe,
   toggleIn,
@@ -77,9 +87,9 @@ const TF_CHOICES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const SIGNALS_SEEN_KEY = "strateo.signalsSeen";
 const EMPTY_CANDLES: Candle[] = [];
 
-const ENTRY_COLOR = "#3b82f6";
-const UP = "#22c55e";
-const DOWN = "#ef4444";
+const ENTRY_COLOR = "#8b7bff";
+const UP = "#2fd67b";
+const DOWN = "#ff5c6c";
 
 interface Toast {
   id: number;
@@ -396,10 +406,19 @@ export default function StrateoDesk() {
         markSeen(def.id, s.symbol, open.entryTime);
         // Sirf taaza entry par action — page kai ghante baad khula to purane trade par order nahi.
         if (Date.now() - open.entryTime <= 2 * barMs + 5 * 60_000) {
-          const text = `${def.name}: ${open.side === "long" ? "BUY" : "SELL"} ${symbolLabel(s.symbol)} @ ${fmtPrice(open.entry)}`;
+          const options = isOptionsStrategy(def);
+          const text = options
+            ? `${def.name}: ${sideWord(open)} on ${symbolLabel(s.symbol)} · premium ${fmtPrice(open.entry)}`
+            : `${def.name}: ${sideTag(open)} ${symbolLabel(s.symbol)} @ ${fmtPrice(open.entry)}`;
           alertOut("Strateo signal", text);
           if (row?.runner === "browser") {
-            if (ctx.settings.oneClick && ctx.canTrade && ctx.token && ctx.uid != null) {
+            if (options) {
+              // Options ka order Strateo nahi lagata — perp order galat instrument hota.
+              toast(`Signal — ${text}. Trade the options legs on your exchange.`, "info", {
+                label: "View",
+                run: () => openTab("signals"),
+              });
+            } else if (ctx.settings.oneClick && ctx.canTrade && ctx.token && ctx.uid != null) {
               try {
                 const price = s.symbol === ctx.symbol && ctx.livePrice ? ctx.livePrice : open.exit;
                 const exec = await executeSignal({
@@ -521,7 +540,9 @@ export default function StrateoDesk() {
     saveApplied({ ...appliedRow(def, uid), runner: "browser", botId: null });
     writePrefs({ focus: def.id });
     toast(
-      `${def.name} applied on ${symbolLabel(symbol)} · ${exchangeName} — ${settings.oneClick ? "orders go out on the next entry" : "you'll get the next entry to confirm"}.`,
+      isOptionsStrategy(def)
+        ? `${def.name} applied on ${symbolLabel(symbol)} — options strategy, so you get signals only. Trade the legs on ${exchangeName}.`
+        : `${def.name} applied on ${symbolLabel(symbol)} · ${exchangeName} — ${oneClickOn ? "orders go out on the next entry" : "you'll get the next entry to confirm"}.`,
       "good",
     );
   };
@@ -561,7 +582,7 @@ export default function StrateoDesk() {
       openGate();
       return;
     }
-    if (runsOnServer(def) || settings.mode === "live") {
+    if (!isOptionsStrategy(def) && (runsOnServer(def) || settings.mode === "live")) {
       setModalError(null);
       setLiveAck(false);
       setModal({ kind: "apply", def });
@@ -620,7 +641,11 @@ export default function StrateoDesk() {
       openGate();
       return;
     }
-    if (settings.mode === "live" && !window.confirm(`Send a LIVE ${sig.trade.side === "long" ? "BUY" : "SELL"} order for ${symbolLabel(sig.symbol)}?`)) return;
+    if (isOptionsStrategy(sig.def)) {
+      toast("Options signals are not placed by Strateo — trade the legs on your exchange.", "info");
+      return;
+    }
+    if (settings.mode === "live" && !window.confirm(`Send a LIVE ${sideTag(sig.trade)} order for ${symbolLabel(sig.symbol)}?`)) return;
     const key = signalKey(sig.def.id, sig.symbol, sig.trade.entryTime);
     setBusyId(key);
     try {
@@ -635,7 +660,7 @@ export default function StrateoDesk() {
         settings,
         account: liveAccount,
       });
-      toast(`Order placed (${exec.mode}) — ${sig.def.name} ${sig.trade.side === "long" ? "BUY" : "SELL"} ${symbolLabel(sig.symbol)}`, "good");
+      toast(`Order placed (${exec.mode}) — ${sig.def.name} ${sideTag(sig.trade)} ${symbolLabel(sig.symbol)}`, "good");
     } catch (err) {
       toast(`Order failed — ${errText(err)}`, "bad");
     } finally {
@@ -663,7 +688,7 @@ export default function StrateoDesk() {
         position: t.side === "long" ? "aboveBar" : "belowBar",
         shape: "square",
         color: t.pct >= 0 ? UP : DOWN,
-        text: `${label} ${fmtPct(t.pct, 1)}`,
+        text: `${label} ${fmtPct(t.pct, 1)}${t.premium ? " prem" : ""}`,
       });
     }
     return out;
@@ -689,7 +714,8 @@ export default function StrateoDesk() {
   })();
 
   const levels = useMemo<ChartLevel[]>(() => {
-    if (!focusOpen || focusState === "scan") return [];
+    // Options ka entry premium hai, coin price nahi — chart par line ka matlab nahi.
+    if (!focusOpen || focusState === "scan" || focusOpen.premium) return [];
     const out: ChartLevel[] = [{ price: focusOpen.entry, title: "Entry", color: ENTRY_COLOR, dashed: focusState !== "taken" }];
     if (focusOpen.stop) out.push({ price: focusOpen.stop, title: "SL", color: DOWN, dashed: true });
     if (focusOpen.target) out.push({ price: focusOpen.target, title: "Target", color: UP, dashed: true });
@@ -699,38 +725,77 @@ export default function StrateoDesk() {
   const bubble = useMemo(() => {
     if (!focusDef) return null;
     const open = focusOpen;
-    const move = open && lastPrice ? (open.side === "long" ? 1 : -1) * ((lastPrice - open.entry) / open.entry) * 100 : open?.pct;
-    const side = open?.side === "short" ? "Short" : "Long";
+    const prem = open?.premium ? " prem." : "";
+    const move =
+      open && lastPrice && !open.premium
+        ? (open.side === "long" ? 1 : -1) * ((lastPrice - open.entry) / open.entry) * 100
+        : open?.pct;
+    const side = open ? sideWord(open) : "Long";
+    const options = isOptionsStrategy(focusDef);
     let title: string;
     let sub: string;
+    let last: string | null = null;
+    // Aakhri band trade — chart par kuch na dikhe to bhi pata chale strategy kab chali thi.
+    if (focusStats && !focusStats.error) {
+      const done = [...focusStats.trades].reverse().find((t) => !t.open);
+      last = done
+        ? `Last trade ${fmtWhen(done.entryTime, now)} · ${outcomeLabel(done)} ${fmtPct(done.pct)}${done.premium ? " prem." : ""}`
+        : `No trades in the last ${focusStats.days} days`;
+    }
     if (focusStats?.error) {
       title = focusDef.name;
       sub = "Not available on this coin";
     } else if (focusState === "taken" && open) {
-      title = `${side} open · ${fmtPct(move ?? 0)}`;
-      sub = `Entry ${fmtPrice(open.entry)}${open.stop ? ` · SL ${fmtPrice(open.stop)}` : ""}`;
+      title = `${side} open · ${fmtPct(move ?? 0)}${prem}`;
+      sub = open.premium
+        ? `Premium ${fmtPrice(open.entry)}`
+        : `Entry ${fmtPrice(open.entry)}${open.stop ? ` · SL ${fmtPrice(open.stop)}` : ""}`;
+      last = null;
     } else if (focusState === "signal" && open) {
-      title = `${side} signal · ${fmtPrice(open.entry)}`;
-      sub = oneClickOn ? "Placing order…" : "Place it from Signals";
+      title = open.premium ? `${side} signal` : `${side} signal · ${fmtPrice(open.entry)}`;
+      sub = options ? "Signal only — trade the legs on your exchange" : oneClickOn ? "Placing order…" : "Place it from Signals";
+      last = null;
     } else if (focusState === "scan") {
-      title = "Analyzing";
-      sub = "Next Entry";
+      title = "Scanning";
+      sub = "Waiting for next entry";
     } else {
       title = `Preview · ${focusDef.name}`;
-      sub = open ? `${side} now ${fmtPct(move ?? 0)} · Apply to trade` : "Apply to trade it";
+      sub = open
+        ? `${side} now ${fmtPct(move ?? 0)}${prem} · ${options ? "Apply for signals" : "Apply to trade"}`
+        : options
+          ? "Apply for its signals"
+          : "Apply to trade it";
+      if (open) last = null;
     }
+    const StateIcon = focusStats?.error
+      ? AlertTriangle
+      : focusState === "taken"
+        ? Activity
+        : focusState === "signal"
+          ? Crosshair
+          : focusState === "scan"
+            ? Radar
+            : Eye;
     return (
       <div className="st-bubble" data-state={focusState}>
         <span className="st-bubble-icon">
-          <Zap className="w-4 h-4" aria-hidden />
+          <StateIcon className="w-3.5 h-3.5" aria-hidden />
         </span>
         <span className="st-bubble-text">
           <span>{title}</span>
           <small>{sub}</small>
+          {last && <small className="st-bubble-last">{last}</small>}
         </span>
       </div>
     );
-  }, [focusDef, focusOpen, focusStats, focusState, lastPrice, oneClickOn]);
+  }, [focusDef, focusOpen, focusStats, focusState, lastPrice, oneClickOn, now]);
+
+  /** Strategy chunte hi uska aakhri trade screen par — warna lagta hai chart par kuch hai hi nahi. */
+  const focusLast = focusStats && !focusStats.error ? focusStats.trades[focusStats.trades.length - 1] ?? null : null;
+  const reveal = useMemo(
+    () => (focusId && focusLast && !chartLoading ? { time: focusLast.entryTime, key: `${focusId}|${chartKey}` } : null),
+    [focusId, focusLast, chartLoading, chartKey],
+  );
 
   /* ── Render ────────────────────────────────────────── */
 
@@ -756,113 +821,96 @@ export default function StrateoDesk() {
       <div className="st-stage">
         <header className="st-topbar">
           <span className="st-brand">
-            <span className="st-logo">
-              <Zap className="w-4 h-4" aria-hidden />
+            <StrateoMark />
+            <span className="st-brand-text">
+              <span className="st-brand-name">Strateo</span>
+              <span className="st-brand-sub">Strategy console</span>
             </span>
-            <span className="st-brand-name">Strateo</span>
           </span>
-
-          <div className="st-exchanges" aria-label="Exchanges">
-            {prefs.exchanges.map((id) => {
-              const connected = accounts.some((a) => a.exchange === id && a.is_active);
-              return (
-                <span key={id} className="st-exch" data-active={id === exchange}>
-                  <button type="button" onClick={() => writePrefs({ exchange: id })} title={venueName(id)}>
-                    <span className="st-exch-dot" data-on={connected} title={connected ? "API key connected" : "Chart only — no API key"} />
-                    {venueShort(id)}
-                  </button>
-                  {prefs.exchanges.length > 1 && (
-                    <button
-                      type="button"
-                      className="st-exch-x"
-                      aria-label={`Remove ${venueShort(id)}`}
-                      onClick={() => {
-                        const rest = prefs.exchanges.filter((x) => x !== id);
-                        writePrefs({ exchanges: rest, exchange: id === exchange ? rest[0] : exchange });
-                      }}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
-                </span>
-              );
-            })}
-            <span className="st-menu-wrap">
-              <button
-                type="button"
-                className="st-exch st-exch-add"
-                aria-haspopup="menu"
-                aria-expanded={exchMenu}
-                onClick={() => setExchMenu((v) => !v)}
-                title="Add an exchange"
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-              {exchMenu && (
-                <div className="st-menu" role="menu" onMouseLeave={() => setExchMenu(false)}>
-                  <div className="st-menu-label">Add exchange chart</div>
-                  {addable.length === 0 && <div className="st-menu-empty">All exchanges added</div>}
-                  {addable.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        writePrefs({ exchanges: [...prefs.exchanges, s.id], exchange: s.id });
-                        setExchMenu(false);
-                      }}
-                    >
-                      {s.name}
-                      {accounts.some((a) => a.exchange === s.id) && <span className="st-menu-tag">API</span>}
-                    </button>
-                  ))}
-                  <Link href="/trade?tab=exchanges" className="st-menu-link" role="menuitem">
-                    <Wallet className="w-3.5 h-3.5" /> Connect an API key
-                  </Link>
-                </div>
-              )}
-            </span>
-          </div>
 
           <span className="st-divider" aria-hidden />
 
-          <div className="st-applied" aria-label="Applied strategies">
-            {applied.map((a) => {
-              const def = getStrategy(a.id);
-              if (!def) return null;
-              const Icon = def.icon;
-              const bot = a.botId ? bots.find((b) => b.id === a.botId) : undefined;
-              return (
-                <span key={a.id} className="st-atab" data-active={focusId === a.id} data-stopped={bot?.status === "stopped"}>
-                  <button type="button" onClick={() => writePrefs({ focus: a.id })} title={`${def.name} · ${symbolLabel(a.symbol)} · ${a.mode}`}>
-                    <span className="st-atab-icon">
-                      <Icon className="w-3 h-3" aria-hidden />
-                    </span>
-                    <span className="st-atab-name">{def.name}</span>
-                    {a.runner === "server" && <Server className="w-3 h-3 st-muted" aria-label="Server bot" />}
-                  </button>
-                  <button type="button" className="st-atab-x" aria-label={`Remove ${def.name}`} onClick={() => startRemove(def)}>
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              );
-            })}
-            <button
-              type="button"
-              className="st-add-strategy"
-              onClick={() => {
-                openTab("strategies");
-                setScrollToken((n) => n + 1);
-              }}
-            >
-              Add a strategy <Plus className="w-3.5 h-3.5" />
-            </button>
+          <div className="st-exchanges" aria-label="Exchanges">
+            <span className="st-kicker">Venue</span>
+            <div className="st-exch-group">
+              {prefs.exchanges.map((id) => {
+                const connected = accounts.some((a) => a.exchange === id && a.is_active);
+                return (
+                  <span key={id} className="st-exch" data-active={id === exchange}>
+                    <button type="button" onClick={() => writePrefs({ exchange: id })} title={venueName(id)}>
+                      <span className="st-exch-dot" data-on={connected} title={connected ? "API key connected" : "Chart only — no API key"} />
+                      {venueShort(id)}
+                    </button>
+                    {prefs.exchanges.length > 1 && (
+                      <button
+                        type="button"
+                        className="st-exch-x"
+                        aria-label={`Remove ${venueShort(id)}`}
+                        onClick={() => {
+                          const rest = prefs.exchanges.filter((x) => x !== id);
+                          writePrefs({ exchanges: rest, exchange: id === exchange ? rest[0] : exchange });
+                        }}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+              <span className="st-menu-wrap">
+                <button
+                  type="button"
+                  className="st-exch-add"
+                  aria-haspopup="menu"
+                  aria-expanded={exchMenu}
+                  onClick={() => setExchMenu((v) => !v)}
+                  title="Add an exchange"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+                {exchMenu && (
+                  <div className="st-menu" role="menu" onMouseLeave={() => setExchMenu(false)}>
+                    <div className="st-menu-label">Add exchange chart</div>
+                    {addable.length === 0 && <div className="st-menu-empty">All exchanges added</div>}
+                    {addable.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          writePrefs({ exchanges: [...prefs.exchanges, s.id], exchange: s.id });
+                          setExchMenu(false);
+                        }}
+                      >
+                        {s.name}
+                        {accounts.some((a) => a.exchange === s.id) && <span className="st-menu-tag">API</span>}
+                      </button>
+                    ))}
+                    <Link href="/trade?tab=exchanges" className="st-menu-link" role="menuitem">
+                      <Wallet className="w-3.5 h-3.5" /> Connect an API key
+                    </Link>
+                  </div>
+                )}
+              </span>
+            </div>
           </div>
 
           <div className="st-topbar-end">
-            <button type="button" className="st-icon-btn" aria-label="Strateo settings" onClick={() => openTab("settings")}>
-              <Settings className="w-[18px] h-[18px]" />
-            </button>
+            <div className="st-oneclick" data-on={oneClickOn}>
+              <MousePointerClick className="w-3.5 h-3.5" aria-hidden />
+              <span>1-Click Trade</span>
+              <span
+                className="st-info"
+                title="When on, an applied in-browser strategy places its order the moment it signals — no confirm step. Mode and size are in Settings."
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+              </span>
+              <Switch
+                on={oneClickOn}
+                onChange={(v) => (canTrade ? writeSettings({ oneClick: v }) : openGate())}
+                label="1-Click Trade"
+              />
+            </div>
             <button
               type="button"
               className="st-pnl"
@@ -870,10 +918,16 @@ export default function StrateoDesk() {
               title="Open trades plus trades closed today, placed by Strateo"
             >
               <span className="st-pnl-icon">
-                <Zap className="w-3.5 h-3.5" aria-hidden />
+                <Activity className="w-3.5 h-3.5" aria-hidden />
                 {unread > 0 && <span className="st-badge">{unread > 99 ? "99+" : unread}</span>}
               </span>
-              P&amp;L <b className={pnl > 0 ? "st-up" : pnl < 0 ? "st-down" : ""}>{fmtUsd(pnl)}</b>
+              <span className="st-pnl-text">
+                <small>P&amp;L</small>
+                <b className={pnl > 0 ? "st-up" : pnl < 0 ? "st-down" : ""}>{fmtUsd(pnl)}</b>
+              </span>
+            </button>
+            <button type="button" className="st-icon-btn" aria-label="Strateo settings" onClick={() => openTab("settings")}>
+              <SlidersHorizontal className="w-4 h-4" />
             </button>
             <button
               type="button"
@@ -881,7 +935,7 @@ export default function StrateoDesk() {
               aria-label={panelOpen ? "Hide strategy panel" : "Show strategy panel"}
               onClick={() => writePrefs({ panelOpen: !panelOpen })}
             >
-              {panelOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+              {panelOpen ? <ChevronsRight className="w-4 h-4" /> : <ChevronsLeft className="w-4 h-4" />}
             </button>
           </div>
         </header>
@@ -897,6 +951,7 @@ export default function StrateoDesk() {
               ))}
             </select>
           </label>
+          {lastPrice != null && <span className="st-chartbar-px">{fmtPrice(lastPrice)}</span>}
           <div className="st-tfs" role="group" aria-label="Timeframe">
             {intervals.map((tf) => (
               <button key={tf} type="button" data-active={tf === interval} onClick={() => writePrefs({ interval: tf })}>
@@ -905,20 +960,6 @@ export default function StrateoDesk() {
             ))}
           </div>
           <span className="st-chartbar-venue">{source?.name ?? venueName(exchange)}</span>
-          <div className="st-oneclick">
-            <span>1-Click Trade</span>
-            <span
-              className="st-info"
-              title="When on, an applied in-browser strategy places its order the moment it signals — no confirm step. Mode and size are in Settings."
-            >
-              <HelpCircle className="w-3.5 h-3.5" />
-            </span>
-            <Switch
-              on={oneClickOn}
-              onChange={(v) => (canTrade ? writeSettings({ oneClick: v }) : openGate())}
-              label="1-Click Trade"
-            />
-          </div>
         </div>
 
         <div className="st-chart">
@@ -949,6 +990,7 @@ export default function StrateoDesk() {
               markers={markers}
               levels={levels}
               priceAnchor={bubble}
+              reveal={reveal}
               rightGap={34}
               drawingsKey={`strateo:${exchange}:${symbol}`}
             />
@@ -983,21 +1025,59 @@ export default function StrateoDesk() {
           )}
         </div>
 
-        <footer className="st-statusbar">
-          <span className="st-conn" data-state={exchange === "delta" ? liveStatus ?? "connecting" : "poll"}>
-            <span aria-hidden />
-            {exchange === "delta"
-              ? liveStatus === "live"
-                ? "Connected"
-                : liveStatus === "unsupported"
-                  ? "Polling"
-                  : "Connecting"
-              : "Polling every 10s"}
+        <footer className="st-dock">
+          <span className="st-dock-label" data-on={applied.length > 0}>
+            <span className="st-dock-pulse" aria-hidden />
+            Running <b>{applied.length}</b>
           </span>
-          <span className="st-statusbar-info">
-            {applied.length} applied · {settings.mode === "live" ? "Live" : "Paper"} · 1-Click {oneClickOn ? "on" : "off"}
+          <div className="st-applied" aria-label="Applied strategies">
+            {applied.map((a) => {
+              const def = getStrategy(a.id);
+              if (!def) return null;
+              const Icon = def.icon;
+              const bot = a.botId ? bots.find((b) => b.id === a.botId) : undefined;
+              return (
+                <span key={a.id} className="st-atab" data-active={focusId === a.id} data-stopped={bot?.status === "stopped"}>
+                  <button type="button" onClick={() => writePrefs({ focus: a.id })} title={`${def.name} · ${symbolLabel(a.symbol)} · ${a.mode}`}>
+                    <span className="st-atab-icon">
+                      <Icon className="w-3 h-3" aria-hidden />
+                    </span>
+                    <span className="st-atab-name">{def.name}</span>
+                    <span className="st-atab-tf">{a.timeframe.toUpperCase()}</span>
+                    {a.runner === "server" && <Server className="w-3 h-3 st-muted" aria-label="Server bot" />}
+                  </button>
+                  <button type="button" className="st-atab-x" aria-label={`Remove ${def.name}`} onClick={() => startRemove(def)}>
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              );
+            })}
+            <button
+              type="button"
+              className="st-add-strategy"
+              onClick={() => {
+                openTab("strategies");
+                setScrollToken((n) => n + 1);
+              }}
+            >
+              <Plus className="w-3.5 h-3.5" /> {applied.length ? "Add strategy" : "Add a strategy to start"}
+            </button>
+          </div>
+          <span className="st-dock-status">
+            <span className="st-conn" data-state={exchange === "delta" ? liveStatus ?? "connecting" : "poll"}>
+              <span aria-hidden />
+              {exchange === "delta"
+                ? liveStatus === "live"
+                  ? "Connected"
+                  : liveStatus === "unsupported"
+                    ? "Polling"
+                    : "Connecting"
+                : "Polling every 10s"}
+            </span>
+            <span className="st-dock-info">
+              {applied.length} applied · {settings.mode === "live" ? "Live" : "Paper"} · 1-Click {oneClickOn ? "on" : "off"}
+            </span>
           </span>
-          {lastPrice != null && <span className="st-statusbar-px">{fmtPrice(lastPrice)}</span>}
         </footer>
       </div>
 

@@ -40,6 +40,15 @@ const KEEP_TRADES = 80;
 
 export type StrateoMarket = "crypto" | "us" | "in";
 
+/**
+ * Options strategies (condor, spread, single option) — inke trades option premium mein hain,
+ * coin price mein nahi. Strateo inka order nahi lagata (perp order galat instrument hota),
+ * sirf signal deta hai.
+ */
+export function isOptionsStrategy(def: StrategyDef): boolean {
+  return optionsKind(def) != null;
+}
+
 /** Server worker par chalne wali strategies — baaki browser se monitor hoti hain. */
 export function runsOnServer(def: StrategyDef): boolean {
   return def.autoTrade === true;
@@ -90,6 +99,12 @@ export interface StrateoTrade {
   pct: number;
   outcome: "target" | "stop" | "trail" | "exit" | "open";
   open: boolean;
+  /** Options trade: entry/exit/pct premium ke hain, coin price ke nahi. */
+  premium?: boolean;
+  /** Options structure, jaise "Iron condor" / "Bear put spread". */
+  structure?: string;
+  /** Options legs + expiry, jaise "-C76000 +C77000 · 16 Sep". */
+  instrument?: string;
 }
 
 export interface WeekDay {
@@ -134,8 +149,17 @@ function toMs(t: number): number {
 }
 
 function sideOf(raw: unknown): "long" | "short" {
-  return /^(sell|short|bear)/i.test(String(raw ?? "")) ? "short" : "long";
+  return /^(sell|short|bear|put$)/i.test(String(raw ?? "")) ? "short" : "long";
 }
+
+/** Options backtest ka side — "iron_condor", "bull_call_spread", "bear_put_spread", "call", "put". */
+const OPTION_STRUCTURES: Record<string, string> = {
+  iron_condor: "Iron condor",
+  bull_call_spread: "Bull call spread",
+  bear_put_spread: "Bear put spread",
+  call: "Buy call",
+  put: "Buy put",
+};
 
 function movePct(side: "long" | "short", entry: number, exit: number): number {
   return side === "long" ? ((exit - entry) / entry) * 100 : ((entry - exit) / entry) * 100;
@@ -145,17 +169,19 @@ function toTrade(t: BacktestTrade): StrateoTrade | null {
   const entry = Number(t.entry_price);
   const exit = Number(t.exit_price);
   if (!(entry > 0) || !Number.isFinite(exit) || !t.entry_time) return null;
-  const side = sideOf(t.side);
+  const rawSide = String(t.side ?? "").toLowerCase();
+  const structure = OPTION_STRUCTURES[rawSide];
+  const side = sideOf(rawSide);
   let pct = movePct(side, entry, exit);
   // Options (short premium) jaise trades mein price ka move ulta padh sakta hai — P&L ka sign sach hai.
   if (Number.isFinite(t.pnl) && t.pnl !== 0 && Math.sign(t.pnl) !== Math.sign(pct)) pct = Math.abs(pct) * Math.sign(t.pnl);
   const status = String(t.status || "").toUpperCase();
-  const open = status === "CLOSED_AT_END" || status === "OPEN";
+  const open = status === "CLOSED_AT_END" || status === "OPEN" || status === "OPEN_AT_END";
   const outcome: StrateoTrade["outcome"] = open
     ? "open"
     : status === "TRAILING_STOP"
       ? "trail"
-      : /SL|STOP/.test(status)
+      : /SL|STOP|EMERGENCY/.test(status)
         ? "stop"
         : /TARGET|TP/.test(status)
           ? "target"
@@ -173,6 +199,7 @@ function toTrade(t: BacktestTrade): StrateoTrade | null {
     pct,
     outcome,
     open,
+    ...(structure ? { premium: true, structure, instrument: t.instrument || undefined } : {}),
   };
 }
 
@@ -298,7 +325,8 @@ export async function computeStats(def: StrategyDef, symbol: string): Promise<St
 
 /* ── Stats cache + queue ───────────────────────────────── */
 
-const STATS_KEY = "strateo.stats.v1";
+// v2: options trades ab structure / premium ke saath — purana cache inke bina tha.
+const STATS_KEY = "strateo.stats.v2";
 const STATS_EVENT = "strateo:stats";
 const memo = new Map<string, StrateoStats>();
 const inflight = new Map<string, Promise<StrateoStats>>();
@@ -893,6 +921,24 @@ export function fmtPrice(n: number | null | undefined): string {
 export function fmtUsd(n: number): string {
   const sign = n > 0 ? "+" : n < 0 ? "−" : "";
   return `${sign}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Signal chip — "BUY" / "SELL", options par structure ("IRON CONDOR"). */
+export function sideTag(t: Pick<StrateoTrade, "side" | "structure">): string {
+  if (t.structure) return t.structure.toUpperCase();
+  return t.side === "long" ? "BUY" : "SELL";
+}
+
+/** Bubble / toast — "Long" / "Short", options par structure. */
+export function sideWord(t: Pick<StrateoTrade, "side" | "structure">): string {
+  return t.structure ?? (t.side === "long" ? "Long" : "Short");
+}
+
+/** "03:15" aaj ke liye, warna "11 Nov 03:15" — IST. */
+export function fmtWhen(ms: number, now = Date.now()): string {
+  if (dayKey(ms) === dayKey(now)) return fmtClock(ms);
+  const day = new Date(ms).toLocaleDateString("en-GB", { timeZone: DESK_TZ, day: "2-digit", month: "short" });
+  return `${day} ${fmtClock(ms)}`;
 }
 
 export function fmtClock(ms: number): string {

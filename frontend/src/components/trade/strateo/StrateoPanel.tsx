@@ -3,19 +3,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  ArrowRight,
   Bell,
   BellRing,
-  ChevronRight,
-  Flame,
   Info,
+  Layers,
   Loader2,
   Lock,
+  Radio,
   RefreshCw,
+  SlidersHorizontal,
   Star,
-  TrendingDown,
-  TrendingUp,
+  Trophy,
   X,
-  Zap,
 } from "lucide-react";
 import type { ExchangeAccount } from "@/lib/accountApi";
 import { symbolLabel } from "@/lib/cryptoApi";
@@ -29,9 +29,11 @@ import {
   fmtPct,
   fmtPrice,
   fmtSince,
+  isOptionsStrategy,
   marketOf,
   outcomeLabel,
   runsOnServer,
+  sideTag,
   signalKey,
   strategyTimeframe,
   writeSettings,
@@ -85,6 +87,12 @@ interface Props {
   /** "Add a strategy" dabaya — list ke upar scroll. */
   scrollToken: number;
 }
+
+const TABS: { id: PanelTab; label: string; icon: typeof Radio }[] = [
+  { id: "signals", label: "Signals", icon: Radio },
+  { id: "strategies", label: "Strategies", icon: Layers },
+  { id: "settings", label: "Settings", icon: SlidersHorizontal },
+];
 
 const MARKETS: { id: StrateoMarket; label: string; flag: string }[] = [
   { id: "crypto", label: "Crypto", flag: "₿" },
@@ -156,19 +164,29 @@ export default function StrateoPanel(props: Props) {
 
   const marketDefs = useMemo(() => defs.filter((d) => marketOf(d) === market), [defs, market]);
 
-  /** Trending = aaj sabse zyada return; aaj kuch na ho to pichhle 5 din. */
+  /**
+   * Trending = aaj sabse zyada return; aaj kuch na ho to pichhle 5 din.
+   * Options ka % premium par hai (coin move par nahi), isliye unhe alag
+   * rank karte hain — coin strategies na milein tabhi option dikhega.
+   */
   const trending = useMemo(() => {
-    let best: { def: StrategyDef; score: number; since: number } | null = null;
-    for (const def of marketDefs) {
-      const s = stats[def.id];
-      if (!s || s.error) continue;
-      const week = s.week.reduce((sum, d) => sum + d.pct, 0);
-      const score = s.todayPct !== 0 ? s.todayPct + 1000 : week;
-      if (score <= 0) continue;
-      const lastToday = [...s.trades].reverse().find((t) => dayKey(t.entryTime) === dayKey(now));
-      if (!best || score > best.score) best = { def, score, since: lastToday?.entryTime ?? s.computedAt };
-    }
-    return best;
+    const pick = (pool: StrategyDef[]) => {
+      let best: { def: StrategyDef; score: number; since: number } | null = null;
+      for (const def of pool) {
+        const s = stats[def.id];
+        if (!s || s.error) continue;
+        const week = s.week.reduce((sum, d) => sum + d.pct, 0);
+        const score = s.todayPct !== 0 ? s.todayPct + 1000 : week;
+        if (score <= 0) continue;
+        const lastToday = [...s.trades].reverse().find((t) => dayKey(t.entryTime) === dayKey(now));
+        if (!best || score > best.score) best = { def, score, since: lastToday?.entryTime ?? s.computedAt };
+      }
+      return best;
+    };
+    return (
+      pick(marketDefs.filter((d) => !isOptionsStrategy(d))) ??
+      pick(marketDefs.filter((d) => isOptionsStrategy(d)))
+    );
   }, [marketDefs, stats, now]);
 
   const ordered = useMemo(() => {
@@ -205,10 +223,23 @@ export default function StrateoPanel(props: Props) {
   return (
     <aside className="st-panel" aria-label="Strateo strategies">
       <header className="st-panel-head">
-        <span className="st-logo">
-          <Zap className="w-4 h-4" aria-hidden />
-        </span>
-        <span className="st-panel-title">Strateo</span>
+        <div className="st-tabs" role="tablist" aria-label="Strateo sections">
+          {TABS.map(({ id: t, label, icon: TabIcon }) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
+              className="st-tab"
+              data-active={tab === t}
+              onClick={() => onTab(t)}
+            >
+              <TabIcon className="w-3.5 h-3.5" aria-hidden />
+              {label}
+              {t === "signals" && signals.length > 0 && <span className="st-tab-count">{signals.length}</span>}
+            </button>
+          ))}
+        </div>
         <button type="button" className="st-icon-btn" onClick={onClose} aria-label="Hide strategy panel" title="Hide panel">
           <X className="w-4 h-4" />
         </button>
@@ -216,37 +247,38 @@ export default function StrateoPanel(props: Props) {
 
       <div className="st-panel-body" ref={bodyRef}>
         <section className="st-banner" aria-label="Strateo">
+          <div className="st-banner-top">
+            <span className="st-kicker">Backtested on</span>
+            <span className="st-banner-brand">
+              Strateo <span>×</span> {exchangeName}
+            </span>
+          </div>
           <div className="st-banner-main">
-            <div className="st-banner-brand">
-              <Zap className="w-5 h-5" aria-hidden /> Strateo <span>×</span> {exchangeName}
+            <b className="st-banner-coin">{symbolLabel(symbol).split("/")[0]}</b>
+            <div className="st-banner-copy">
+              <span className="st-banner-count">{defs.length} strategies</span>
+              <p className="st-banner-line">Apply a strategy. It trades on your exchange.</p>
             </div>
-            <p className="st-banner-line">Apply a strategy. It trades on your exchange.</p>
+          </div>
+          <div className="st-banner-foot">
+            <span>Every number below is a real backtest on this coin · Past ≠ future*</span>
             {gate.ok ? (
               <button type="button" className="st-banner-cta" onClick={() => onTab("strategies")}>
-                Trade now <ChevronRight className="w-4 h-4" />
+                Trade now <ArrowRight className="w-3.5 h-3.5" />
               </button>
             ) : gate.reason === "login" ? (
               <Link href={LOGIN_HREF} className="st-banner-cta">
-                Log in to trade <ChevronRight className="w-4 h-4" />
+                Log in to trade <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             ) : gate.reason === "exchange" ? (
               <Link href={EXCHANGES_HREF} className="st-banner-cta">
-                Connect exchange <ChevronRight className="w-4 h-4" />
+                Connect exchange <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             ) : (
               <button type="button" className="st-banner-cta" onClick={onGate}>
-                {gate.reason === "error" ? "Retry" : "Checking…"} <ChevronRight className="w-4 h-4" />
+                {gate.reason === "error" ? "Retry" : "Checking…"} <ArrowRight className="w-3.5 h-3.5" />
               </button>
             )}
-          </div>
-          <div className="st-banner-side" aria-hidden>
-            <small>Backtested on</small>
-            <b>{symbolLabel(symbol).split("/")[0]}</b>
-            <small>{defs.length} strategies</small>
-          </div>
-          <div className="st-banner-foot">
-            <span>Every number below is a real backtest on this coin</span>
-            <span>Past ≠ future*</span>
           </div>
         </section>
 
@@ -262,23 +294,7 @@ export default function StrateoPanel(props: Props) {
               onClick={() => setMarket(m.id)}
             >
               <span className="st-market-flag" data-m={m.id}>{m.flag}</span>
-              {m.label} <span className="st-market-count">({counts[m.id]})</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="st-tabs" role="tablist" aria-label="Strateo sections">
-          {(["signals", "strategies", "settings"] as PanelTab[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={tab === t}
-              className="st-tab"
-              data-active={tab === t}
-              onClick={() => onTab(t)}
-            >
-              {t === "signals" ? "Signals" : t === "strategies" ? "Strategies" : "Settings"}
+              {m.label} <span className="st-market-count">{counts[m.id]}</span>
             </button>
           ))}
         </div>
@@ -303,9 +319,10 @@ export default function StrateoPanel(props: Props) {
             {trending && (
               <section className="st-trending" aria-label="Trending strategy">
                 <div className="st-trending-head">
-                  <Flame className="w-4 h-4" aria-hidden />
-                  <span>
-                    Trending strategy since last <b>{fmtSince(trending.since, now)}</b>
+                  <Trophy className="w-3.5 h-3.5" aria-hidden />
+                  <span>Top performer</span>
+                  <span className="st-trending-timer">
+                    last signal <b>{fmtSince(trending.since, now)}</b> ago
                   </span>
                   <span
                     className="st-info"
@@ -394,8 +411,13 @@ function StrategyCard({
   const Icon = def.icon;
   const tf = strategyTimeframe(def).toUpperCase();
   const server = runsOnServer(def);
+  const options = isOptionsStrategy(def);
   const today = stats?.todayPct ?? 0;
   const BellIcon = bell ? BellRing : Bell;
+
+  const week = stats?.week ?? [];
+  const weekMax = Math.max(0.01, ...week.map((d) => Math.abs(d.pct)));
+  const win = stats?.winRate ?? null;
 
   return (
     <article className="st-card" data-applied={applied} data-focused={focused} aria-label={def.name}>
@@ -418,25 +440,23 @@ function StrategyCard({
         <div className="st-card-id">
           <h3 className="st-card-name">{def.name}</h3>
           <div className="st-chips">
-            <span className="st-chip">Built by {authorOf(def)}</span>
-            <span className="st-chip">
-              Win rate{" "}
-              {loading ? (
-                <span className="st-shimmer st-shimmer-xs" />
-              ) : (
-                <b className="st-up">{stats?.winRate != null ? `${Math.round(stats.winRate)}%` : "—"}</b>
-              )}
-            </span>
-            <span className="st-chip st-chip-dim" title={server ? "Runs as a server bot, 24×7" : "Monitored while Strateo is open"}>
+            <span className="st-chip">by {authorOf(def)}</span>
+            <span className="st-chip st-chip-tf" title={server ? "Runs as a server bot, 24×7" : "Monitored while Strateo is open"}>
               {tf}
               {server ? " · 24×7" : ""}
             </span>
+            {options && (
+              <span className="st-chip" title="Options strategy — Strateo shows the signal; you trade the legs on your exchange">
+                Options · signals
+              </span>
+            )}
+            {applied && <span className="st-chip st-chip-live">Running</span>}
           </div>
         </div>
         <div className="st-card-actions">
           <button
             type="button"
-            className="st-icon-btn st-gold"
+            className="st-icon-btn st-toggle"
             data-on={bell}
             aria-pressed={bell}
             aria-label={bell ? "Turn off signal alerts" : "Alert me on signals"}
@@ -446,11 +466,11 @@ function StrategyCard({
               onBell();
             }}
           >
-            <BellIcon className="w-[18px] h-[18px]" />
+            <BellIcon className="w-4 h-4" />
           </button>
           <button
             type="button"
-            className="st-icon-btn st-gold"
+            className="st-icon-btn st-toggle"
             data-on={fav}
             aria-pressed={fav}
             aria-label={fav ? "Remove from favourites" : "Add to favourites"}
@@ -459,14 +479,27 @@ function StrategyCard({
               onFav();
             }}
           >
-            <Star className="w-[18px] h-[18px]" fill={fav ? "currentColor" : "none"} />
+            <Star className="w-4 h-4" fill={fav ? "currentColor" : "none"} />
           </button>
         </div>
       </div>
 
-      <div className="st-card-bottom">
-        <div className="st-card-col">
-          <span className="st-label">Last week</span>
+      <div className="st-card-stats">
+        <div className="st-stat">
+          <span className="st-label">Win rate</span>
+          {loading ? (
+            <span className="st-shimmer st-shimmer-xs" />
+          ) : (
+            <>
+              <b className="st-stat-val">{win != null ? `${Math.round(win)}%` : "—"}</b>
+              <span className="st-meter" aria-hidden>
+                <span style={{ width: `${Math.max(0, Math.min(100, win ?? 0))}%` }} />
+              </span>
+            </>
+          )}
+        </div>
+        <div className="st-stat st-stat-week">
+          <span className="st-label">Last 5 days</span>
           {loading ? (
             <span className="st-shimmer st-shimmer-row" />
           ) : stats?.error ? (
@@ -475,36 +508,46 @@ function StrategyCard({
             </span>
           ) : (
             <div className="st-week" aria-label="Result of each of the last five days">
-              {(stats?.week ?? []).map((d) => (
+              {week.map((d) => (
                 <span
                   key={d.key}
                   className="st-day"
                   data-r={d.result}
                   title={`${d.label} ${d.key}: ${d.trades ? `${fmtPct(d.pct)} · ${d.trades} trade${d.trades > 1 ? "s" : ""}` : "no closed trade"}`}
                 >
-                  {d.letter}
+                  <span className="st-day-bar">
+                    <span style={{ height: `${d.result === "none" ? 0 : Math.max(14, (Math.abs(d.pct) / weekMax) * 100)}%` }} />
+                  </span>
+                  <span className="st-day-letter">{d.letter}</span>
                 </span>
               ))}
             </div>
           )}
         </div>
-        <div className="st-card-col">
-          <span className="st-label">Today&apos;s Returns</span>
+        <div className="st-stat st-stat-today">
+          <span className="st-label">Today</span>
           {loading ? (
-            <span className="st-shimmer st-shimmer-row" />
+            <span className="st-shimmer st-shimmer-xs" />
           ) : stats?.error ? (
             <span className="st-muted-sm">—</span>
           ) : (
             <span
               className={`st-return ${today > 0 ? "st-up" : today < 0 ? "st-down" : "st-flat"}`}
-              title="Trades closed today plus a trade opened today, as % price move (no leverage)"
+              title={
+                options
+                  ? "Trades closed today plus a trade opened today, as % of the option premium (not the coin price)"
+                  : "Trades closed today plus a trade opened today, as % price move (no leverage)"
+              }
             >
-              {today > 0 ? <TrendingUp className="w-4 h-4" /> : today < 0 ? <TrendingDown className="w-4 h-4" /> : null}
-              {Math.abs(today).toFixed(2)}%
+              {fmtPct(today)}
+              {options && <small className="st-prem">premium</small>}
               {refreshing && <Loader2 className="w-3 h-3 st-spin st-muted" />}
             </span>
           )}
         </div>
+      </div>
+
+      <div className="st-card-foot">
         {applied ? (
           <button type="button" className="st-btn st-btn-outline" onClick={onRemove} disabled={busy}>
             {busy ? <Loader2 className="w-4 h-4 st-spin" /> : "Remove"}
@@ -523,6 +566,7 @@ function StrategyCard({
               <>
                 {lockHint && <Lock className="w-3.5 h-3.5 st-lock" aria-hidden />}
                 Apply
+                <ArrowRight className="w-3.5 h-3.5 st-btn-arrow" aria-hidden />
               </>
             )}
           </button>
@@ -613,27 +657,30 @@ function SignalsList({
           const { def, trade } = sig;
           const key = signalKey(def.id, sig.symbol, trade.entryTime);
           const exec = execByKey.get(key);
-          const canPlace = trade.open && appliedIds.has(def.id) && !runsOnServer(def) && !exec;
+          // Options ke legs perp order se nahi bante — unke liye sirf signal.
+          const options = isOptionsStrategy(def);
+          const canPlace = trade.open && appliedIds.has(def.id) && !runsOnServer(def) && !options && !exec;
           const Icon = def.icon;
           return (
-            <article key={key} className="st-signal" data-open={trade.open}>
+            <article key={key} className="st-signal" data-open={trade.open} data-side={trade.side}>
               <button type="button" className="st-signal-top" onClick={() => onFocus(def)} title="Show on chart">
                 <span className="st-card-icon st-card-icon-sm">
                   <Icon className="w-3.5 h-3.5" aria-hidden />
                 </span>
                 <span className="st-signal-name">{def.name}</span>
-                <span className="st-side" data-side={trade.side}>
-                  {trade.side === "long" ? "BUY" : "SELL"}
+                <span className="st-side" data-side={trade.structure ? "options" : trade.side}>
+                  {sideTag(trade)}
                 </span>
               </button>
               <div className="st-signal-meta">
                 <span>{symbolLabel(sig.symbol)}</span>
                 <span>{fmtClock(trade.entryTime)}</span>
                 <span>{strategyTimeframe(def).toUpperCase()}</span>
+                {trade.instrument && <span title={trade.instrument}>{trade.instrument}</span>}
               </div>
               <dl className="st-levels">
                 <div>
-                  <dt>Entry</dt>
+                  <dt>{trade.premium ? "Premium" : "Entry"}</dt>
                   <dd>{fmtPrice(trade.entry)}</dd>
                 </div>
                 <div>
@@ -648,6 +695,7 @@ function SignalsList({
               <div className="st-signal-foot">
                 <span className={`st-status ${trade.pct > 0 ? "st-up" : trade.pct < 0 ? "st-down" : ""}`} data-o={trade.outcome}>
                   {outcomeLabel(trade)} {fmtPct(trade.pct)}
+                  {trade.premium ? " of premium" : ""}
                 </span>
                 {exec ? (
                   <span className="st-placed">
@@ -663,10 +711,14 @@ function SignalsList({
                   >
                     {busyId === key ? <Loader2 className="w-3.5 h-3.5 st-spin" /> : "Place order"}
                   </button>
+                ) : trade.open && appliedIds.has(def.id) && options ? (
+                  <span className="st-muted-sm" title="Trade the option legs on your exchange">
+                    Signal only
+                  </span>
                 ) : trade.open && appliedIds.has(def.id) && runsOnServer(def) ? (
                   <span className="st-placed">Server bot handles it</span>
                 ) : trade.open && !appliedIds.has(def.id) ? (
-                  <span className="st-muted-sm">Apply to trade</span>
+                  <span className="st-muted-sm">{options ? "Apply for signals" : "Apply to trade"}</span>
                 ) : null}
               </div>
             </article>

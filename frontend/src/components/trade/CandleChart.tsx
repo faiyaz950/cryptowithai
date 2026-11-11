@@ -139,6 +139,11 @@ interface Props {
   priceAnchor?: ReactNode;
   /** Reset / naye chart par aakhri candle ke daayein kitni khaali candles (default 4). */
   rightGap?: number;
+  /**
+   * Ye time (ms) screen par na ho to view itna peeche khisko ki dikh jaaye — har `key` par
+   * ek baar. Jaise strategy chunte hi uska aakhri trade dikhe.
+   */
+  reveal?: { time: number; key: string } | null;
 }
 
 export interface ChartMarker {
@@ -670,6 +675,7 @@ export default function CandleChart({
   markers,
   priceAnchor,
   rightGap = 4,
+  reveal,
 }: Props) {
   const rightGapRef = useRef(rightGap);
   useEffect(() => {
@@ -1552,6 +1558,45 @@ export default function CandleChart({
       .sort((a, b) => Number(a.time) - Number(b.time));
     series.setMarkers(list);
   }, [markers, candles, chartType]);
+
+  const revealedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!reveal) return;
+    // Pehli baar chart aur data ek saath mount hote hain — us waqt time scale
+    // ki width 0 hoti hai aur range set karna bekaar jaata hai. Layout ke baad
+    // (agle frame mein) chalao, width na mile to kuch frame aur ruko.
+    let raf = 0;
+    let tries = 0;
+    const run = () => {
+      const chart = chartRef.current;
+      const bars = mainBarsRef.current;
+      if (!chart || !bars.length || revealedRef.current === reveal.key) return;
+      const ts = chart.timeScale();
+      const range = ts.getVisibleLogicalRange();
+      if (!range || ts.width() <= 0) {
+        if (++tries < 30) raf = requestAnimationFrame(run);
+        return;
+      }
+      revealedRef.current = reveal.key;
+      // Loaded candles se bhi purana — scroll karke bhi nahi dikhega.
+      if (reveal.time < bars[0].time) return;
+      let lo = 0;
+      let hi = bars.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (bars[mid].time <= reveal.time) lo = mid;
+        else hi = mid - 1;
+      }
+      if (lo >= range.from + 6 && lo <= range.to) return;
+      // Purana trade aur aaj ki candle dono screen par. Bayein thodi jagah
+      // (~12% of span) taaki marker ke labels kinare par na katein.
+      const to = Math.max(range.to, bars.length - 1 + rightGapRef.current);
+      const pad = Math.max(12, Math.round((to - lo) * 0.12));
+      ts.setVisibleLogicalRange({ from: Math.max(0, lo - pad), to });
+    };
+    raf = requestAnimationFrame(run);
+    return () => cancelAnimationFrame(raf);
+  }, [reveal, candles, chartType]);
 
   const [anchorPos, setAnchorPos] = useState<{ x: number | null; y: number } | null>(null);
   useEffect(() => {
