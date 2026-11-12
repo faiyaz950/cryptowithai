@@ -83,6 +83,7 @@ import {
   type StrateoStats,
   type StrateoTrade,
 } from "@/lib/strateo";
+import { buildPosition, sideShort, type StrateoPosition } from "@/lib/strateoPositions";
 import "./strateo.css";
 
 const CHART_BARS = 600;
@@ -147,6 +148,30 @@ function chime() {
     window.setTimeout(() => void ctx.close(), 900);
   } catch {
     /* audio blocked — koi baat nahi */
+  }
+}
+
+/** Dock tab par chhota chip — "BUY +0.42%", "SELL signal" (order nahi laga), "FLAT". */
+function dockChip(p: StrateoPosition): { text: string; title: string; side: string } {
+  const side = p.structure ? "options" : p.side ?? "none";
+  const name = sideShort(p.side, p.structure);
+  switch (p.state) {
+    case "open":
+      return {
+        text: p.pct != null ? `${name} ${fmtPct(p.pct, 1)}` : name,
+        title: `${p.side === "short" ? "Sell" : "Buy"} position open`,
+        side,
+      };
+    case "entering":
+      return { text: `${name}…`, title: "Placing order", side };
+    case "signal":
+      return { text: `${name} signal`, title: `${p.side === "short" ? "Sell" : "Buy"} signal — no order placed`, side };
+    case "loading":
+      return { text: "…", title: "Checking", side: "none" };
+    case "error":
+      return { text: "N/A", title: "Not available on this coin", side: "none" };
+    default:
+      return { text: "FLAT", title: "No open position", side: "none" };
   }
 }
 
@@ -417,6 +442,32 @@ export default function StrateoDesk() {
     return total;
   }, [executions, applied, bots, symbol, lastPrice, now]);
 
+  /**
+   * Har applied strategy ki asli haalat — order laga (browser / server bot) ya sirf signal.
+   * Chart wale coin par live price; doosre coin par us strategy ke stats ka mark.
+   * `stats` har backtest event par naya object hai, isliye doosre coin ka peekStats bhi taaza rehta hai.
+   */
+  const positions = useMemo<StrateoPosition[]>(() => {
+    const out: StrateoPosition[] = [];
+    for (const a of applied) {
+      const def = getStrategy(a.id);
+      if (!def) continue;
+      const onChart = a.symbol === symbol;
+      out.push(
+        buildPosition({
+          row: a,
+          def,
+          stats: onChart ? stats[a.id] : peekStats(a.id, a.symbol),
+          executions,
+          bots,
+          livePrice: onChart ? lastPrice : null,
+        }),
+      );
+    }
+    return out;
+  }, [applied, stats, symbol, executions, bots, lastPrice]);
+  const positionById = useMemo(() => new Map(positions.map((p) => [p.row.id, p])), [positions]);
+
   /* ── Signal monitor ────────────────────────────────── */
 
   const ctxRef = useRef({ token, uid, canTrade, settings, applied, executions, accounts, bells: prefs.bells, symbol, livePrice });
@@ -588,6 +639,8 @@ export default function StrateoDesk() {
     if (s?.open) markSeen(def.id, symbol, s.open.entryTime);
     saveApplied({ ...appliedRow(def, uid), runner: "browser", botId: null });
     writePrefs({ focus: def.id });
+    // Apply ke turant baad dikhe ki abhi kya chal raha hai — position, order, history.
+    openTab("positions");
     toast(
       isOptionsStrategy(def)
         ? `${def.name} applied on ${symbolLabel(symbol)} — options strategy, so you get signals only. Trade the legs on ${exchangeName}.`
@@ -617,6 +670,7 @@ export default function StrateoDesk() {
     if (s?.open) markSeen(def.id, symbol, s.open.entryTime);
     saveApplied({ ...appliedRow(def, uid), runner: "server", botId: res.data.id });
     writePrefs({ focus: def.id });
+    openTab("positions");
     void loadBots();
     toast(`${def.name}: ${settings.mode === "live" ? "LIVE" : "paper"} bot #${res.data.id} running on ${symbolLabel(symbol)} — 24×7.`, "good");
   };
@@ -814,7 +868,8 @@ export default function StrateoDesk() {
       open && lastPrice && !open.premium && !open.basket
         ? (open.side === "long" ? 1 : -1) * ((lastPrice - open.entry) / open.entry) * 100
         : open?.pct;
-    const side = open ? sideWord(open) : "Long";
+    // User "buy / sell" mein sochta hai — long / short nahi.
+    const side = open ? (open.structure ?? (open.side === "short" ? "Sell" : "Buy")) : "Buy";
     const options = isOptionsStrategy(focusDef);
     let title: string;
     let sub: string;
@@ -830,10 +885,15 @@ export default function StrateoDesk() {
       title = focusDef.name;
       sub = "Not available on this coin";
     } else if (focusState === "taken" && open) {
-      title = `${side} open · ${fmtPct(move ?? 0)}${prem}`;
+      // Asli fill (Strateo order / server bot) — strategy ke candle wala price nahi.
+      const real = focusId ? positionById.get(focusId) : undefined;
+      const entry = real?.state === "open" && real.entry ? real.entry : open.entry;
+      const stop = real?.state === "open" && real.stop ? real.stop : open.stop;
+      const pct = real?.state === "open" && real.pct != null ? real.pct : move ?? 0;
+      title = `${side} open · ${fmtPct(pct)}${prem}`;
       sub = open.premium
         ? `Premium ${fmtPrice(open.entry)}`
-        : `Entry ${fmtPrice(open.entry)}${open.stop ? ` · SL ${fmtPrice(open.stop)}` : ""}`;
+        : `Entry ${fmtPrice(entry)}${stop ? ` · SL ${fmtPrice(stop)}` : ""}`;
       last = null;
     } else if (focusState === "signal" && open) {
       title = open.premium ? `${side} signal` : `${side} signal · ${fmtPrice(open.entry)}`;
@@ -845,7 +905,7 @@ export default function StrateoDesk() {
     } else {
       title = `Preview · ${focusDef.name}`;
       sub = open
-        ? `${side} now ${fmtPct(move ?? 0)}${prem} · ${options ? "Apply for signals" : "Apply to trade"}`
+        ? `In a ${side.toLowerCase()} ${fmtPct(move ?? 0)}${prem} · ${options ? "Apply for signals" : "Apply to trade"}`
         : options
           ? "Apply for its signals"
           : "Apply to trade it";
@@ -872,7 +932,7 @@ export default function StrateoDesk() {
         </span>
       </div>
     );
-  }, [focusDef, focusOpen, focusStats, focusState, lastPrice, oneClickOn, now]);
+  }, [focusDef, focusId, focusOpen, focusStats, focusState, lastPrice, oneClickOn, now, positionById]);
 
   /** Strategy chunte hi uska aakhri trade screen par — warna lagta hai chart par kuch hai hi nahi. */
   const focusLast = focusStats && !focusStats.error ? focusStats.trades[focusStats.trades.length - 1] ?? null : null;
@@ -1276,15 +1336,29 @@ export default function StrateoDesk() {
               if (!def) return null;
               const Icon = def.icon;
               const bot = a.botId ? bots.find((b) => b.id === a.botId) : undefined;
+              const pos = positionById.get(a.id);
+              const chip = pos ? dockChip(pos) : null;
               return (
                 <span key={a.id} className="st-atab" data-active={focusId === a.id} data-stopped={bot?.status === "stopped"}>
-                  <button type="button" onClick={() => writePrefs({ focus: a.id })} title={`${def.name} · ${symbolLabel(a.symbol)} · ${a.mode}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      writePrefs({ focus: a.id });
+                      openTab("positions");
+                    }}
+                    title={`${def.name} · ${symbolLabel(a.symbol)} · ${a.mode}${chip ? ` — ${chip.title}` : ""}`}
+                  >
                     <span className="st-atab-icon">
                       <Icon className="w-3 h-3" aria-hidden />
                     </span>
                     <span className="st-atab-name">{def.name}</span>
                     <span className="st-atab-tf">{a.timeframe.toUpperCase()}</span>
                     {a.runner === "server" && <Server className="w-3 h-3 st-muted" aria-label="Server bot" />}
+                    {chip && (
+                      <span className="st-atab-pos" data-state={pos?.state} data-side={chip.side}>
+                        {chip.text}
+                      </span>
+                    )}
                   </button>
                   <button type="button" className="st-atab-x" aria-label={`Remove ${def.name}`} onClick={() => startRemove(def)}>
                     <X className="w-3 h-3" />
@@ -1325,6 +1399,7 @@ export default function StrateoDesk() {
           exchangeName={exchangeName}
           accounts={exchangeAccounts}
           executions={executions}
+          positions={positions}
           tab={tab}
           onTab={openTab}
           focusId={focusId}
@@ -1335,6 +1410,9 @@ export default function StrateoDesk() {
           workerRunning={workerRunning}
           onApply={startApply}
           onRemove={startRemove}
+          onPlacePosition={(pos) => {
+            if (pos.signal) void tradeSignal({ def: pos.def, symbol: pos.row.symbol, trade: pos.signal });
+          }}
           onFocus={(def) => writePrefs({ focus: def.id })}
           onToggleFav={(id) => writePrefs({ favorites: toggleIn(prefs.favorites, id) })}
           onToggleBell={(id) => {

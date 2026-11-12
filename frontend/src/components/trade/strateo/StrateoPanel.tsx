@@ -7,13 +7,10 @@ import {
   Bell,
   BellRing,
   Info,
-  Layers,
   Loader2,
   Lock,
-  Radio,
   RefreshCw,
   Search,
-  SlidersHorizontal,
   Star,
   Trophy,
   X,
@@ -48,8 +45,10 @@ import {
   type StrateoTrade,
   type TradeGate,
 } from "@/lib/strateo";
+import type { StrateoPosition } from "@/lib/strateoPositions";
+import PositionsView from "./StrateoPositions";
 
-export type PanelTab = "signals" | "strategies" | "settings";
+export type PanelTab = "strategies" | "positions" | "signals" | "settings";
 
 export interface StrateoSignal {
   def: StrategyDef;
@@ -70,6 +69,8 @@ interface Props {
   /** Is exchange ki jo API keys judi hain. */
   accounts: ExchangeAccount[];
   executions: Execution[];
+  /** Applied strategies ki asli haalat — Positions tab. */
+  positions: StrateoPosition[];
   tab: PanelTab;
   onTab: (tab: PanelTab) => void;
   focusId: string | null;
@@ -85,16 +86,19 @@ interface Props {
   onToggleFav: (id: string) => void;
   onToggleBell: (id: string) => void;
   onTradeSignal: (signal: StrateoSignal) => void;
+  onPlacePosition: (pos: StrateoPosition) => void;
   onRefresh: () => void;
   onClose: () => void;
   /** "Add a strategy" dabaya — list ke upar scroll. */
   scrollToken: number;
 }
 
-const TABS: { id: PanelTab; label: string; icon: typeof Radio }[] = [
-  { id: "strategies", label: "Strategies", icon: Layers },
-  { id: "signals", label: "Signals", icon: Radio },
-  { id: "settings", label: "Settings", icon: SlidersHorizontal },
+// Chaar tab 392px mein — icon hata kar sirf text, terminal jaisa.
+const TABS: { id: PanelTab; label: string }[] = [
+  { id: "strategies", label: "Strategies" },
+  { id: "positions", label: "Positions" },
+  { id: "signals", label: "Signals" },
+  { id: "settings", label: "Settings" },
 ];
 
 // US / IN stocks ke tab hata diye — Strateo abhi sirf crypto perpetuals par chalta hai.
@@ -113,6 +117,7 @@ export default function StrateoPanel(props: Props) {
     exchangeName,
     accounts,
     executions,
+    positions,
     tab,
     onTab,
     focusId,
@@ -125,6 +130,7 @@ export default function StrateoPanel(props: Props) {
     onToggleFav,
     onToggleBell,
     onTradeSignal,
+    onPlacePosition,
     onRefresh,
     onClose,
     scrollToken,
@@ -133,6 +139,7 @@ export default function StrateoPanel(props: Props) {
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const bodyRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -142,6 +149,14 @@ export default function StrateoPanel(props: Props) {
   useEffect(() => {
     if (scrollToken) bodyRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [scrollToken]);
+
+  // Phone par chaar tab scroll hote hain — chuna hua tab dikhe (sirf tab-bar ke andar, page nahi hilta).
+  useEffect(() => {
+    const bar = tabsRef.current;
+    const btn = bar?.querySelector<HTMLElement>('[data-active="true"]');
+    if (!bar || !btn || bar.scrollWidth <= bar.clientWidth) return;
+    bar.scrollTo({ left: btn.offsetLeft - (bar.clientWidth - btn.offsetWidth) / 2, behavior: "smooth" });
+  }, [tab]);
 
   const appliedIds = useMemo(() => new Set(applied.map((a) => a.id)), [applied]);
 
@@ -230,12 +245,13 @@ export default function StrateoPanel(props: Props) {
   );
 
   const accountForLive = accounts.find((a) => a.id === settings.accountId) ?? null;
+  const openCount = positions.filter((p) => p.state === "open" || p.state === "entering").length;
 
   return (
     <aside className="st-panel" aria-label="Strateo strategies">
       <header className="st-panel-head">
-        <div className="st-tabs" role="tablist" aria-label="Strateo sections">
-          {TABS.map(({ id: t, label, icon: TabIcon }) => (
+        <div className="st-tabs" role="tablist" aria-label="Strateo sections" ref={tabsRef}>
+          {TABS.map(({ id: t, label }) => (
             <button
               key={t}
               type="button"
@@ -245,8 +261,12 @@ export default function StrateoPanel(props: Props) {
               data-active={tab === t}
               onClick={() => onTab(t)}
             >
-              <TabIcon className="w-3.5 h-3.5" aria-hidden />
               {label}
+              {t === "positions" && openCount > 0 && (
+                <span className="st-tab-count" data-tone="live" aria-label={`${openCount} open`}>
+                  {openCount}
+                </span>
+              )}
               {t === "signals" && signals.length > 0 && <span className="st-tab-count">{signals.length}</span>}
             </button>
           ))}
@@ -257,137 +277,154 @@ export default function StrateoPanel(props: Props) {
       </header>
 
       <div className="st-panel-body" ref={bodyRef}>
-        <section className="st-context" aria-label="Strateo">
-          <div className="st-context-main">
-            <span className="st-coin" data-coin={symbolLabel(symbol).split("/")[0]} aria-hidden>
-              {symbolLabel(symbol).charAt(0)}
-            </span>
-            <div className="st-context-copy">
-              <b>
-                {defs.length} strategies on {symbolLabel(symbol).split("/")[0]}
-              </b>
-              <small title="Every number below is a real backtest on this coin. Past results do not promise future ones.">
-                Backtested on {exchangeName} candles · past ≠ future
-              </small>
-            </div>
-          </div>
-          {/* Asli CTA (Log in / Connect) LockBar mein hai — yahan sirf haalat. */}
-          {gate.ok ? (
-            <span className="st-ready">
-              <span aria-hidden /> Ready
-            </span>
-          ) : (
-            <button type="button" className="st-ready" data-locked onClick={onGate} title={gate.title}>
-              {gate.reason === "checking" ? (
-                <Loader2 className="w-3 h-3 st-spin" aria-hidden />
-              ) : (
-                <Lock className="w-3 h-3" aria-hidden />
-              )}
-              {gate.reason === "checking" ? "Checking" : "Locked"}
-            </button>
-          )}
-        </section>
-
-        <div className="st-markets" role="tablist" aria-label="Market">
-          {MARKETS.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              role="tab"
-              aria-selected={market === m.id}
-              className="st-market"
-              data-active={market === m.id}
-            >
-              <span className="st-market-flag" data-m={m.id}>{m.flag}</span>
-              {m.label} <span className="st-market-count">{counts[m.id]}</span>
-            </button>
-          ))}
-        </div>
-
-        {tab === "strategies" ? (
-          <div className="st-list">
-            <label className="st-search">
-              <Search className="w-3.5 h-3.5" aria-hidden />
-              <span className="sr-only">Search strategies</span>
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search strategy or author"
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-
-            {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
-
-            {trending && !q && (
-              <section className="st-trending" aria-label="Trending strategy">
-                <div className="st-trending-head">
-                  <Trophy className="w-3.5 h-3.5" aria-hidden />
-                  <span>Top performer</span>
-                  <span className="st-trending-timer">
-                    last signal <b>{fmtSince(trending.since, now)}</b> ago
-                  </span>
-                  <span
-                    className="st-info"
-                    title="Highest return today on this coin (or over the last 5 days when nothing traded today). Timer = time since its latest signal."
-                  >
-                    <Info className="w-3.5 h-3.5" />
-                  </span>
-                </div>
-                {card(trending.def)}
-              </section>
-            )}
-
-            <div className="st-list-head">
-              <h2>
-                {q ? `Results (${listed.length})` : `All strategies (${marketDefs.length})`}
-              </h2>
-              <button type="button" className="st-text-btn" onClick={onRefresh} title="Run every backtest again">
-                <RefreshCw className={`w-3.5 h-3.5${pending.size ? " st-spin" : ""}`} />
-                {pending.size ? `${defs.length - pending.size}/${defs.length}` : "Refresh"}
-              </button>
-            </div>
-
-            {listed.length ? (
-              listed.map(card)
-            ) : (
-              <div className="st-empty">
-                <b>No strategy matches “{query.trim()}”</b>
-                <span>Try a shorter name or the author, like “EMA” or “MT5”.</span>
-              </div>
-            )}
-          </div>
-        ) : tab === "signals" ? (
-          <>
-            {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
-          <SignalsList
-            signals={signals}
-            appliedIds={appliedIds}
+        {tab === "positions" ? (
+          <PositionsView
+            positions={positions}
             executions={executions}
+            now={now}
+            focusId={focusId}
             busyId={busyId}
-            symbol={symbol}
-            onTrade={onTradeSignal}
-            onFocus={onFocus}
-          />
-          </>
-        ) : (
-          <SettingsView
-            settings={settings}
-            accounts={accounts}
-            accountForLive={accountForLive}
+            oneClick={settings.oneClick && gate.ok}
             exchangeName={exchangeName}
-            gate={gate}
-            onGate={onGate}
-            liveOrdersEnabled={props.liveOrdersEnabled}
-            workerRunning={props.workerRunning}
-            symbol={symbol}
-            pendingCount={pending.size}
-            total={defs.length}
-            computedAt={Math.max(0, ...defs.map((d) => stats[d.id]?.computedAt ?? 0))}
-            onRefresh={onRefresh}
+            onFocus={onFocus}
+            onPlace={onPlacePosition}
+            onBrowse={() => onTab("strategies")}
           />
+        ) : (
+          <>
+            <section className="st-context" aria-label="Strateo">
+              <div className="st-context-main">
+                <span className="st-coin" data-coin={symbolLabel(symbol).split("/")[0]} aria-hidden>
+                  {symbolLabel(symbol).charAt(0)}
+                </span>
+                <div className="st-context-copy">
+                  <b>
+                    {defs.length} strategies on {symbolLabel(symbol).split("/")[0]}
+                  </b>
+                  <small title="Every number below is a real backtest on this coin. Past results do not promise future ones.">
+                    Backtested on {exchangeName} candles · past ≠ future
+                  </small>
+                </div>
+              </div>
+              {/* Asli CTA (Log in / Connect) LockBar mein hai — yahan sirf haalat. */}
+              {gate.ok ? (
+                <span className="st-ready">
+                  <span aria-hidden /> Ready
+                </span>
+              ) : (
+                <button type="button" className="st-ready" data-locked onClick={onGate} title={gate.title}>
+                  {gate.reason === "checking" ? (
+                    <Loader2 className="w-3 h-3 st-spin" aria-hidden />
+                  ) : (
+                    <Lock className="w-3 h-3" aria-hidden />
+                  )}
+                  {gate.reason === "checking" ? "Checking" : "Locked"}
+                </button>
+              )}
+            </section>
+
+            <div className="st-markets" role="tablist" aria-label="Market">
+              {MARKETS.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={market === m.id}
+                  className="st-market"
+                  data-active={market === m.id}
+                >
+                  <span className="st-market-flag" data-m={m.id}>{m.flag}</span>
+                  {m.label} <span className="st-market-count">{counts[m.id]}</span>
+                </button>
+              ))}
+            </div>
+
+            {tab === "strategies" ? (
+              <div className="st-list">
+                <label className="st-search">
+                  <Search className="w-3.5 h-3.5" aria-hidden />
+                  <span className="sr-only">Search strategies</span>
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search strategy or author"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+
+                {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
+
+                {trending && !q && (
+                  <section className="st-trending" aria-label="Trending strategy">
+                    <div className="st-trending-head">
+                      <Trophy className="w-3.5 h-3.5" aria-hidden />
+                      <span>Top performer</span>
+                      <span className="st-trending-timer">
+                        last signal <b>{fmtSince(trending.since, now)}</b> ago
+                      </span>
+                      <span
+                        className="st-info"
+                        title="Highest return today on this coin (or over the last 5 days when nothing traded today). Timer = time since its latest signal."
+                      >
+                        <Info className="w-3.5 h-3.5" />
+                      </span>
+                    </div>
+                    {card(trending.def)}
+                  </section>
+                )}
+
+                <div className="st-list-head">
+                  <h2>
+                    {q ? `Results (${listed.length})` : `All strategies (${marketDefs.length})`}
+                  </h2>
+                  <button type="button" className="st-text-btn" onClick={onRefresh} title="Run every backtest again">
+                    <RefreshCw className={`w-3.5 h-3.5${pending.size ? " st-spin" : ""}`} />
+                    {pending.size ? `${defs.length - pending.size}/${defs.length}` : "Refresh"}
+                  </button>
+                </div>
+
+                {listed.length ? (
+                  listed.map(card)
+                ) : (
+                  <div className="st-empty">
+                    <b>No strategy matches “{query.trim()}”</b>
+                    <span>Try a shorter name or the author, like “EMA” or “MT5”.</span>
+                  </div>
+                )}
+              </div>
+            ) : tab === "signals" ? (
+              <>
+                {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
+                <SignalsList
+                  signals={signals}
+                  appliedIds={appliedIds}
+                  executions={executions}
+                  busyId={busyId}
+                  symbol={symbol}
+                  onTrade={onTradeSignal}
+                  onFocus={onFocus}
+                />
+              </>
+            ) : (
+              <SettingsView
+                settings={settings}
+                accounts={accounts}
+                accountForLive={accountForLive}
+                exchangeName={exchangeName}
+                gate={gate}
+                onGate={onGate}
+                liveOrdersEnabled={props.liveOrdersEnabled}
+                workerRunning={props.workerRunning}
+                symbol={symbol}
+                pendingCount={pending.size}
+                total={defs.length}
+                computedAt={Math.max(0, ...defs.map((d) => stats[d.id]?.computedAt ?? 0))}
+                onRefresh={onRefresh}
+              />
+            )}
+          </>
         )}
       </div>
     </aside>

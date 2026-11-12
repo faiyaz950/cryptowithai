@@ -795,6 +795,31 @@
 .st-atab-icon { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: var(--st-acc); background: var(--st-panel); }
 .st-atab-name { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st-atab-tf { font-family: var(--st-mono); font-size: 10.5px; font-weight: 500; color: var(--st-text-3); }
+/* Dock chip — har applied strategy abhi kis haalat mein: BUY / SELL / FLAT. */
+.st-atab-pos {
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  font-family: var(--st-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--st-text-3);
+  background: var(--st-panel);
+}
+.st-atab-pos[data-state="open"][data-side="long"],
+.st-atab-pos[data-state="entering"][data-side="long"] { color: var(--st-up); background: var(--st-up-soft); }
+.st-atab-pos[data-state="open"][data-side="short"],
+.st-atab-pos[data-state="entering"][data-side="short"] { color: var(--st-down); background: var(--st-down-soft); }
+/* Signal = strategy trade mein hai par order nahi laga — khokhla (outline) chip. */
+.st-atab-pos[data-state="signal"] { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.st-atab-pos[data-state="signal"][data-side="long"] { color: var(--st-up); }
+.st-atab-pos[data-state="signal"][data-side="short"] { color: var(--st-down); }
+.st-atab-pos[data-side="options"] { color: var(--st-warn); }
 .st-atab-x { width: 26px; height: 100%; display: grid; place-items: center; border-radius: 0 7px 7px 0; color: var(--st-text-3); }
 .st-atab-x:hover { color: var(--st-down); }
 .st-add-strategy {
@@ -820,14 +845,15 @@
 
 .st-panel { width: 392px; flex: none; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .st-panel-head { flex: none; display: flex; align-items: center; gap: 6px; height: 50px; padding: 0 6px 0 6px; border-bottom: 1px solid var(--st-line); }
-.st-tabs { flex: 1; min-width: 0; height: 100%; display: flex; align-items: stretch; gap: 2px; }
+.st-tabs { position: relative; flex: 1; min-width: 0; height: 100%; display: flex; align-items: stretch; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.st-tabs::-webkit-scrollbar { display: none; }
 .st-tab {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  font-size: 13px;
+  gap: 6px;
+  padding: 0 9px;
+  font-size: 12.5px;
   font-weight: 650;
   color: var(--st-text-3);
   white-space: nowrap;
@@ -839,8 +865,8 @@
 .st-tab[data-active="true"]::after {
   content: "";
   position: absolute;
-  left: 10px;
-  right: 10px;
+  left: 9px;
+  right: 9px;
   bottom: -1px;
   height: 2px;
   border-radius: 2px 2px 0 0;
@@ -859,6 +885,7 @@
   color: var(--st-acc);
   background: var(--st-acc-soft);
 }
+.st-tab-count[data-tone="live"] { color: var(--st-up); background: var(--st-up-soft); }
 .st-panel-body {
   flex: 1;
   min-height: 0;
@@ -1105,6 +1132,129 @@
 .st-status { font-family: var(--st-mono); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .st-placed { font-size: 11.5px; font-weight: 650; color: var(--st-up); }
 
+/* ── Positions ───────────────────────────────────────────────────── */
+
+.st-side[data-side="none"] { color: var(--st-text-3); background: var(--st-field); }
+
+.st-pos-sum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-radius: 10px; border: 1px solid var(--st-line); background: var(--st-panel); }
+.st-pos-sum > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 9px 11px; }
+.st-pos-sum > div + div { border-left: 1px solid var(--st-line); }
+.st-pos-sum b { font-family: var(--st-mono); font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.st-pos-sum small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--st-text-3); }
+
+.st-pos {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  border: 1px solid var(--st-line);
+  background: var(--st-panel);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+/* Baayein patti — position ki taraf ek nazar mein: hara buy, laal sell. */
+.st-pos::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--st-line-2); }
+.st-pos[data-state="open"][data-side="long"]::before,
+.st-pos[data-state="entering"][data-side="long"]::before { background: var(--st-up); }
+.st-pos[data-state="open"][data-side="short"]::before,
+.st-pos[data-state="entering"][data-side="short"]::before { background: var(--st-down); }
+.st-pos[data-state="signal"]::before { background: repeating-linear-gradient(to bottom, var(--st-warn) 0 5px, transparent 5px 9px); }
+.st-pos[data-focused="true"] { border-color: var(--st-acc-line); box-shadow: 0 0 0 3px var(--st-acc-soft); }
+
+.st-pos-head { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 10px 8px 13px; text-align: left; border-bottom: 1px solid var(--st-line); }
+.st-pos-head:hover .st-pos-id b { color: var(--st-acc); }
+.st-pos-head .st-card-icon { color: var(--st-acc); background: var(--st-acc-soft); }
+.st-pos-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.st-pos-id b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; transition: color 0.15s; }
+.st-pos-id small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--st-text-3); }
+.st-pos-id [data-mode="live"] { font-weight: 700; color: var(--st-down); }
+.st-pos-chart { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 11.5px; font-weight: 650; color: var(--st-text-3); }
+.st-pos-head:hover .st-pos-chart { color: var(--st-acc); }
+
+.st-pos-now { display: flex; align-items: center; gap: 10px; padding: 11px 12px 10px 13px; }
+.st-pos-side { height: 26px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; border-radius: 6px; }
+/* Signal (order nahi laga) — bhara hua nahi, sirf outline. */
+.st-pos-side[data-dim="true"] { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.st-pos-live { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: st-ping 1.8s ease-out infinite; }
+.st-pos-state { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.st-pos-state b { font-size: 13.5px; font-weight: 700; }
+.st-pos-state small { font-size: 11.5px; color: var(--st-text-3); }
+.st-pos-pnl { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-family: var(--st-mono); font-variant-numeric: tabular-nums; }
+.st-pos-pnl b { display: inline-flex; align-items: baseline; gap: 4px; font-size: 15px; font-weight: 700; }
+.st-pos-pnl > small { font-size: 11.5px; font-weight: 600; }
+
+/* Options par SL / target nahi hote — jitne level, utne barabar column. */
+.st-pos-levels { margin: 0 12px 0 13px; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.st-pos-levels > div { padding: 7px 8px; }
+
+.st-pos-note { margin: 10px 12px 0 13px; display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45; color: var(--st-text-2); background: var(--st-field); }
+.st-pos-note > svg { flex: none; margin-top: 2px; }
+.st-pos-note > span { flex: 1; min-width: 0; }
+.st-pos-note b { color: var(--st-text); }
+.st-pos-note[data-tone="good"] { color: var(--st-text-2); background: var(--st-up-soft); }
+.st-pos-note[data-tone="good"] > svg { color: var(--st-up); }
+.st-pos-note[data-tone="warn"] { background: var(--st-warn-soft); }
+.st-pos-note[data-tone="warn"] > svg { color: var(--st-warn); }
+.st-pos-note[data-tone="bad"] { background: var(--st-down-soft); }
+.st-pos-note[data-tone="bad"] > svg { color: var(--st-down); }
+.st-pos-note-act { flex-wrap: wrap; align-items: center; }
+.st-pos-note-act > svg { margin-top: 0; }
+.st-pos-note-act .st-btn { flex: none; margin-left: auto; }
+
+.st-pos-hist { padding: 12px 12px 10px 13px; }
+.st-pos-hist-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.st-pos-hist-head h4 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--st-text-3); }
+.st-pos-hist-head span { font-size: 10.5px; color: var(--st-text-3); }
+.st-pos-hist-empty { margin: 4px 0 0; }
+.st-pos-more { margin: 4px 0 0 14px; }
+
+/* Timeline — naye se purane. Dot ka rang = side; khokhla dot = order nahi laga. */
+.st-tl { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.st-tl-item { position: relative; display: flex; gap: 10px; padding: 6px 0 6px 0; }
+.st-tl-item::before { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px; background: var(--st-line-2); }
+.st-tl-item:first-child::before { top: 13px; }
+.st-tl-item:last-child::before { bottom: calc(100% - 13px); }
+.st-tl-dot { position: relative; z-index: 1; flex: none; width: 9px; height: 9px; margin-top: 5px; border-radius: 50%; background: var(--st-up); box-shadow: 0 0 0 3px var(--st-panel); }
+.st-tl-item[data-side="short"] .st-tl-dot { background: var(--st-down); }
+.st-tl-item[data-side="options"] .st-tl-dot { background: var(--st-warn); }
+.st-tl-item[data-status="signal"] .st-tl-dot,
+.st-tl-item[data-status="before"] .st-tl-dot { background: var(--st-panel); box-shadow: 0 0 0 3px var(--st-panel), inset 0 0 0 2px var(--st-up); }
+.st-tl-item[data-side="short"][data-status="signal"] .st-tl-dot,
+.st-tl-item[data-side="short"][data-status="before"] .st-tl-dot { box-shadow: 0 0 0 3px var(--st-panel), inset 0 0 0 2px var(--st-down); }
+.st-tl-item[data-side="options"][data-status="signal"] .st-tl-dot,
+.st-tl-item[data-side="options"][data-status="before"] .st-tl-dot { box-shadow: 0 0 0 3px var(--st-panel), inset 0 0 0 2px var(--st-warn); }
+.st-tl-item[data-open="true"] .st-tl-dot { animation: st-ping 1.8s ease-out infinite; }
+.st-tl-item[data-status="before"] .st-tl-body { opacity: 0.62; }
+.st-tl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.st-tl-top { display: flex; align-items: center; gap: 8px; }
+.st-tl-top .st-side { height: 18px; padding: 0 6px; font-size: 10px; }
+.st-tl-when { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--st-mono); font-size: 11.5px; color: var(--st-text-2); font-variant-numeric: tabular-nums; }
+.st-tl-when em { font-style: normal; font-weight: 700; color: var(--st-text); }
+.st-tl-pct { flex: none; display: inline-flex; align-items: baseline; gap: 3px; font-family: var(--st-mono); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.st-tl-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 11px; color: var(--st-text-3); }
+.st-tl-px { font-family: var(--st-mono); font-variant-numeric: tabular-nums; color: var(--st-text-2); }
+.st-tl-result { font-weight: 650; }
+.st-tl-result[data-o="target"] { color: var(--st-up); }
+.st-tl-result[data-o="stop"] { color: var(--st-down); }
+.st-tl-result[data-o="open"] { color: var(--st-text); }
+.st-tl-tag { margin-left: auto; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; white-space: nowrap; color: var(--st-text-3); background: var(--st-field); }
+.st-tl-tag[data-status="placed"] { color: var(--st-up); background: var(--st-up-soft); }
+.st-tl-tag[data-status="server"] { color: var(--st-acc); background: var(--st-acc-soft); }
+.st-tl-tag[data-status="signal"] { color: var(--st-warn); background: var(--st-warn-soft); }
+/* "You applied" — yahan se upar wale trades is account ke hain, neeche sirf strategy ka record. */
+.st-tl-applied { position: relative; display: flex; align-items: center; gap: 8px; padding: 6px 0 6px 18px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--st-acc); }
+.st-tl-applied::before { content: ""; position: absolute; left: 1px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 2px; transform: rotate(45deg); background: var(--st-acc-fill); }
+.st-tl-applied::after { content: ""; flex: 1; height: 1px; background: var(--st-acc-line); opacity: 0.6; }
+
+.st-pos-log { margin: 0 12px 12px 13px; border-radius: 8px; border: 1px solid var(--st-line); }
+.st-pos-log summary { display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 12px; font-weight: 650; color: var(--st-text-2); cursor: pointer; list-style: none; }
+.st-pos-log summary::-webkit-details-marker { display: none; }
+.st-pos-log summary:hover { color: var(--st-text); }
+.st-pos-log ol { margin: 0; padding: 0 10px 8px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.st-pos-log li { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; font-size: 11.5px; line-height: 1.4; color: var(--st-text-2); }
+.st-pos-log time { font-family: var(--st-mono); font-size: 11px; color: var(--st-text-3); }
+.st-pos-empty .st-btn { margin-top: 8px; }
+
 /* settings */
 .st-settings { display: flex; flex-direction: column; gap: 10px; }
 .st-set { padding: 4px 12px 2px; border-radius: 10px; border: 1px solid var(--st-line); }
@@ -1204,6 +1354,9 @@
 }
 @media (max-width: 1280px) {
   .st-panel { width: 364px; }
+  .st-tab { padding: 0 6px; gap: 4px; font-size: 12px; }
+  .st-tab[data-active="true"]::after { left: 6px; right: 6px; }
+  .st-tab-count { min-width: 17px; height: 17px; padding: 0 4px; font-size: 10px; }
   .st-brand-sub { display: none; }
   .st-instr-stats > div:nth-child(2) { display: none; }
   .st-dock-info { display: none; }
@@ -1239,9 +1392,14 @@
   .st-instr-stats { order: 5; gap: 14px; overflow-x: auto; scrollbar-width: none; }
   .st-dock { height: auto; min-height: 48px; flex-wrap: wrap; padding: 8px; }
   .st-dock-status { display: none; }
-  .st-tab { padding: 0 8px; gap: 5px; font-size: 12.5px; }
-  .st-tab > svg { display: none; }
-  .st-tab[data-active="true"]::after { left: 8px; right: 8px; }
+  .st-tab { padding: 0 7px; gap: 4px; font-size: 12px; }
+  .st-tab[data-active="true"]::after { left: 7px; right: 7px; }
+  .st-pos-levels { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .st-pos-levels > div:nth-child(3) { border-left: 0; border-top: 1px solid var(--st-line); }
+  .st-pos-levels > div:nth-child(4) { border-top: 1px solid var(--st-line); }
+  .st-pos-chart { font-size: 0; }
+  .st-pos-sum small,
+  .st-tl-when { white-space: normal; }
   .st-market { gap: 4px; font-size: 11.5px; }
   .st-card-top { grid-template-columns: 34px minmax(0, 1fr) 66px; }
   .st-spark { display: none; }
