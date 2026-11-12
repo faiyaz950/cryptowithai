@@ -1197,6 +1197,10 @@
 .st-pos-note[data-tone="warn"] > svg { color: var(--st-warn); }
 .st-pos-note[data-tone="bad"] { background: var(--st-down-soft); }
 .st-pos-note[data-tone="bad"] > svg { color: var(--st-down); }
+/* Paper — virtual order: hara "asli" jaisa nahi, neutral; neeche saaf line ki exchange par nahi gaya. */
+.st-pos-note[data-tone="paper"] { box-shadow: inset 0 0 0 1px var(--st-line-2); }
+.st-pos-note[data-tone="paper"] > svg { color: var(--st-text-2); }
+.st-pos-note-sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--st-text-3); }
 .st-pos-note-act { flex-wrap: wrap; align-items: center; }
 .st-pos-note-act > svg { margin-top: 0; }
 .st-pos-note-act .st-btn { flex: none; margin-left: auto; }

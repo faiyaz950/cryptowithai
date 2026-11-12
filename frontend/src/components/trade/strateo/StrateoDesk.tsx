@@ -175,6 +175,11 @@ function dockChip(p: StrateoPosition): { text: string; title: string; side: stri
   }
 }
 
+/** Paper order virtual hai — toast mein saaf ki exchange par nahi gaya. */
+function placedText(mode: "paper" | "live", venue: string): string {
+  return mode === "live" ? `Live order placed on ${venue}` : `Paper order placed (virtual, not sent to ${venue})`;
+}
+
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : "Something went wrong";
 }
@@ -531,7 +536,7 @@ export default function StrateoDesk() {
                   settings: ctx.settings,
                   account,
                 });
-                toast(`Order placed (${exec.mode}) — ${text}`, "good");
+                toast(`${placedText(exec.mode, venueShort(exec.mode === "live" ? account?.exchange : row.exchange))} — ${text}`, "good");
               } catch (err) {
                 toast(`Order failed — ${errText(err)}`, "bad");
               }
@@ -763,7 +768,10 @@ export default function StrateoDesk() {
         settings,
         account: liveAccount,
       });
-      toast(`Order placed (${exec.mode}) — ${sig.def.name} ${sideTag(sig.trade)} ${symbolLabel(sig.symbol)}`, "good");
+      toast(
+        `${placedText(exec.mode, exec.mode === "live" ? venueShort(liveAccount?.exchange) : exchangeName)} — ${sig.def.name} ${sideTag(sig.trade)} ${symbolLabel(sig.symbol)}`,
+        "good",
+      );
     } catch (err) {
       toast(`Order failed — ${errText(err)}`, "bad");
     } finally {

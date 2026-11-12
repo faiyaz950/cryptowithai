@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, ChevronRight, Info, Loader2, Plus, Server, TriangleAlert } from "lucide-react";
-import { DESK_TZ, symbolLabel } from "@/lib/cryptoApi";
+import { DESK_TZ, symbolLabel, venueShort } from "@/lib/cryptoApi";
 import type { StrategyDef } from "@/lib/strategies";
 import {
   dayKey,
@@ -85,6 +85,15 @@ export default function PositionsView({
   const signals = positions.filter((p) => p.state === "signal").length;
   const waiting = positions.filter((p) => p.state === "flat").length;
   const openUsd = open.reduce((s, p) => s + (p.usd ?? 0), 0);
+  // Paper ka P&L virtual hai — saaf likho, warna lagta hai exchange par paisa laga.
+  const modes = new Set(open.map((p) => p.exec?.mode ?? p.bot?.mode ?? p.row.mode));
+  const pnlNote = !open.length
+    ? "Strateo orders"
+    : modes.size > 1
+      ? "Paper + live"
+      : modes.has("live")
+        ? "Live orders"
+        : "Paper (virtual)";
 
   // Khuli position sabse upar — "abhi kya chal raha hai" pehle dikhe.
   const rank = (p: StrateoPosition) =>
@@ -110,7 +119,7 @@ export default function PositionsView({
         <div>
           <span className="st-label">Open P&amp;L</span>
           <b className={openUsd > 0 ? "st-up" : openUsd < 0 ? "st-down" : undefined}>{open.length ? fmtUsd(openUsd) : "—"}</b>
-          <small>Strateo orders</small>
+          <small>{pnlNote}</small>
         </div>
         <div>
           <span className="st-label">Waiting</span>
@@ -338,25 +347,36 @@ function OrderNote({
   onPlace: () => void;
 }) {
   const { state, exec, bot, why, row } = pos;
+  const venue = venueShort(row.exchange);
+  // Paper = Cryptomantra ka apna virtual account. Exchange par order nahi jaata, wahan ka balance nahi lagta.
+  const paperNote = (
+    <small className="st-pos-note-sub">
+      Virtual money — not sent to {venue}. Your {venue} balance is not used.
+    </small>
+  );
   if (state === "open" && exec) {
+    const paper = exec.mode !== "live";
     return (
-      <p className="st-pos-note" data-tone="good">
+      <p className="st-pos-note" data-tone={paper ? "paper" : "good"}>
         <CheckCircle2 className="w-3.5 h-3.5" aria-hidden />
         <span>
-          Order placed by Strateo · <b>{exec.mode === "live" ? "Live" : "Paper"}</b> · {exec.qty} {symbolLabel(exec.symbol).split("/")[0]} at{" "}
-          {fmtPrice(exec.entry)} · {fmtWhen(exec.at, now)}
+          <b>{paper ? "Paper order placed" : `Live order placed on ${venue}`}</b> · {exec.qty}{" "}
+          {symbolLabel(exec.symbol).split("/")[0]} at {fmtPrice(exec.entry)} · {fmtWhen(exec.at, now)}
+          {paper && paperNote}
         </span>
       </p>
     );
   }
   if (state === "open" && bot) {
+    const paper = bot.mode !== "live";
     return (
-      <p className="st-pos-note" data-tone="good">
+      <p className="st-pos-note" data-tone={paper ? "paper" : "good"}>
         <CheckCircle2 className="w-3.5 h-3.5" aria-hidden />
         <span>
-          Server bot #{bot.id} holds this position · <b>{bot.mode === "live" ? "Live" : "Paper"}</b>
+          <b>{paper ? `Server bot #${bot.id} · paper position` : `Server bot #${bot.id} · live on ${venue}`}</b>
           {bot.quantity ? ` · ${bot.quantity} ${symbolLabel(bot.symbol).split("/")[0]}` : ""}
           {bot.tp1_done ? " · first profit booked" : ""}
+          {paper && paperNote}
         </span>
       </p>
     );
