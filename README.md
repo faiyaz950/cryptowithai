@@ -78,6 +78,28 @@ Deploy ke baad frontend ke env mein backend ka URL daalein
 teeno wahi ek URL), aur backend ke `FRONTEND_URL` mein frontend ka origin
 (bina trailing slash) — warna CORS request block kar dega.
 
+### Hostinger VPS (Docker)
+
+Poora stack ek server par: Caddy (80/443, auto HTTPS) → frontend + backend,
+saath mein Postgres aur Redis. Files: `docker-compose.yml`, `deploy/`.
+
+```bash
+# 1. Ek baar — VPS taiyaar karo (Docker, firewall, swap)
+ssh root@187.126.116.78 'bash -s' < deploy/server-setup.sh
+
+# 2. Ek baar — server par .env banao
+./deploy/deploy.sh root@187.126.116.78        # code bhejega, .env na milne par ruk jaayega
+ssh root@187.126.116.78
+cd /opt/cryptoandai && cp .env.production.example .env && nano .env
+
+# 3. Har deploy par (Mac se)
+./deploy/deploy.sh root@187.126.116.78
+```
+
+Domain lagana ho to uska A record VPS IP par point karein, phir server ki `.env`
+mein `SITE_ADDRESS=example.com` aur `PUBLIC_URL=https://example.com` karke
+`./deploy/deploy.sh` dobara chalayein. Logs: `docker compose logs -f backend`.
+
 ---
 
 ## Note

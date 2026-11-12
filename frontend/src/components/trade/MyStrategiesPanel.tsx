@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Archive,
-  ExternalLink,
+  FlaskConical,
   Pause,
   Pencil,
   Play,
@@ -24,8 +24,9 @@ import {
   type CustomStrategy,
   type StrategyStatus,
 } from "@/lib/strategyBuilder";
+import { useTradingMode } from "@/lib/tradingMode";
 
-type Filter = "all" | "live" | "paused" | "draft" | "archived";
+type Filter = "all" | "live" | "paper" | "paused" | "draft" | "archived";
 
 interface Props {
   onCreate: () => void;
@@ -39,6 +40,7 @@ function fmtMoney(n: number): string {
 
 function statusBadge(status: StrategyStatus): string {
   if (status === "live") return "trade-badge-green";
+  if (status === "paper") return "trade-badge-green";
   if (status === "paused") return "trade-badge-amber";
   if (status === "archived") return "trade-badge-neutral";
   return "trade-badge-blue";
@@ -46,7 +48,8 @@ function statusBadge(status: StrategyStatus): string {
 
 export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
   const [items, setItems] = useState<CustomStrategy[]>([]);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [mode] = useTradingMode();
+  const [filter, setFilter] = useState<Filter>(mode);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"updated" | "name" | "pnl">("updated");
   const [selected, setSelected] = useState<string | null>(null);
@@ -65,9 +68,15 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
     };
   }, [sync]);
 
+  useEffect(() => {
+    setFilter(mode);
+  }, [mode]);
+
   const counts = useMemo(() => {
-    const c = { all: items.length, live: 0, paused: 0, draft: 0, archived: 0 };
-    for (const s of items) c[s.status] += 1;
+    const c = { all: items.length, live: 0, paper: 0, paused: 0, draft: 0, archived: 0 };
+    for (const s of items) {
+      if (s.status in c) c[s.status as keyof typeof c] += 1;
+    }
     return c;
   }, [items]);
 
@@ -101,25 +110,20 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
   const kpis = useMemo(() => {
     const closed = items.reduce((a, s) => a + (s.stats?.closedPnl30d ?? 0), 0);
     const trades = items.reduce((a, s) => a + (s.stats?.closedTrades ?? 0), 0);
-    const live = items.filter((s) => s.status === "live").length;
+    const live = items.filter((s) => s.status === "live" || s.status === "paper").length;
     const drafts = items.filter((s) => s.status === "draft").length;
     return [
       { label: "Closed PnL 30D", value: fmtMoney(closed), color: closed >= 0 ? "var(--green)" : "var(--red)" },
       { label: "Closed trades", value: String(trades), color: undefined },
-      { label: "Live", value: String(live), color: "var(--accent)" },
+      { label: "Live & Paper", value: String(live), color: "var(--accent)" },
       { label: "Drafts", value: String(drafts), color: undefined },
     ];
-  }, [items]);
-
-  const monthLine = useMemo(() => {
-    const closed = items.reduce((a, s) => a + (s.stats?.closedPnl30d ?? 0), 0);
-    const trades = items.reduce((a, s) => a + (s.stats?.closedTrades ?? 0), 0);
-    return `Closed ${fmtMoney(closed)} this month · ${trades} trades`;
   }, [items]);
 
   const filters: { id: Filter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "live", label: "Live" },
+    { id: "paper", label: "Paper" },
     { id: "paused", label: "Paused" },
     { id: "draft", label: "Draft" },
     { id: "archived", label: "Archived" },
@@ -133,12 +137,12 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
           <h2 className="trade-page-title">
             {items.length === 0 ? "No strategies yet" : `${items.length} strateg${items.length === 1 ? "y" : "ies"}`}
           </h2>
-          <p className="trade-page-sub">{monthLine}</p>
+          <p className="trade-page-line">Jo aapne save ki hain. Start se paper ya live par chalti hain.</p>
         </div>
         <div className="trade-page-actions">
           <button type="button" className="trade-btn trade-btn-primary" onClick={onCreate}>
             <Plus className="w-4 h-4" />
-            New strategy
+            Open Strategy Builder
           </button>
         </div>
       </div>
@@ -203,7 +207,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
               </div>
               <p className="text-[13px] mt-1.5 max-w-sm" style={{ color: "var(--text-muted)" }}>
                 {items.length === 0
-                  ? "Market, indicator conditions, aur risk rules drag-free cockpit mein set karo — phir Deploy."
+                  ? "Set market, indicator conditions, and risk rules in the cockpit — then Deploy."
                   : "Filter ya search change karke dekho."}
               </p>
               {items.length === 0 && (
@@ -241,7 +245,7 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                         </span>
                       </div>
                       <div className="ms-row-meta">
-                        {s.market.direction} · {s.market.symbols.map(symbolLabel).join(", ") || "—"} · {s.market.interval}
+                        <span className="capitalize font-semibold text-accent">{s.market.strategyType ?? "indicators"}</span> · {s.market.direction} · {s.market.symbols.map(symbolLabel).join(", ") || "—"} · {s.market.interval}
                       </div>
                       <div className="ms-row-pnl tnum" style={{ color: (s.stats?.closedPnl30d ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
                         {fmtMoney(s.stats?.closedPnl30d ?? 0)}
@@ -321,11 +325,20 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                   <Play className="w-4 h-4" />
                   Open & run
                 </Link>
+                <button
+                  type="button"
+                  className="trade-btn trade-btn-ghost text-emerald-400"
+                  onClick={() => onEdit(selectedStrategy.id)}
+                  title="Test in Simulator & Deploy to Paper"
+                >
+                  <FlaskConical className="w-4 h-4" />
+                  Simulator & Paper
+                </button>
                 <button type="button" className="trade-btn trade-btn-ghost" onClick={() => onEdit(selectedStrategy.id)}>
                   <Pencil className="w-4 h-4" />
                   Edit
                 </button>
-                {selectedStrategy.status === "live" ? (
+                {selectedStrategy.status === mode ? (
                   <button
                     type="button"
                     className="trade-btn trade-btn-ghost"
@@ -335,17 +348,20 @@ export default function MyStrategiesPanel({ onCreate, onEdit }: Props) {
                     }}
                   >
                     <Pause className="w-4 h-4" />
-                    Pause
+                    Stop
                   </button>
                 ) : selectedStrategy.status !== "archived" ? (
-                  <Link
-                    href={customStrategyHref(selectedStrategy.id)}
+                  <button
+                    type="button"
                     className="trade-btn trade-btn-ghost"
-                    onClick={() => setCustomStrategyStatus(selectedStrategy.id, "live")}
+                    onClick={() => {
+                      setCustomStrategyStatus(selectedStrategy.id, mode);
+                      sync();
+                    }}
                   >
-                    <ExternalLink className="w-4 h-4" />
-                    Go live
-                  </Link>
+                    <Play className="w-4 h-4" />
+                    Start {mode}
+                  </button>
                 ) : null}
                 {selectedStrategy.status !== "archived" && (
                   <button

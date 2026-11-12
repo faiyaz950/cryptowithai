@@ -34,7 +34,7 @@ export async function runOptionsBacktest(
   onProgress?: OptionsBacktestProgress,
 ): Promise<BacktestResult> {
   const kind = optionsKind(def);
-  if (!kind) throw new Error("Ye options strategy nahi hai");
+  if (!kind) throw new Error("This is not an options strategy");
 
   const symbol = str(values, "symbol", "BTCUSDT");
   const timeframe = str(values, "timeframe", "5m");
@@ -42,7 +42,7 @@ export async function runOptionsBacktest(
 
   onProgress?.(`${days} din ki candles aa rahi hain…`);
   const candles = await fetchOptionsBacktestCandles(symbol, timeframe, days);
-  if (candles.length < 100) throw new Error("Backtest ke liye candles kaafi nahi hain");
+  if (candles.length < 100) throw new Error("Not enough candles for backtest");
 
   // Signal candle band hone par aata hai — trade agli candle khulte hi lagta hai.
   const barMs = intervalMinutes(timeframe) * 60_000;

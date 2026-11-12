@@ -17,7 +17,7 @@
 const DELTA_SOCKET_URL = "wss://socket.india.delta.exchange";
 
 /** Desk ke timeframes jinka Delta par live channel hai. */
-const LIVE_RESOLUTIONS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]);
+const LIVE_RESOLUTIONS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "1d"]);
 
 /**
  * Itni der kuch na aaye to connection mara hua maano aur dobara judo.
@@ -48,7 +48,8 @@ export function deltaLiveSymbol(symbol: string): string {
 }
 
 export function supportsLiveCandles(interval: string): boolean {
-  return LIVE_RESOLUTIONS.has(interval.toLowerCase());
+  // Lowercase nahi — "1M" (month) lowercase karke "1m" (minute) ban jaata.
+  return LIVE_RESOLUTIONS.has(interval);
 }
 
 /**

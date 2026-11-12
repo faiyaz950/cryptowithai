@@ -59,7 +59,7 @@ export default function ClubApp() {
     setReads(nextReads);
     setLoading(false);
     if (!nextReads.length) {
-      setError("Market data nahi mila. Trading desk ka backend chalu hona chahiye, phir Refresh.");
+      setError("Market data unavailable. Start the trading desk backend, then Refresh.");
       return;
     }
     const day = new Date().toISOString().slice(0, 10);
@@ -78,7 +78,7 @@ export default function ClubApp() {
       if (hit.total > 0 && hit.met / hit.total >= 0.8) {
         pushNotice({
           symbol: read.base,
-          text: `Mukul Radar Alert — ${read.base} ne aapki selected conditions mein se ${hit.met}/${hit.total} conditions satisfy ki hain.`,
+          text: `Mukul Radar Alert — ${read.base} met ${hit.met}/${hit.total} of your selected conditions.`,
           email: rule.email,
           telegram: rule.telegram,
         }, rule.id);
@@ -108,8 +108,8 @@ export default function ClubApp() {
   if (!club.membership) {
     body = (
       <div className="mc-panel">
-        <h1>Mukul Crypto Club</h1>
-        <p>Free access tab khulta hai jab exchange user ID verify ho. Trading desk pehle se khula hai.</p>
+        <h1>Cryptomantra</h1>
+        <p>Free access unlocks when your exchange user ID is verified. The trading desk is already open.</p>
         <div className="mc-inline">
           <Link href="/club/join" className="mc-btn mc-btn-primary">Unlock Free Access</Link>
           <Link href="/trade" className="mc-btn">Trading Desk</Link>
@@ -140,7 +140,7 @@ export default function ClubApp() {
           <Link href="/" className="mc-brand">
             <img className="mc-avatar" src="/mukul/mukul-face.webp" alt="" width={40} height={40} />
             <span>
-              <strong>Mukul Crypto Club</strong>
+              <strong>Cryptomantra</strong>
               <small>by Dr. Mukul Agrawal</small>
             </span>
           </Link>

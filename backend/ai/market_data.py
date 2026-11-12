@@ -381,7 +381,7 @@ def _fetch_delta_quote(coin_id: str) -> Optional[dict]:
     Ek coin ka live quote Delta se.
 
     AI pehle CoinGecko par tha — global spot average — jabki desk ka chart,
-    screener aur Risk Desk Delta India ke perpetuals dikhate hain. Do alag
+    screener Delta India ke perpetuals dikhate hain. Do alag
     markets, do alag prices: AI wo number bolta tha jo user ke saamne chart par
     tha hi nahi. CoinGecko ke 24h high/low apne hi price se mel nahi khate the
     (high current price se neeche aa jaata tha).

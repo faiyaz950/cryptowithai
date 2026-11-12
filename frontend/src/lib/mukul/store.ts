@@ -123,7 +123,7 @@ export const PAPER_USD_INR = 84;
 
 export const OFFER_LABEL: Record<OfferId, string> = {
   a: "Free Mukul Algo",
-  b: "Free Mukul Crypto Club",
+  b: "Free Cryptomantra Access",
   c: "Free Mukul Live Trading Room + Algo",
 };
 
@@ -154,21 +154,21 @@ function empty(): ClubState {
         id: "seed-learn",
         channel: "learning",
         author: "Mukul Club",
-        body: "Aaj sirf ek chart kholo aur support likho. Yahan signal paste nahi karna — seekhna hai ki level kyun hai.",
+        body: "Open one chart today and mark support. Do not paste signals here — learn why the level matters.",
         at: new Date().toISOString(),
       },
       {
         id: "seed-edu",
         channel: "education",
         author: "Mukul Club",
-        body: "Strategy library mein Learn → Backtest → Paper Trade → Track. Pehle paper, baad mein sochna.",
+        body: "In the strategy library: Learn → Backtest → Paper Trade → Track. Paper first, then decide.",
         at: new Date().toISOString(),
       },
       {
         id: "seed-room",
         channel: "room",
         author: "Mukul Club",
-        body: "Live room ka order: Market overview, phir BTC, ETH, major setups, aur risk discussion. Tip group nahi.",
+        body: "Live room order: market overview, then BTC, ETH, major setups, and risk discussion — not a tip group.",
         at: new Date().toISOString(),
       },
     ],

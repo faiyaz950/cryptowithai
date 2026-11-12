@@ -13,18 +13,32 @@ from datetime import datetime, timedelta, timezone
 import time
 from fetch_trading_data import BASE_URL, CryptoAPIClient, to_delta_symbol
 from exchanges import SUPPORTED_EXCHANGES, catalogue, exchange_name, get_adapter, message_for
-from exchanges.market import get_market_source, market_catalogue
+from exchanges.market import (
+    SPOT_SUFFIX,
+    coindcx_spot_markets,
+    coindcx_spot_price,
+    coindcx_spot_tickers,
+    get_market_source,
+    market_catalogue,
+    quote_usd_rate,
+    split_spot_key,
+)
 from options_backtest import create_options_backtest_blueprint
+import avpt
+import trend_rider
+import trident
 import os
 import base64
 import hashlib
 import importlib
 import json
+import math
 import re
 import requests
 import secrets
 import smtplib
 import ssl
+import sys
 import threading
 from functools import wraps
 from email.message import EmailMessage
@@ -34,11 +48,21 @@ from django_orm import (
     database_backend,
     save_demo_order_entry,
     fetch_recent_orders,
+    fetch_user_demo_orders_oldest_first,
+    update_demo_order,
+    modify_demo_order,
+    fetch_paper_brackets,
+    set_paper_bracket,
+    claim_paper_bracket,
+    advance_paper_target,
+    touch_paper_plan,
+    claim_pending_demo_order,
     create_user_account,
     get_user_account_by_username,
     get_user_account_by_email,
     get_user_account_by_id,
     get_user_account_by_tv_token,
+    get_user_tv_token,
     update_user_account_fields,
     create_user_session,
     get_active_session_by_token,
@@ -55,7 +79,14 @@ from django_orm import (
     fetch_byok_orders,
     create_email_change_otp,
     verify_email_change_otp,
+    create_strategy_bot,
+    find_active_strategy_bot,
+    get_strategy_bot,
+    list_strategy_bots,
+    update_strategy_bot,
 )
+import bot_worker
+from trend_rider_bot import OrderError as BotOrderError
 try:
     _fernet_module = importlib.import_module("cryptography.fernet")
     Fernet = getattr(_fernet_module, "Fernet", None)
@@ -673,15 +704,20 @@ def get_candles():
     Candle data with EMA.
 
     `exchange` query se chart ka source chunta hai (delta / coindcx / bybit).
-    Har exchange ka apna bhaav hota hai — jo user trade karta hai usi ka chart
+    Har exchange ka apna price hota hai — jo user trade karta hai usi ka chart
     dikhana chahiye, isliye default ab bhi delta hai par connected exchange
     frontend khud bhejta hai.
     """
     try:
         symbol = request.args.get('symbol', 'BTCUSDT')
         interval = request.args.get('interval', '1h')
-        limit = int(request.args.get('limit', 100))
+        limit = max(2, min(int(request.args.get('limit', 100)), 5000))
         exchange = (request.args.get('exchange') or 'delta').strip().lower()
+        end_raw = (request.args.get('end') or '').strip()
+        try:
+            end_ms = int(end_raw) if end_raw else None
+        except ValueError:
+            end_ms = None
 
         ema_periods_str = request.args.get('ema_periods', '9,21,50')
         ema_periods = [int(p.strip()) for p in ema_periods_str.split(',') if p.strip()]
@@ -692,22 +728,34 @@ def get_candles():
         src = get_market_source(exchange)
         if src is None:
             return jsonify({
-                'error': f'Chart source "{exchange}" support nahi hai.',
+                'error': f'Chart source "{exchange}" is not supported.',
                 'success': False,
             }), 400
 
-        if interval not in src.INTERVALS:
+        if interval not in src.intervals():
             return jsonify({
-                'error': f'{src.name} par {interval} timeframe nahi hai.',
+                'error': f'{src.name} par {interval} timeframe is not supported.',
                 'success': False,
                 'exchange': src.id,
                 'intervals': src.intervals(),
             }), 400
 
-        rows = src.candles(symbol, interval, limit)
+        rows = src.fetch(symbol, interval, limit, end_ms=end_ms)
+        if end_ms and not rows:
+            # History ka shuru aa gaya — error nahi, khaali page; chart paging rok deta hai.
+            return jsonify({
+                'success': True,
+                'symbol': symbol,
+                'interval': interval,
+                'exchange': src.id,
+                'exchange_name': src.name,
+                'candles': [],
+                'ema_periods': ema_periods,
+                'total_candles': 0,
+            })
         if rows is None:
             return jsonify({
-                'error': f'{src.name} se data nahi mila. Symbol ya network check karein.',
+                'error': f'{src.name} returned no data. Check the symbol or network.',
                 'success': False,
                 'exchange': src.id,
             }), 400
@@ -715,7 +763,7 @@ def get_candles():
         df = _market_candles_to_df(rows)
         if df is None or len(df) == 0:
             return jsonify({
-                'error': 'Candle data empty hai. Symbol ya network check karein.',
+                'error': 'Candle data is empty. Check the symbol or network.',
                 'success': False,
                 'exchange': src.id,
             }), 400
@@ -1495,6 +1543,69 @@ def funding_rates():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+_TICKERS_CACHE = {'at': 0.0, 'rows': None}
+_TICKERS_TTL = 10
+_TICKERS_LOCK = threading.Lock()
+
+
+@app.route('/api/market/tickers', methods=['GET'])
+def market_tickers():
+    """
+    Delta ke saare USD perpetuals ka ticker — markets list ke liye. Har tab har
+    15s poll karta hai, isliye ek chhota shared cache Delta par load rokta hai.
+    """
+    try:
+        with _TICKERS_LOCK:
+            fresh = _TICKERS_CACHE['rows'] is not None and time.time() - _TICKERS_CACHE['at'] < _TICKERS_TTL
+            if not fresh:
+                res = requests.get(
+                    f"{BASE_URL}/v2/tickers",
+                    params={'contract_types': 'perpetual_futures'},
+                    timeout=20,
+                )
+                res.raise_for_status()
+                rows = []
+                for r in res.json().get('result') or []:
+                    symbol = str(r.get('symbol') or '')
+                    if not symbol.endswith('USD'):
+                        continue
+                    name = str(r.get('description') or '').replace(' Perpetual', '').strip()
+                    rows.append({
+                        'symbol': f"{symbol}T",
+                        'base': str(r.get('underlying_asset_symbol') or symbol[:-3]),
+                        'name': name or symbol[:-3],
+                        'price': _fnum(r.get('close')) or _fnum(r.get('mark_price')),
+                        'mark_price': _fnum(r.get('mark_price')),
+                        'change_24h': _fnum(r.get('mark_change_24h')),
+                        'high_24h': _fnum(r.get('high')),
+                        'low_24h': _fnum(r.get('low')),
+                        'volume_24h': _fnum(r.get('volume'), 0),
+                        'turnover_usd': _fnum(r.get('turnover_usd'), 0),
+                        'oi_value_usd': _fnum(r.get('oi_value_usd'), 0),
+                        'funding_rate': _fnum(r.get('funding_rate')),
+                    })
+                rows.sort(key=lambda x: x['turnover_usd'] or 0, reverse=True)
+                _TICKERS_CACHE['rows'] = rows
+                _TICKERS_CACHE['at'] = time.time()
+            rows = _TICKERS_CACHE['rows']
+        return jsonify({'success': True, 'count': len(rows), 'tickers': rows})
+    except Exception as e:
+        print(f"❌ Tickers error: {e}")
+        stale = _TICKERS_CACHE['rows']
+        if stale is not None:
+            return jsonify({'success': True, 'count': len(stale), 'tickers': stale, 'stale': True})
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/market/spot-tickers', methods=['GET'])
+def market_spot_tickers():
+    """CoinDCX ke saare spot pairs — INR, BTC, USDT, USDC, ETH, TRX quote wale."""
+    rows = coindcx_spot_tickers()
+    if rows is None:
+        return jsonify({'success': False, 'error': 'CoinDCX spot data not available'}), 502
+    return jsonify({'success': True, 'count': len(rows), 'tickers': rows})
+
+
 def _market_info_from_candles(symbol, exchange='delta'):
     """
     Ticker na mile to fallback — poore 24 ghante ki candles se stats banao.
@@ -1549,7 +1660,7 @@ def get_market_info():
     src = get_market_source(exchange)
     if src is None:
         return jsonify({
-            'error': f'Chart source "{exchange}" support nahi hai.',
+            'error': f'Chart source "{exchange}" is not supported.',
             'success': False,
         }), 400
 
@@ -1569,6 +1680,7 @@ def get_market_info():
                 'turnover_24h': t.get('turnover_24h'),
                 'mark_price': t.get('mark_price'),
                 'change_24h': t.get('change_24h') or 0.0,
+                'spot': t.get('spot'),
             })
         print(f"⚠️ Market info: {src.name}/{symbol} ka ticker adhoora aaya, candles par ja rahe hain")
     except Exception as e:
@@ -1578,7 +1690,7 @@ def get_market_info():
         fallback = _market_info_from_candles(symbol, exchange=src.id)
         if fallback:
             return jsonify(fallback)
-        return jsonify({'error': 'Data fetch nahi hua', 'success': False, 'exchange': src.id}), 400
+        return jsonify({'error': 'Failed to fetch data', 'success': False, 'exchange': src.id}), 400
     except Exception as e:
         print(f"❌ Market info error ({src.name}/{symbol}): {e}")
         return jsonify({'error': str(e), 'success': False}), 500
@@ -1602,10 +1714,10 @@ def auth_register():
         # Desk ka sign-up form naam + email + password maangta hai, username
         # nahi. Username na aaye to email se ek unique bana lo.
         if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            return jsonify({'success': False, 'error': 'Valid email address daalein'}), 400
+            return jsonify({'success': False, 'error': 'Please enter a valid email address'}), 400
         if not username:
             if not email:
-                return jsonify({'success': False, 'error': 'Email ya username zaroori hai'}), 400
+                return jsonify({'success': False, 'error': 'Email or username is required'}), 400
             username = make_unique_username(email.split('@', 1)[0])
 
         if not validate_username(username):
@@ -1622,7 +1734,7 @@ def auth_register():
             return jsonify({'success': False, 'error': 'Username already exists'}), 409
         # Email se login hota hai, isliye ek email ek hi account.
         if email and get_user_account_by_email(email):
-            return jsonify({'success': False, 'error': 'Is email se account pehle se bana hai — login karein'}), 409
+            return jsonify({'success': False, 'error': 'An account with this email already exists — please log in'}), 409
 
         password_hash = hash_password(password)
         created_user = create_user_account(username, password_hash, email=email, full_name=full_name)
@@ -2067,7 +2179,7 @@ def byok_connect_exchange():
             # ke naam par trade kar sakta hai.
             return jsonify({
                 'success': False,
-                'error': 'Ye API key pehle se kisi aur account se judi hai.',
+                'error': 'This API key is already linked to another account.',
                 'reason': 'key_in_use',
             }), 409
 
@@ -2257,7 +2369,7 @@ def byok_pnl():
                     'best_day': best,
                     'worst_day': worst,
                 },
-                'note': 'Realized P&L — fees aur funding jodkar. Deposit/withdrawal shaamil nahi.',
+                'note': 'Realized P&L — including fees and funding. Deposits/withdrawals not included.',
                 'fetched_at': datetime.now(timezone.utc).isoformat(),
             },
         })
@@ -2611,15 +2723,15 @@ def prepare_order(*, account, payload, require_live_toggle=True):
         raise OrderRejected('Ye exchange account band hai.')
     if require_live_toggle and not account.get('live_trading_enabled'):
         raise OrderRejected(
-            'Is account par live trading band hai. Exchanges page par ise chaalu karein.',
+            'Live trading is off for this account. Enable it on the Exchanges page.',
             reason='live_trading_disabled',
         )
     if not account.get('can_trade'):
-        raise OrderRejected('Is key ko trading permission nahi hai.', reason='unauthorized')
+        raise OrderRejected('This key does not have trading permission.', reason='unauthorized')
     if account.get('can_withdraw'):
         # Aisi key se order lagana matlab ek hi key se paisa nikaalna bhi
         # mumkin hai — wo risk hum lete hi nahi.
-        raise OrderRejected('Withdrawal-enabled key se order nahi lagta. Nayi key banayein.')
+        raise OrderRejected('Orders are blocked on withdrawal-enabled keys. Create a new trade-only key.')
 
     symbol = str(payload.get('symbol') or '').strip().upper()
     side = str(payload.get('side') or '').strip().lower()
@@ -2639,25 +2751,41 @@ def prepare_order(*, account, payload, require_live_toggle=True):
     reduce_only = bool(payload.get('reduce_only'))
 
     if not symbol:
-        raise OrderRejected('symbol chahiye.')
+        raise OrderRejected('symbol is required.')
     if side not in ('buy', 'sell'):
-        raise OrderRejected("side 'buy' ya 'sell' hona chahiye.")
+        raise OrderRejected("side must be 'buy' or 'sell'.")
     if order_type not in ('limit', 'market'):
-        raise OrderRejected("order_type 'limit' ya 'market' hona chahiye.")
+        raise OrderRejected("order_type must be 'limit' or 'market'.")
     if size <= 0:
-        raise OrderRejected('size 0 se bada hona chahiye.')
+        raise OrderRejected('size must be greater than 0.')
     if order_type == 'limit' and not price:
-        raise OrderRejected('Limit order ke liye price chahiye.')
+        raise OrderRejected('Limit orders require a price.')
+
+    is_spot = split_spot_key(symbol)[1]
+    if is_spot and account['exchange'] != 'coindcx':
+        raise OrderRejected(
+            'Spot pair ka asli order sirf CoinDCX account se lagta hai. Exchanges page par CoinDCX key jodein.',
+            reason='spot_needs_coindcx',
+        )
+    if not is_spot and account['exchange'] == 'coindcx':
+        raise OrderRejected(
+            'From this desk, CoinDCX currently supports spot orders only. Pick an INR/USDT spot pair from the left list.',
+            reason='coindcx_spot_only',
+        )
 
     adapter = get_adapter(account['exchange'], decrypt_secret(account['api_key_encrypted']),
                           decrypt_secret(account['secret_key_encrypted']))
     if adapter is None:
         raise OrderRejected(message_for('adapter_missing', exchange=exchange_name(account['exchange'])))
 
+    if is_spot:
+        return _prepare_spot_order(adapter, account, _spot_key(symbol), side, order_type,
+                                   size, price, payload.get('client_order_id'))
+
     info = adapter.contract_info(symbol)
     if not info:
         raise OrderRejected(
-            f'{adapter.name} par {symbol} ke liye contract size nahi mila — order nahi bhej sakte.',
+            f'{adapter.name} par {symbol} has no contract size — cannot send the order.',
             reason='contract_unknown',
         )
 
@@ -2668,35 +2796,37 @@ def prepare_order(*, account, payload, require_live_toggle=True):
     contract_value = _fnum(info.get('contract_value'), 0.0)
     if size_unit in ('base', 'coin', 'coins'):
         if not contract_value:
-            raise OrderRejected('Contract size nahi mila, coins ko contracts mein nahi badal sakte.')
+            raise OrderRejected('Contract size missing; cannot convert coins to contracts.')
         exact = size / contract_value
         contracts = round(exact)
         if abs(exact - contracts) > 1e-9:
             step = contract_value
             raise OrderRejected(
-                f'{symbol} par quantity {step} {info.get("unit") or ""} ke multiple mein honi chahiye '
+                f'{symbol} par quantity {step} {info.get("unit") or ""} must be a multiple of '
                 f'(1 contract = {step}).',
                 reason='size_step',
             )
     else:
         contracts = round(size)
         if abs(size - contracts) > 1e-9:
-            raise OrderRejected('Contracts poore number mein hone chahiye.', reason='size_step')
+            raise OrderRejected('Contracts must be whole numbers.', reason='size_step')
     if contracts < 1:
-        raise OrderRejected('Itni chhoti quantity par ek bhi contract nahi banta.', reason='size_step')
+        raise OrderRejected('Quantity is too small to make even one contract.', reason='size_step')
 
-    # Notional kis bhaav par — limit ka apna price, market ka abhi ka mark.
+    # Notional kis price par — limit ka apna price, market ka abhi ka mark.
     reference = price if order_type == 'limit' else adapter.mark_price(symbol)
     if not reference:
         raise OrderRejected(
-            f'{symbol} ka abhi ka bhaav nahi mila, isliye order ka size check nahi kar sakte.',
+            f'{symbol} mark price is unavailable, so order size cannot be checked.',
             reason='no_price',
         )
     notional = contracts * contract_value * reference
 
     account_cap = _fnum(account.get('max_order_notional'), 0.0) or DEFAULT_MAX_ORDER_NOTIONAL
     cap = min(account_cap, HARD_MAX_ORDER_NOTIONAL)
-    if notional > cap:
+    # Reduce-only order exposure ghata hi sakta hai. Limit ke andar khuli position ki keemat
+    # baad mein limit se upar chali jaaye, tab bhi use band karna rukna nahi chahiye.
+    if notional > cap and not reduce_only:
         raise OrderRejected(
             f'Ye order lagbhag {notional:,.2f} ka hai, aur is account ki limit {cap:,.2f} hai. '
             f'Limit Exchanges page par badal sakte hain.',
@@ -2718,6 +2848,60 @@ def prepare_order(*, account, payload, require_live_toggle=True):
         'base_unit': info.get('unit') or '',
         'reference_price': reference,
         'notional': round(notional, 2),
+        'cap': cap,
+    }
+
+
+def _prepare_spot_order(adapter, account, symbol, side, order_type, qty, price, client_order_id):
+    """
+    Spot order ka hisaab. Yahan contract nahi hote — quantity seedha coins
+    mein hai, aur order value pair ki currency (INR/BTC) mein. Limit USD mein
+    hai, isliye value ko USD mein badal kar milaate hain; warna $500 ki limit
+    INR pair par ₹500 ban jaati.
+    """
+    info = adapter.contract_info(symbol)
+    meta = (info or {}).get('meta')
+    if not meta:
+        raise OrderRejected(f'{symbol} was not found on CoinDCX spot.', reason='contract_unknown')
+    pair = f"{meta['base']}/{meta['quote']}"
+
+    reference = price if order_type == 'limit' else adapter.mark_price(symbol)
+    if not reference:
+        raise OrderRejected(f'{pair} mark price is unavailable, so the order cannot be checked.',
+                            reason='no_price')
+    problem = _spot_order_problem(meta, side, order_type, qty, reference)
+    if problem:
+        raise OrderRejected(problem, reason='spot_rules')
+
+    notional = qty * reference
+    rate = quote_usd_rate(meta['quote'])
+    if not rate:
+        raise OrderRejected(f'{meta["quote"]} USD rate unavailable — cannot check the order limit.',
+                            reason='no_price')
+    notional_usd = notional * rate
+    account_cap = _fnum(account.get('max_order_notional'), 0.0) or DEFAULT_MAX_ORDER_NOTIONAL
+    cap = min(account_cap, HARD_MAX_ORDER_NOTIONAL)
+    if notional_usd > cap:
+        raise OrderRejected(
+            f'Ye order lagbhag ${notional_usd:,.2f} ({notional:,.4f} {meta["quote"]}) ka hai, aur is '
+            f'account ki limit ${cap:,.2f} hai. Limit Exchanges page par badal sakte hain.',
+            reason='notional_cap',
+        )
+    return {
+        'adapter': adapter,
+        'symbol': symbol,
+        'side': side,
+        'order_type': order_type,
+        'contracts': qty,
+        'price': price,
+        'reduce_only': False,
+        'client_order_id': client_order_id,
+        'base_quantity': qty,
+        'base_unit': meta['base'],
+        'quote': meta['quote'],
+        'reference_price': reference,
+        'notional': round(notional, 8),
+        'notional_usd': round(notional_usd, 2),
         'cap': cap,
     }
 
@@ -2818,7 +3002,9 @@ def _tv_webhook_url(token):
 
 def _ensure_tv_token(user):
     """Token pehli baar maangne par hi banta hai, aur DB mein rehta hai."""
-    token = (user.get('tv_token') or '').strip()
+    # g.user mein tv_token hota hi nahi — use padhne se har baar naya token
+    # banta tha aur user ka TradingView URL chupchaap toot jaata tha.
+    token = get_user_tv_token(user['id'])
     if len(token) >= 32:
         return token
     token = secrets.token_urlsafe(32)
@@ -2894,7 +3080,7 @@ def tradingview_webhook(token):
             return jsonify({'success': False, 'error': 'Unknown webhook token'}), 404
         if not _tv_rate_ok(token[:12]):
             return jsonify({'success': False, 'error': 'Bahut zyada signals — ek minute mein '
-                                                       f'{TV_RATE_LIMIT} se zyada nahi.'}), 429
+                                                       f'{TV_RATE_LIMIT} or fewer.'}), 429
 
         payload = request.get_json(silent=True)
         if payload is None:
@@ -2906,7 +3092,7 @@ def tradingview_webhook(token):
             except Exception:
                 return jsonify({
                     'success': False,
-                    'error': 'Alert message JSON hona chahiye. Settings mein diya template use karein.',
+                    'error': 'Alert message must be JSON. Use the template from Settings.',
                     'got': raw,
                 }), 400
 
@@ -2916,7 +3102,7 @@ def tradingview_webhook(token):
             else _primary_exchange_account(user['id'])
         )
         if not account:
-            return jsonify({'success': False, 'error': 'Is account se koi exchange juda nahi hai.'}), 400
+            return jsonify({'success': False, 'error': 'No exchange is linked to this account.'}), 400
 
         mode = 'live' if str(payload.get('mode') or 'live').lower() == 'live' else 'paper'
         result = submit_order(user=user, account=account, payload=payload, source='tradingview', mode=mode)
@@ -2924,7 +3110,7 @@ def tradingview_webhook(token):
     except OrderRejected as rej:
         return jsonify({'success': False, 'error': rej.message, 'reason': rej.reason}), 400
     except (TypeError, ValueError):
-        return jsonify({'success': False, 'error': 'exchange_account_id galat hai'}), 400
+        return jsonify({'success': False, 'error': 'Invalid exchange_account_id'}), 400
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -2950,7 +3136,7 @@ def byok_place_order():
         if not account:
             return jsonify({
                 'success': False,
-                'error': 'Koi exchange juda nahi hai. Pehle Exchanges page se key jodein.',
+                'error': 'No exchange connected. Add a key on the Exchanges page first.',
                 'reason': 'not_connected',
             }), 404
 
@@ -2959,13 +3145,13 @@ def byok_place_order():
         message = (
             'Order exchange par bhej diya gaya'
             if result['mode'] == 'live'
-            else 'Paper order record ho gaya (exchange par nahi bheja gaya)'
+            else 'Paper order recorded (not sent to the exchange)'
         )
         return jsonify({'success': True, 'message': message, 'data': result}), 201
     except OrderRejected as rej:
         return jsonify({'success': False, 'error': rej.message, 'reason': rej.reason}), rej.status
     except (TypeError, ValueError):
-        return jsonify({'success': False, 'error': 'exchange_account_id galat hai'}), 400
+        return jsonify({'success': False, 'error': 'Invalid exchange_account_id'}), 400
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -2988,7 +3174,7 @@ def byok_preview_order():
             else _primary_exchange_account(g.user['id'])
         )
         if not account:
-            return jsonify({'success': False, 'error': 'Koi exchange juda nahi hai.', 'reason': 'not_connected'}), 404
+            return jsonify({'success': False, 'error': 'No exchange is connected.', 'reason': 'not_connected'}), 404
 
         plan = prepare_order(account=account, payload=payload, require_live_toggle=False)
         plan.pop('adapter', None)
@@ -2997,7 +3183,7 @@ def byok_preview_order():
     except OrderRejected as rej:
         return jsonify({'success': False, 'error': rej.message, 'reason': rej.reason}), rej.status
     except (TypeError, ValueError):
-        return jsonify({'success': False, 'error': 'exchange_account_id galat hai'}), 400
+        return jsonify({'success': False, 'error': 'Invalid exchange_account_id'}), 400
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -3025,12 +3211,12 @@ def byok_update_trading_settings(account_id):
             if enable and not account.get('permissions_verified'):
                 return jsonify({
                     'success': False,
-                    'error': 'Pehle key verify hone dein, phir live trading chaalu karein.',
+                    'error': 'Verify the key first, then enable live trading.',
                 }), 400
             if enable and account.get('can_withdraw'):
                 return jsonify({
                     'success': False,
-                    'error': 'Withdrawal-enabled key par live trading chaalu nahi hoti.',
+                    'error': 'Live trading cannot be enabled on a withdrawal-enabled key.',
                 }), 400
             fields['live_trading_enabled'] = enable
         if 'max_order_notional' in payload:
@@ -3040,10 +3226,10 @@ def byok_update_trading_settings(account_id):
             else:
                 value = _fnum(raw, 0.0)
                 if value <= 0:
-                    return jsonify({'success': False, 'error': 'Limit 0 se badi honi chahiye.'}), 400
+                    return jsonify({'success': False, 'error': 'Limit must be greater than 0.'}), 400
                 fields['max_order_notional'] = min(value, HARD_MAX_ORDER_NOTIONAL)
         if not fields:
-            return jsonify({'success': False, 'error': 'Badalne ke liye kuch nahi bheja gaya.'}), 400
+            return jsonify({'success': False, 'error': 'Nothing was sent to update.'}), 400
 
         update_exchange_account_status(account_id, g.user['id'], **fields)
         updated = get_exchange_account_for_user(account_id, g.user['id']) or {}
@@ -3103,7 +3289,7 @@ def byok_positions():
             try:
                 account = get_exchange_account_for_user(int(raw_id), g.user['id'])
             except (TypeError, ValueError):
-                return jsonify({'success': False, 'error': 'exchange_account_id galat hai'}), 400
+                return jsonify({'success': False, 'error': 'Invalid exchange_account_id'}), 400
             if not account:
                 return jsonify({'success': False, 'error': 'Exchange account not found'}), 404
         else:
@@ -3186,67 +3372,607 @@ def byok_cancel_order():
 
 # Delta error code -> (reason slug, user-facing message template).
 # Ye sab "keys setup/usable nahi hain" wale cases hain — inka matlab "no open positions" NAHI hai.
+# Paper account: har user isi virtual USD se shuru karta hai, leverage 1x.
+PAPER_START_USD = 10_000.0
+_PAPER_PRICE_TTL = 5.0
+_paper_prices = {}
+_paper_prices_lock = threading.Lock()
+
+
+def _spot_meta(key):
+    """Spot key ("BTCINR@coindcx-spot") ho to CoinDCX market details, warna None."""
+    sym, spot = split_spot_key(key)
+    return coindcx_spot_markets().get(sym) if spot else None
+
+
+def _spot_key(key):
+    """Spot key ko ek hi roop mein — case alag hone se do positions na ban jayein."""
+    sym, spot = split_spot_key(key)
+    return f"{sym}{SPOT_SUFFIX}" if spot else sym
+
+
+_paper_fx_last = {}
+
+
+def _paper_fx(symbol):
+    """
+    Is symbol ki 1 unit quote kitne USD ki — Delta perps par 1.
+
+    Paper account ek hi USD balance hai, isliye INR/BTC wale spot pair ka
+    paisa abhi ke rate se USD mein ginte hain. Rate na mile to pichhla rate.
+    """
+    meta = _spot_meta(symbol)
+    if meta is None:
+        return 1.0
+    quote = meta['quote']
+    rate = quote_usd_rate(quote)
+    if rate:
+        _paper_fx_last[quote] = rate
+    return rate or _paper_fx_last.get(quote)
+
+
+def _spot_order_problem(meta, side, order_type, qty, price):
+    """CoinDCX ke niyam — paper aur live dono par same, taaki paper jo kare wahi live kare."""
+    pair = f"{meta['base']}/{meta['quote']}"
+    allowed = meta.get('order_types') or ['limit']
+    if order_type not in allowed:
+        return f'{pair} par CoinDCX sirf {" / ".join(allowed)} order leta hai.'
+    step = meta.get('qty_step') or 0
+    if step and abs(round(qty / step) * step - qty) > step * 1e-6:
+        return f'{pair} par quantity {step:g} {meta["base"]} must be a multiple of the step.'
+    if meta.get('min_qty') and qty < meta['min_qty'] - 1e-12:
+        return f'{pair} par kam se kam {meta["min_qty"]:g} {meta["base"]} ka order lagta hai.'
+    max_qty = meta.get('max_qty_market') if order_type == 'market' else meta.get('max_qty')
+    if max_qty and qty > max_qty + 1e-12:
+        return f'{pair} par ek order mein zyada se zyada {max_qty:g} {meta["base"]} lagta hai.'
+    pp = meta.get('price_precision')
+    if order_type == 'limit' and price and pp is not None and abs(round(price, pp) - price) > 1e-12:
+        return f'{pair} par price {pp} decimal tak hi ho sakta hai.'
+    if meta.get('min_notional') and price and qty * price < meta['min_notional'] - 1e-12:
+        return f'{pair} order notional must be at least {meta["min_notional"]:g} {meta["quote"]}.'
+    return None
+
+
+def _paper_price(symbol):
+    """Paper fill aur mark isi price par — perps ke liye Delta, spot ke liye CoinDCX."""
+    now = time.time()
+    with _paper_prices_lock:
+        hit = _paper_prices.get(symbol)
+        if hit and now - hit[1] < _PAPER_PRICE_TTL:
+            return hit[0]
+    price = None
+    sym, spot = split_spot_key(symbol)
+    try:
+        if spot:
+            price = coindcx_spot_price(sym)
+        else:
+            src = get_market_source('delta')
+            t = src.ticker(symbol) if src else None
+            price = _fnum((t or {}).get('price')) or _fnum((t or {}).get('mark_price'))
+    except Exception:
+        price = None
+    if price:
+        with _paper_prices_lock:
+            _paper_prices[symbol] = (price, now)
+    return price or None
+
+
+def _paper_prices_for(symbols):
+    symbols = sorted(set(symbols))
+    if not symbols:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(symbols))) as pool:
+        return dict(zip(symbols, pool.map(_paper_price, symbols)))
+
+
+def _paper_book(orders):
+    """
+    Filled paper orders ko replay karke har symbol ki net position.
+
+    Ek symbol par ek hi position hoti hai (netting). Ulti side ka order pehle
+    position ghataata hai, bacha hua hissa nayi ulti position kholta hai.
+    Jin purane orders ka fill price save nahi hua, unka hisaab nahi ban sakta.
+    """
+    book, realized, _ = _paper_replay(orders)
+    return book, realized
+
+
+def _paper_replay(orders):
+    """`_paper_book` ka poora roop — saath mein har closing fill ka realized P&L."""
+    book = {}
+    realized = 0.0
+    closes = {}
+    fx = {}
+    for o in orders:
+        if o.get('status') != 'filled' or not o.get('price'):
+            continue
+        qty = float(o['quantity'])
+        px = float(o['price'])
+        sign = 1 if o['side'] == 'buy' else -1
+        pos = book.setdefault(o['symbol'], {'qty': 0.0, 'entry': 0.0, 'opened_at': o.get('timestamp')})
+        q = pos['qty']
+        if q == 0 or (q > 0) == (sign > 0):
+            if q == 0:
+                pos['opened_at'] = o.get('timestamp')
+            new_q = q + sign * qty
+            pos['entry'] = (abs(q) * pos['entry'] + qty * px) / abs(new_q)
+            pos['qty'] = new_q
+            continue
+        closing = min(qty, abs(q))
+        if o['symbol'] not in fx:
+            fx[o['symbol']] = _paper_fx(o['symbol']) or 0.0
+        # Quote currency (INR/BTC) se USD — paper balance USD mein hai.
+        pnl = closing * (px - pos['entry']) * (1 if q > 0 else -1) * fx[o['symbol']] + 0.0
+        realized += pnl
+        if o.get('order_id'):
+            closes[o['order_id']] = round(pnl, 4)
+        q += sign * closing
+        rest = qty - closing
+        if abs(q) < 1e-12:
+            q = 0.0
+            pos['entry'] = 0.0
+        if rest > 1e-12:
+            q = sign * rest
+            pos['entry'] = px
+            pos['opened_at'] = o.get('timestamp')
+        pos['qty'] = q
+    return {s: p for s, p in book.items() if p['qty'] != 0}, realized, closes
+
+
+def _paper_account(orders, marks, brackets=None):
+    positions, realized, closes = _paper_replay(orders)
+    brackets = brackets or {}
+    rows = []
+    unrealized = 0.0
+    used = 0.0
+    for symbol, p in positions.items():
+        q, entry = p['qty'], p['entry']
+        mark = marks.get(symbol)
+        meta = _spot_meta(symbol)
+        fx = _paper_fx(symbol) or 0.0
+        # `+ 0.0` taaki flat P&L "-0.00" na dikhe. P&L aur margin USD mein,
+        # entry/mark pair ki apni currency (INR/BTC) mein.
+        upnl = q * (mark - entry) * fx + 0.0 if mark and fx else None
+        if upnl is not None:
+            unrealized += upnl
+        used += abs(q) * entry * fx
+        rows.append({
+            'symbol': symbol,
+            'venue': 'coindcx-spot' if meta else 'delta',
+            'quote': meta['quote'] if meta else 'USD',
+            'side': 'long' if q > 0 else 'short',
+            'size': round(abs(q), 10),
+            'entry_price': round(entry, 10),
+            'mark_price': mark,
+            'move_pct': ((mark - entry) / entry * 100 * (1 if q > 0 else -1) + 0.0) if mark and entry else None,
+            'unrealized_pnl': round(upnl, 4) if upnl is not None else None,
+            'realized_pnl': 0.0,
+            'realized_funding': 0.0,
+            'margin': round(abs(q) * entry * fx, 4),
+            'notional': round(abs(q) * (mark or entry) * fx, 4),
+            'liquidation_price': None,
+            'opened_at': p.get('opened_at'),
+            'stop_loss': (brackets.get(symbol) or {}).get('stop_loss'),
+            'take_profit': (brackets.get(symbol) or {}).get('take_profit'),
+            'targets': _bracket_targets(brackets.get(symbol) or {}),
+            'trail': bool(((brackets.get(symbol) or {}).get('plan') or {}).get('trail')),
+        })
+    cash = PAPER_START_USD + realized
+    equity = cash + unrealized
+    results = list(closes.values())
+    wins = [r for r in results if r > 0]
+    losses = [r for r in results if r < 0]
+    return {
+        'start_balance': PAPER_START_USD,
+        'realized_pnl': round(realized, 4),
+        'unrealized_pnl': round(unrealized, 4),
+        'equity': round(equity, 4),
+        'return_pct': round((equity - PAPER_START_USD) / PAPER_START_USD * 100 + 0.0, 4),
+        'used_margin': round(used, 4),
+        'available': round(max(0.0, equity - used), 4),
+        'positions': rows,
+        'stats': {
+            'closed_trades': len(results),
+            'wins': len(wins),
+            'losses': len(losses),
+            'breakeven': len(results) - len(wins) - len(losses),
+            'win_rate': round(len(wins) / (len(wins) + len(losses)) * 100, 2) if wins or losses else None,
+            'best_trade': max(results) if results else None,
+            'worst_trade': min(results) if results else None,
+            'filled_orders': sum(1 for o in orders if o.get('status') == 'filled' and o.get('price')),
+        },
+        # order_id -> us fill se band hue hisse ka realized P&L
+        'closes': closes,
+    }
+
+
+def _paper_exposure_added(orders, symbol, side, qty):
+    """Is order se position kitni badhegi — ghataane wala hissa free hai."""
+    positions, _ = _paper_book(orders)
+    q = positions.get(symbol, {}).get('qty', 0.0)
+    if q == 0 or (q > 0) == (side == 'buy'):
+        return qty
+    return max(0.0, qty - abs(q))
+
+
+def _paper_fill_check(orders, symbol, side, qty, price):
+    """None = fill ho sakta hai, warna wajah."""
+    meta = _spot_meta(symbol)
+    if meta is not None and side == 'sell':
+        # Spot par short nahi hota — jitna coin paas hai utna hi bikta hai.
+        positions, _ = _paper_book(orders)
+        held = max(0.0, positions.get(symbol, {}).get('qty', 0.0))
+        if qty > held + 1e-12:
+            return (f'Spot par sirf utna bech sakte hain jitna paas hai — '
+                    f'aapke paas {held:g} {meta["base"]} hai.')
+        return None
+    added = _paper_exposure_added(orders, symbol, side, qty)
+    if added <= 0:
+        return None
+    fx = _paper_fx(symbol)
+    if not fx:
+        return f'{meta["quote"] if meta else "USD"} USD rate unavailable — try again shortly.'
+    marks = _paper_prices_for({o['symbol'] for o in orders if o.get('status') == 'filled'} | {symbol})
+    available = _paper_account(orders, marks)['available']
+    needed = added * price * fx
+    if needed > available + 1e-9:
+        return (f'Insufficient paper balance: this order needs ~${needed:,.2f}, '
+                f'available ${available:,.2f}.')
+    return None
+
+
+def _bracket_targets(bracket):
+    """Agla target pehle, phir plan ki bachi hui targets."""
+    plan = bracket.get('plan') or {}
+    rest = [float(p) for p in (plan.get('rest') or []) if p]
+    tp = bracket.get('take_profit')
+    return ([float(tp)] + rest) if tp else rest
+
+
+def _deal_plan(price, stop_loss, targets, trail):
+    dist = abs(float(price) - float(stop_loss)) if trail and stop_loss and price else None
+    if not targets and not dist:
+        return {}
+    return {
+        'rest': [float(p) for p in targets],
+        'entry': float(price) if price else None,
+        'trail': bool(dist),
+        'dist': dist,
+        'armed': False,
+        'extreme': None,
+    }
+
+
+def _targets_problem(side, first, targets):
+    """Har agla target pichhle se aur door, entry ki sahi taraf."""
+    prev = first
+    long = side == 'buy'
+    for price in targets:
+        if price <= 0:
+            return 'Target must be greater than 0.'
+        if prev is None or (price <= prev if long else price >= prev):
+            return 'Har agla target pichhle se door hona chahiye.'
+        prev = price
+    return None
+
+
+def _trailed_stop(bracket, mark, long):
+    """Trail armed ho to stop ko price ke saath khincho. Entry se neeche wapas na jaaye."""
+    plan = dict(bracket.get('plan') or {})
+    if not plan.get('armed') or not plan.get('dist') or not mark:
+        return bracket.get('stop_loss'), plan, False
+    dist = float(plan['dist'])
+    extreme = plan.get('extreme')
+    extreme = mark if extreme is None else (max(float(extreme), mark) if long else min(float(extreme), mark))
+    trailed = extreme - dist if long else extreme + dist
+    entry = plan.get('entry')
+    if entry is not None:
+        trailed = max(trailed, float(entry)) if long else min(trailed, float(entry))
+    sl = bracket.get('stop_loss')
+    tighter = sl is None or (trailed > sl if long else trailed < sl)
+    safe = trailed < mark if long else trailed > mark
+    plan['extreme'] = extreme
+    changed = extreme != (bracket.get('plan') or {}).get('extreme')
+    if tighter and safe:
+        return trailed, plan, True
+    return sl, plan, changed
+
+
+def _bracket_problem(side, ref, stop_loss, take_profit):
+    """Buy/long: SL neeche, Target upar. Sell/short: ulta. `ref` = entry ya abhi ka price."""
+    for name, v in (('Stop loss', stop_loss), ('Target', take_profit)):
+        if v is not None and v <= 0:
+            return f'{name} must be greater than 0.'
+    if not ref:
+        return None
+    long = side == 'buy'
+    if stop_loss is not None and (stop_loss >= ref if long else stop_loss <= ref):
+        return (f'{"Buy/Long" if long else "Sell/Short"} par Stop loss price ({ref:,.6g}) se '
+                f'must be {"below" if long else "above"}.')
+    if take_profit is not None and (take_profit <= ref if long else take_profit >= ref):
+        return (f'{"Buy/Long" if long else "Sell/Short"} par Target price ({ref:,.6g}) se '
+                f'must be {"above" if long else "below"}.')
+    return None
+
+
+def _after_paper_fill(user_id, filled_before, order):
+    """
+    Fill ke baad position ka Target/SL theek karo. Position band ya ulti ho
+    gayi to purana bracket hatao (long ka SL short par turant trigger ho jaata).
+    Order apne saath Target/SL laaya aur position usi side ki hai to wo lagao.
+    """
+    symbol = order['symbol']
+    before = _paper_book(filled_before)[0].get(symbol, {}).get('qty', 0.0)
+    after = _paper_book(filled_before + [dict(order, status='filled')])[0].get(symbol, {}).get('qty', 0.0)
+    brackets = fetch_paper_brackets(user_id)
+    current = brackets.get(symbol) or {}
+    flipped = after == 0 or (before != 0 and (before > 0) != (after > 0))
+    if flipped:
+        current = {}
+    sl, tp = order.get('stop_loss'), order.get('take_profit')
+    plan = dict(current.get('plan') or {})
+    if after != 0 and (after > 0) == (order['side'] == 'buy') and (sl is not None or tp is not None):
+        # Market order plan saath laata hai. Limit fill DB se aata hai — plan place ke waqt likha tha.
+        if 'targets' in order:
+            plan = _deal_plan(order.get('price'), sl, order.get('targets') or [], bool(order.get('trail')))
+        else:
+            plan.pop('pending', None)
+            if order.get('price'):
+                plan['entry'] = float(order['price'])
+        current = {
+            'stop_loss': sl if sl is not None else current.get('stop_loss'),
+            'take_profit': tp if tp is not None else current.get('take_profit'),
+            'plan': plan,
+        }
+    if current != (brackets.get(symbol) or {}):
+        set_paper_bracket(
+            user_id, symbol,
+            stop_loss=current.get('stop_loss'),
+            take_profit=current.get('take_profit'),
+            plan=current.get('plan') or {},
+        )
+
+
+def _settle_paper_limits(user_id):
+    """
+    Pending paper limit orders ko abhi ke price se milao, phir khuli positions
+    ke Target/SL check karo.
+
+    Matching engine background mein nahi chalta — jab bhi user orders/account
+    dekhta hai tab check hota hai. Isliye sirf abhi ka price dekha jaata hai,
+    beech ki wick nahi; SL/Target hit hone par position abhi ke price par band hoti hai.
+    """
+    orders = fetch_user_demo_orders_oldest_first(user_id)
+    pending = [o for o in orders if o['status'] == 'pending' and o.get('price')]
+    brackets = fetch_paper_brackets(user_id)
+    if not pending and not brackets:
+        return orders
+    marks = _paper_prices_for([o['symbol'] for o in pending] + list(brackets))
+    changed = False
+    for o in pending:
+        mark = marks.get(o['symbol'])
+        if not mark:
+            continue
+        limit = float(o['price'])
+        crossed = mark <= limit if o['side'] == 'buy' else mark >= limit
+        if not crossed:
+            continue
+        settled = [x for x in orders if x['status'] == 'filled']
+        reason = _paper_fill_check(settled, o['symbol'], o['side'], float(o['quantity']), limit)
+        changed = True
+        if not claim_pending_demo_order(o['order_id'], user_id=user_id, status='rejected' if reason else 'filled'):
+            continue
+        if not reason:
+            _after_paper_fill(user_id, settled, o)
+        o['status'] = 'rejected' if reason else 'filled'
+
+    brackets = fetch_paper_brackets(user_id) if changed else brackets
+    if brackets:
+        filled = [x for x in orders if x['status'] == 'filled']
+        positions = _paper_book(filled)[0]
+        for symbol, b in brackets.items():
+            q = positions.get(symbol, {}).get('qty', 0.0)
+            if q == 0:
+                waiting = any(o['symbol'] == symbol and o['status'] == 'pending' for o in orders)
+                if not waiting:
+                    set_paper_bracket(user_id, symbol, stop_loss=None, take_profit=None)
+                continue
+            mark = marks.get(symbol) or _paper_price(symbol)
+            if not mark:
+                continue
+            long = q > 0
+            sl, plan, trailed = _trailed_stop(b, mark, long)
+            if trailed:
+                touch_paper_plan(user_id, symbol, stop_loss=sl, plan=plan)
+                b = dict(b, stop_loss=sl, plan=plan)
+                changed = True
+            tp = b.get('take_profit')
+            rest = [float(p) for p in ((b.get('plan') or {}).get('rest') or []) if p]
+            hit = None
+            if sl is not None and (mark <= sl if long else mark >= sl):
+                hit = 'stop_loss'
+            elif tp is not None and (mark >= tp if long else mark <= tp):
+                hit = 'take_profit'
+            if not hit:
+                continue
+            changed = True
+            if hit == 'take_profit' and rest:
+                part = round(abs(q) / (1 + len(rest)), 8)
+                if part <= 0 or part >= abs(q) - 1e-8:
+                    rest = []
+                else:
+                    entry = (b.get('plan') or {}).get('entry')
+                    new_sl = sl
+                    if entry is not None and (float(entry) < mark if long else float(entry) > mark):
+                        if new_sl is None or (float(entry) > new_sl if long else float(entry) < new_sl):
+                            new_sl = float(entry)
+                    new_plan = dict(b.get('plan') or {})
+                    new_plan['rest'] = rest[1:]
+                    new_plan['armed'] = bool(new_plan.get('trail') and new_plan.get('dist'))
+                    new_plan['extreme'] = mark
+                    if not advance_paper_target(
+                        user_id, symbol,
+                        expect_tp=float(tp),
+                        stop_loss=new_sl,
+                        take_profit=float(rest[0]),
+                        plan=new_plan,
+                    ):
+                        continue
+                    save_demo_order_entry({
+                        'order_id': f"ORD_{int(time.time() * 1000)}_{secrets.token_hex(3)}",
+                        'symbol': symbol,
+                        'side': 'sell' if long else 'buy',
+                        'order_type': 'take_profit',
+                        'quantity': part,
+                        'price': mark,
+                        'status': 'filled',
+                        'timestamp': datetime.now().isoformat(),
+                    }, user_id=user_id)
+                    continue
+            if not claim_paper_bracket(user_id, symbol):
+                continue
+            save_demo_order_entry({
+                'order_id': f"ORD_{int(time.time() * 1000)}_{secrets.token_hex(3)}",
+                'symbol': symbol,
+                'side': 'sell' if long else 'buy',
+                'order_type': hit,
+                'quantity': round(abs(q), 10),
+                'price': mark,
+                'status': 'filled',
+                'timestamp': datetime.now().isoformat(),
+            }, user_id=user_id)
+    return fetch_user_demo_orders_oldest_first(user_id) if changed else orders
+
+
+class PaperOrderRejected(Exception):
+    """Paper order nahi laga — message user ko dikhane layak."""
+
+    def __init__(self, message, status=400, reason=None):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+        self.reason = reason
+
+
+def place_paper_order(user_id, data):
+    """
+    Paper order ka poora rasta — desk (`/api/place-order`) aur server ka strategy bot
+    dono isi se jaate hain, taaki bot ki position wahi paper account aur wahi SL/Target
+    engine mein rahe jo desk dikhata hai.
+
+    Returns (order_entry, message). Galti par PaperOrderRejected.
+    """
+    symbol = str(data.get('symbol') or '').strip().upper()
+    side = str(data.get('side') or 'buy').strip().lower()
+    order_type = str(data.get('order_type') or 'market').strip().lower()
+    quantity = _fnum(data.get('quantity'), 0.0)
+    limit_price = _fnum(data.get('price'), 0.0) or None
+    stop_loss = _fnum(data.get('stop_loss'), 0.0) or None
+    take_profit = _fnum(data.get('take_profit'), 0.0) or None
+    targets = []
+    for item in (data.get('targets') or [])[:2]:
+        price = _fnum(item, 0.0) or None
+        if price:
+            targets.append(price)
+    trail = bool(data.get('trail')) and bool(targets)
+
+    if not symbol or quantity <= 0:
+        raise PaperOrderRejected('Symbol aur quantity required hain')
+    if side not in ('buy', 'sell'):
+        raise PaperOrderRejected("side must be 'buy' or 'sell'")
+    if order_type not in ('market', 'limit'):
+        raise PaperOrderRejected("order_type must be 'market' or 'limit'")
+    if order_type == 'limit' and not limit_price:
+        raise PaperOrderRejected('Limit orders require a price')
+
+    symbol = _spot_key(symbol)
+    meta = _spot_meta(symbol)
+    if split_spot_key(symbol)[1] and meta is None:
+        raise PaperOrderRejected(f'{symbol} was not found on CoinDCX spot.')
+    label = f"{meta['base']}/{meta['quote']}" if meta else symbol
+
+    mark = _paper_price(symbol)
+    if not mark:
+        raise PaperOrderRejected(f'{label} mark price is unavailable — try again shortly.', status=503)
+    if meta:
+        problem = _spot_order_problem(meta, side, order_type, quantity, limit_price or mark)
+        if problem:
+            raise PaperOrderRejected(problem, reason='spot_rules')
+
+    marketable = order_type == 'market' or (
+        limit_price >= mark if side == 'buy' else limit_price <= mark
+    )
+    fill_price = mark if marketable else None
+    if meta and side == 'sell' and (stop_loss or take_profit):
+        raise PaperOrderRejected('Target/SL is not used on spot sells — you are selling the coin, not a position.')
+    problem = _bracket_problem(side, fill_price or limit_price, stop_loss, take_profit)
+    if not problem and targets:
+        problem = _targets_problem(side, take_profit, targets)
+    if problem:
+        raise PaperOrderRejected(problem, reason='bracket')
+
+    orders = _settle_paper_limits(user_id)
+    settled = [o for o in orders if o['status'] == 'filled']
+    if marketable or (meta and side == 'sell'):
+        reason = _paper_fill_check(settled, symbol, side, quantity, fill_price)
+        if reason:
+            raise PaperOrderRejected(reason, reason='paper_balance')
+
+    order_entry = {
+        'order_id': f"ORD_{int(time.time() * 1000)}_{secrets.token_hex(3)}",
+        'symbol': symbol,
+        'side': side,
+        'order_type': order_type,
+        'quantity': quantity,
+        'price': fill_price if marketable else limit_price,
+        'status': 'filled' if marketable else 'pending',
+        'stop_loss': stop_loss,
+        'take_profit': take_profit,
+        'targets': targets,
+        'trail': trail,
+        'timestamp': datetime.now().isoformat(),
+    }
+    save_demo_order_entry(order_entry, user_id=user_id)
+    if marketable:
+        _after_paper_fill(user_id, settled, order_entry)
+    elif stop_loss or take_profit:
+        plan = _deal_plan(limit_price, stop_loss, targets, trail)
+        plan['pending'] = True
+        set_paper_bracket(user_id, symbol, stop_loss=stop_loss, take_profit=take_profit, plan=plan)
+
+    message = (
+        f"Paper {side.upper()} {quantity:g} {label} @ {fill_price:,.4f} fill ho gaya"
+        if marketable
+        else f"Paper limit order lag gaya — price {limit_price:,.4f} cross karte hi fill hoga"
+    )
+    return order_entry, message
+
+
 @app.route('/api/place-order', methods=['POST'])
 @require_auth
 def place_order():
     """
-    Paper (demo) order — ye exchange par nahi jaata, sirf record banta hai.
-
-    Auth zaroori hai kyunki order us user ke naam se save hota hai; pehle ye
-    khula tha aur sab orders ek hi common list mein chale jaate the.
+    Paper order — exchange par nahi jaata. Market order abhi ke Delta price
+    par fill hota hai, limit order tab jab price limit cross kare. Position
+    aur P&L isi fill price se bante hain.
     """
     try:
-        data = request.get_json()
-        symbol = data.get('symbol', '')
-        side = data.get('side', 'buy')
-        order_type = data.get('order_type', 'market')
-        quantity = float(data.get('quantity', 0))
-        price = data.get('price', None)
-        
-        if not symbol or quantity <= 0:
-            return jsonify({
-                'success': False,
-                'error': 'Symbol aur quantity required hain'
-            }), 400
-        
-        if order_type == 'limit' and (not price or price <= 0):
-            return jsonify({
-                'success': False,
-                'error': 'Price required for limit orders'
-            }), 400
-        
-        # Demo mode: Simulate order placement
-        order_id = f"ORD_{int(time.time() * 1000)}"
-        
-        order_entry = {
-            'order_id': order_id,
-            'symbol': symbol,
-            'side': side,
-            'order_type': order_type,
-            'quantity': quantity,
-            'price': price,
-            'status': 'filled' if order_type == 'market' else 'pending',
-            'timestamp': datetime.now().isoformat()
-        }
-
-        save_demo_order_entry(order_entry, user_id=g.user['id'])
-        
-        print(f"✅ Order placed: {side} {quantity} {symbol} @ {price or 'Market'}")
-        
+        order_entry, message = place_paper_order(g.user['id'], request.get_json(silent=True) or {})
         return jsonify({
             'success': True,
-            'message': 'Paper order record ho gaya (exchange par nahi bheja gaya)',
+            'message': message,
             'mode': 'paper',
-            'order_id': order_id,
-            'data': order_entry
+            'order_id': order_entry['order_id'],
+            'data': order_entry,
         })
-        
+    except PaperOrderRejected as rej:
+        body = {'success': False, 'error': rej.message}
+        if rej.reason:
+            body['reason'] = rej.reason
+        return jsonify(body), rej.status
     except Exception as e:
-        print(f"❌ Order error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        print(f"❌ Paper order error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/orders', methods=['GET'])
@@ -3254,16 +3980,874 @@ def place_order():
 def get_orders():
     """Sirf isi user ke paper orders."""
     try:
+        _settle_paper_limits(g.user['id'])
         orders = fetch_recent_orders(limit=50, user_id=g.user['id'])
-        return jsonify({
-            'success': True,
-            'data': orders
-        })
+        return jsonify({'success': True, 'data': orders})
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/paper/account', methods=['GET'])
+@require_auth
+def paper_account():
+    """Paper balance, equity, P&L aur open positions."""
+    try:
+        orders = _settle_paper_limits(g.user['id'])
+        filled = [o for o in orders if o['status'] == 'filled']
+        marks = _paper_prices_for({o['symbol'] for o in filled})
+        return jsonify({'success': True, 'data': _paper_account(filled, marks, fetch_paper_brackets(g.user['id']))})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _optional_price(data, key):
+    """(diya gaya?, value) — key hi na ho to 'mat chhedo', null/0 = hata do."""
+    if key not in data:
+        return False, None
+    return True, _fnum(data.get(key), 0.0) or None
+
+
+@app.route('/api/paper/orders/modify', methods=['POST'])
+@require_auth
+def paper_modify_order():
+    """
+    Pending paper order badlo: limit price, quantity, Target/SL, ya type.
+    Market mein badla (ya nayi limit abhi ke price ko cross karti hai) to turant fill.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        order_id = str(data.get('order_id') or '').strip()
+        if not order_id:
+            return jsonify({'success': False, 'error': 'order_id is required'}), 400
+        user_id = g.user['id']
+        orders = _settle_paper_limits(user_id)
+        hit = next((o for o in orders if o['order_id'] == order_id), None)
+        if not hit:
+            return jsonify({'success': False, 'error': 'Order not found'}), 404
+        if hit['status'] != 'pending':
+            return jsonify({
+                'success': False,
+                'error': f"Order {hit['status']} ho chuka hai — ab position ka Target/SL badlein.",
+            }), 400
+
+        symbol, side = hit['symbol'], hit['side']
+        meta = _spot_meta(symbol)
+        label = f"{meta['base']}/{meta['quote']}" if meta else symbol
+        order_type = str(data.get('order_type') or hit['order_type']).strip().lower()
+        if order_type not in ('market', 'limit'):
+            return jsonify({'success': False, 'error': "order_type must be 'market' or 'limit'"}), 400
+        quantity = _fnum(data.get('quantity'), 0.0) if 'quantity' in data else float(hit['quantity'])
+        if quantity <= 0:
+            return jsonify({'success': False, 'error': 'Quantity must be greater than 0'}), 400
+        limit_price = (_fnum(data.get('price'), 0.0) or None) if 'price' in data else hit.get('price')
+        if order_type == 'limit' and not limit_price:
+            return jsonify({'success': False, 'error': 'Limit orders require a price'}), 400
+        sl_given, stop_loss = _optional_price(data, 'stop_loss')
+        tp_given, take_profit = _optional_price(data, 'take_profit')
+        stop_loss = stop_loss if sl_given else hit.get('stop_loss')
+        take_profit = take_profit if tp_given else hit.get('take_profit')
+
+        mark = _paper_price(symbol)
+        if not mark:
+            return jsonify({'success': False, 'error': f'{label} mark price is unavailable — try again shortly.'}), 503
+        if meta:
+            problem = _spot_order_problem(meta, side, order_type, quantity, limit_price or mark)
+            if problem:
+                return jsonify({'success': False, 'error': problem, 'reason': 'spot_rules'}), 400
+        marketable = order_type == 'market' or (limit_price >= mark if side == 'buy' else limit_price <= mark)
+        fill_price = mark if marketable else None
+        problem = _bracket_problem(side, fill_price or limit_price, stop_loss, take_profit)
+        if problem:
+            return jsonify({'success': False, 'error': problem, 'reason': 'bracket'}), 400
+
+        settled = [o for o in orders if o['status'] == 'filled']
+        if marketable or (meta and side == 'sell'):
+            reason = _paper_fill_check(settled, symbol, side, quantity, fill_price)
+            if reason:
+                return jsonify({'success': False, 'error': reason, 'reason': 'paper_balance'}), 400
+
+        if not modify_demo_order(
+            order_id,
+            user_id=user_id,
+            order_type=order_type,
+            quantity=quantity,
+            price=fill_price if marketable else limit_price,
+            status='filled' if marketable else 'pending',
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            only_if_status='pending',
+        ):
+            return jsonify({'success': False, 'error': 'Order just filled or canceled — refresh the list.'}), 409
+        updated = dict(hit, order_type=order_type, quantity=quantity, price=fill_price or limit_price,
+                       status='filled' if marketable else 'pending', stop_loss=stop_loss, take_profit=take_profit)
+        if marketable:
+            _after_paper_fill(user_id, settled, updated)
+        message = (
+            f"Order fill ho gaya — {side.upper()} {quantity:g} {label} @ {fill_price:,.4f}"
+            if marketable
+            else 'Paper order update ho gaya'
+        )
+        return jsonify({'success': True, 'message': message, 'data': updated})
+    except Exception as e:
+        print(f"❌ Paper modify error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/paper/positions/bracket', methods=['POST'])
+@require_auth
+def paper_position_bracket():
+    """Khuli paper position ka Target/SL lagao, badlo ya hatao (null)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        symbol = _spot_key(str(data.get('symbol') or '').strip().upper())
+        if not symbol:
+            return jsonify({'success': False, 'error': 'symbol is required'}), 400
+        user_id = g.user['id']
+        orders = _settle_paper_limits(user_id)
+        filled = [o for o in orders if o['status'] == 'filled']
+        q = _paper_book(filled)[0].get(symbol, {}).get('qty', 0.0)
+        if q == 0:
+            return jsonify({'success': False, 'error': 'No open paper position on this symbol (stop/target may already have hit).'}), 400
+        current = fetch_paper_brackets(user_id).get(symbol) or {}
+        sl_given, stop_loss = _optional_price(data, 'stop_loss')
+        tp_given, take_profit = _optional_price(data, 'take_profit')
+        stop_loss = stop_loss if sl_given else current.get('stop_loss')
+        take_profit = take_profit if tp_given else current.get('take_profit')
+        mark = _paper_price(symbol)
+        # Abhi ke price se tulna — warna galat taraf ka SL agle hi refresh par turant chal jaata.
+        problem = _bracket_problem('buy' if q > 0 else 'sell', mark, stop_loss, take_profit)
+        if problem:
+            return jsonify({'success': False, 'error': problem, 'reason': 'bracket'}), 400
+        set_paper_bracket(user_id, symbol, stop_loss=stop_loss, take_profit=take_profit)
+        if stop_loss is None and take_profit is None:
+            message = 'Target/SL hata diya'
+        else:
+            parts = []
+            if take_profit is not None:
+                parts.append(f'Target {take_profit:,.6g}')
+            if stop_loss is not None:
+                parts.append(f'SL {stop_loss:,.6g}')
+            message = f"{' · '.join(parts)} lag gaya"
+        return jsonify({'success': True, 'message': message, 'data': {'stop_loss': stop_loss, 'take_profit': take_profit}})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/paper/orders/cancel', methods=['POST'])
+@require_auth
+def paper_cancel_order():
+    try:
+        order_id = str((request.get_json(silent=True) or {}).get('order_id') or '').strip()
+        if not order_id:
+            return jsonify({'success': False, 'error': 'order_id is required'}), 400
+        orders = _settle_paper_limits(g.user['id'])
+        hit = next((o for o in orders if o['order_id'] == order_id), None)
+        if not hit:
+            return jsonify({'success': False, 'error': 'Order not found'}), 404
+        if hit['status'] != 'pending':
+            return jsonify({'success': False, 'error': f"Order is {hit['status']}, cannot cancel"}), 400
+        if not claim_pending_demo_order(order_id, user_id=g.user['id'], status='cancelled'):
+            return jsonify({'success': False, 'error': 'Order just filled — cancel did not go through.'}), 409
+        return jsonify({'success': True, 'message': 'Paper order cancel ho gaya'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+_TF_MINUTES = {'15m': 15, '30m': 30, '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440}
+
+
+def _trend_rider_settings(source):
+    """
+    Trend Rider ke inputs — backtest aur bot deploy dono yahi jaanch use karte hain, taaki
+    jo setup backtest mein chala wahi bot ko mile. Returns (capital, risk_pct, params);
+    galti par ValueError (message user ko dikhane layak).
+    """
+    try:
+        capital = float(source.get('capital', 1000))
+        risk_pct = float(source.get('risk_pct', trend_rider.DEFAULTS['risk_pct']))
+        params = {
+            'channel': int(source.get('channel', trend_rider.DEFAULTS['channel'])),
+            'exit_channel': int(source.get('exit_channel', trend_rider.DEFAULTS['exit_channel'])),
+            'stop_atr': float(source.get('stop_atr', trend_rider.DEFAULTS['stop_atr'])),
+            'risk_pct': risk_pct,
+            'allow_shorts': str(source.get('allow_shorts', 'true')).lower() == 'true',
+        }
+        # Pro: weekend signal nahi, aur alt ka trade sirf BTC ke regime ke saath.
+        params['skip_weekend'] = str(source.get('skip_weekend', 'false')).lower() == 'true'
+        params['btc_confirm'] = str(source.get('btc_confirm', 'false')).lower() == 'true'
+        # Steady: pehla profit tp1_r R par, tp1_frac hissa. 0 / khaali = band (normal Trend Rider).
+        tp1_r = float(source.get('tp1_r') or 0)
+        if tp1_r:
+            params['tp1_r'] = tp1_r
+            params['tp1_frac'] = float(source.get('tp1_frac', trend_rider.DEFAULTS['tp1_frac']))
+    except (TypeError, ValueError):
+        raise ValueError('Trend Rider parameters must be numbers.')
+    if params.get('tp1_r') and not (0.5 <= params['tp1_r'] <= 5 and 0.05 <= params['tp1_frac'] <= 0.9):
+        raise ValueError('Pehla profit 0.5–5R par aur 5–90% hissa rakho.')
+    if capital <= 0 or not (0 < risk_pct <= 5):
+        raise ValueError('Capital must be greater than 0 and risk between 0–5%.')
+    if not (5 <= params['channel'] <= 200) or not (3 <= params['exit_channel'] <= params['channel']):
+        raise ValueError('Exit channel 3 se entry channel ke beech, entry channel 5–200.')
+    if not (0.5 <= params['stop_atr'] <= 6):
+        raise ValueError('Stop ATR multiple 0.5–6 ke beech rakho.')
+    return capital, risk_pct, params
+
+
+def _trident_settings(source):
+    """Trident ke inputs — `_trend_rider_settings` jaisa, backtest aur bot deploy dono ke liye."""
+    d = trident.DEFAULTS
+    try:
+        capital = float(source.get('capital', 1000))
+        risk_pct = float(source.get('risk_pct', d['risk_pct']))
+        params = {
+            'h1': int(source.get('h1', d['h1'])),
+            'h2': int(source.get('h2', d['h2'])),
+            'h3': int(source.get('h3', d['h3'])),
+            'stop_atr': float(source.get('stop_atr', d['stop_atr'])),
+            'risk_pct': risk_pct,
+            'allow_shorts': str(source.get('allow_shorts', 'true')).lower() == 'true',
+        }
+    except (TypeError, ValueError):
+        raise ValueError('Trident parameters must be numbers.')
+    if capital <= 0 or not (0 < risk_pct <= 5):
+        raise ValueError('Capital must be greater than 0 and risk between 0–5%.')
+    # Sabse lamba horizon warmup (600 candles) ke andar rehna chahiye.
+    if not (5 <= params['h1'] < params['h2'] < params['h3'] <= 400):
+        raise ValueError('Teeno horizon chhote se bade kram mein, 5–400 candles ke beech.')
+    if not (0.5 <= params['stop_atr'] <= 6):
+        raise ValueError('Stop ATR multiple 0.5–6 ke beech rakho.')
+    return capital, risk_pct, params
+
+
+def _avpt_settings(source):
+    """AVPT (Anchored VWAP Pullback) inputs — PhenLabs port."""
+    d = avpt.DEFAULTS
+    try:
+        capital = float(source.get('capital', 1000))
+        risk_pct = float(source.get('risk_pct', d['risk_pct']))
+        params = {
+            'swing_len': int(source.get('swing_len', d['swing_len'])),
+            'max_pb_per_anchor': int(source.get('max_pb_per_anchor', d['max_pb_per_anchor'])),
+            'min_impulse_atr': float(source.get('min_impulse_atr', d['min_impulse_atr'])),
+            'filter_mode': str(source.get('filter_mode', d['filter_mode'])).lower(),
+            'custom_min_er': float(source.get('custom_min_er', d['custom_min_er'])),
+            'custom_band_sig': float(source.get('custom_band_sig', d['custom_band_sig'])),
+            'target_mode': str(source.get('target_mode', d['target_mode'])).lower(),
+            'sl_buffer_atr': float(source.get('sl_buffer_atr', d['sl_buffer_atr'])),
+            'use_be_ratchet': str(source.get('use_be_ratchet', 'true')).lower() == 'true',
+            'allow_shorts': str(source.get('allow_shorts', 'true')).lower() == 'true',
+            'risk_pct': risk_pct,
+        }
+    except (TypeError, ValueError):
+        raise ValueError('AVPT parameters must be numbers.')
+    if capital <= 0 or not (0 < risk_pct <= 5):
+        raise ValueError('Capital must be greater than 0 and risk between 0–5%.')
+    if not (3 <= params['swing_len'] <= 40):
+        raise ValueError('Swing lookback 3–40 candles ke beech rakho.')
+    if params['filter_mode'] not in avpt.FILTER_IDS:
+        raise ValueError('Unknown AVPT filter_mode.')
+    return capital, risk_pct, params
+
+
+def _trend_rider_history(symbol, timeframe, tf_min, days, exchange):
+    """
+    Window + EMA 200 warmup ki sirf BAND candles — chalu (adhoori) candle par signal repaint
+    hota hai, live bot bhi sirf band candle dekhta hai. Returns (df, times). Galti par ValueError.
+    """
+    warmup_days = math.ceil(trend_rider.WARMUP_BARS * tf_min / 1440) + 1
+    hist = client.get_historical_data_batch(symbol=symbol, interval=timeframe, days=days + warmup_days, exchange_name=exchange)
+    if not hist or 'dataframe' not in hist or len(hist['dataframe']) == 0:
+        raise ValueError(f'{symbol}: could not load history from Delta — check the symbol or network.')
+    df = hist['dataframe'].sort_values('Open Time').drop_duplicates(subset=['Open Time']).reset_index(drop=True)
+    times = np.array([int(pd.Timestamp(t).timestamp() * 1000) for t in df['Open Time']], dtype=np.int64)
+    now_ms = int(time.time() * 1000)
+    if len(times) and times[-1] + tf_min * 60_000 > now_ms:
+        df, times = df.iloc[:-1], times[:-1]
+    return df, times
+
+
+def _is_btc(symbol):
+    return str(symbol).upper().startswith('BTC')
+
+
+def _trend_rider_sleeve(symbol, history, tf_min, days, capital, params, btc_history=None, engine=trend_rider):
+    """
+    Ek coin par Trend Rider / Trident / AVPT. `btc_history` (df, times) Pro ke BTC confirmation
+    ke liye — BTC khud ho ya filter band ho to use nahi hota. Galti par ValueError (message user ke liye).
+    """
+    df, times = history
+    confirm = None
+    if params.get('btc_confirm') and not _is_btc(symbol) and btc_history is not None:
+        confirm = trend_rider.btc_confirm_arrays(times, btc_history[1], btc_history[0]['Close'].to_numpy(), params)
+
+    window_bars = int(days * 1440 / tf_min)
+    if engine is trident:
+        min_warmup = trident.min_bars({**trident.DEFAULTS, **params})
+    elif engine is avpt:
+        min_warmup = avpt.min_bars({**avpt.DEFAULTS, **params})
+    else:
+        min_warmup = trend_rider.DEFAULTS['ema_slow'] + 10
+    if len(df) < min_warmup + 10:
+        raise ValueError(f"{symbol}: not enough history ({len(df)} candles) — indicators ke liye kam se kam {min_warmup + 10} chahiye.")
+    start_index = max(len(df) - window_bars, min_warmup)
+
+    ohlc = (times, df['Open'].to_numpy(), df['High'].to_numpy(), df['Low'].to_numpy(), df['Close'].to_numpy())
+    common = dict(params=params, capital=capital, start_index=start_index, bar_hours=tf_min / 60)
+    if engine is avpt:
+        vol = df['Volume'].to_numpy() if 'Volume' in df.columns else None
+        res = engine.simulate(*ohlc, volume=vol, **common)
+    else:
+        res = engine.simulate(*ohlc, confirm=confirm, **common)
+    res['symbol'] = symbol
+    res['capital'] = capital
+    res['candles'] = len(df) - start_index
+    res['covered_days'] = (times[-1] - times[start_index]) / 86_400_000 if len(times) > start_index else 0
+    return res
+
+
+def _trend_rider_meta(params, engine=trend_rider):
+    if engine is trident:
+        keys = ('h1', 'h2', 'h3', 'stop_atr', 'ema_fast', 'ema_slow', 'allow_shorts')
+    elif engine is avpt:
+        keys = ('swing_len', 'max_pb_per_anchor', 'min_impulse_atr', 'filter_mode',
+                'target_mode', 'sl_buffer_atr', 'use_be_ratchet', 'allow_shorts')
+    else:
+        keys = ('channel', 'exit_channel', 'stop_atr', 'ema_fast', 'ema_slow', 'allow_shorts',
+                'tp1_r', 'tp1_frac', 'skip_weekend', 'btc_confirm')
+    return {
+        'rules': {k: params.get(k) for k in keys},
+        # Fractions of notional (e.g. 0.00059 = 0.059%). Frontend *100 for "%/side" labels.
+        # Pehle yahan *100 ho chuka tha → UI pe 5.9%/side dikh raha tha (100× zyada).
+        'costs': {
+            'fee_pct_per_side': float(trend_rider.FEE_RATE),
+            'slippage_pct_per_side': float(trend_rider.SLIPPAGE),
+            'long_funding_pct_per_8h': float(trend_rider.FUNDING_PER_8H),
+        },
+    }
+
+
+def _trend_rider_counts(trades):
+    wins = sum(1 for t in trades if t['pnl'] > 0)
+    return {
+        'total_trades': len(trades),
+        'winning_trades': wins,
+        'losing_trades': len(trades) - wins,
+        'sl_hits': sum(1 for t in trades if t['status'] == 'SL_HIT'),
+        # Trend Rider: trailing stop; Trident: momentum toota (dono "plan ke hisaab se" exit).
+        'target_hits': sum(1 for t in trades if t['status'] in ('TRAILING_STOP', 'MOMENTUM_EXIT')),
+        'win_rate': round(100 * wins / len(trades), 2) if trades else 0,
+    }
+
+
+def _trend_rider_portfolio(sleeves, capital):
+    """
+    Har coin apne hisse ke capital par alag chalta hai (jaise har coin ka alag paper bot) —
+    portfolio ki equity unka jod hai. Drawdown jode hue curve par, isliye coins ke ek saath
+    na girne ka fayda isi mein dikhta hai.
+    """
+    series = []
+    for s in sleeves:
+        ts = pd.Series([v for _, v in s['equity']], index=[t for t, _ in s['equity']], dtype=float)
+        series.append(ts[~ts.index.duplicated(keep='last')])
+    # Kisi coin ki candle chhoot jaaye to pichhli equity hi maano; window se pehle uska poora hissa.
+    frame = pd.concat(series, axis=1).sort_index().ffill()
+    for col, s in zip(frame.columns, sleeves):
+        frame[col] = frame[col].fillna(s['capital'])
+    total = frame.sum(axis=1)
+    peak = np.maximum.accumulate(np.concatenate([[capital], total.to_numpy()]))[1:]
+    dd = float(((peak - total.to_numpy()) / peak).max()) if len(total) else 0.0
+
+    trades = sorted(
+        ({**t, 'symbol': s['symbol']} for s in sleeves for t in s['trades']),
+        key=lambda t: t['entry_time'],
+    )
+    pnl = np.array([t['pnl'] for t in trades]) if trades else np.array([])
+    gains = float(pnl[pnl > 0].sum()) if len(pnl) else 0.0
+    losses = float(-pnl[pnl < 0].sum()) if len(pnl) else 0.0
+    final = float(total.iloc[-1]) if len(total) else float(capital)
+    sleeve_stats = [s['stats'] for s in sleeves]
+    stats = {
+        'final_equity': round(final, 2),
+        'return_pct': round(100 * (final / capital - 1), 2),
+        'max_drawdown_pct': round(100 * dd, 2),
+        'profit_factor': round(gains / losses, 2) if losses > 0 else (None if gains == 0 else 999.0),
+        'avg_r': round(float(np.mean([t['r_multiple'] for t in trades])), 3) if trades else 0.0,
+        'best_r': round(max(t['r_multiple'] for t in trades), 2) if trades else 0.0,
+        'worst_r': round(min(t['r_multiple'] for t in trades), 2) if trades else 0.0,
+        'fees_paid': round(sum(st['fees_paid'] for st in sleeve_stats), 2),
+        'funding_paid': round(sum(st['funding_paid'] for st in sleeve_stats), 2),
+        'exposure_pct': round(float(np.mean([st['exposure_pct'] for st in sleeve_stats])), 1),
+        # Barabar paisa teeno coins mein daal kar rakh dete to.
+        'buy_hold_pct': round(float(np.mean([st['buy_hold_pct'] for st in sleeve_stats])), 2),
+    }
+    rows = []
+    for s in sleeves:
+        st = s['stats']
+        c = _trend_rider_counts(s['trades'])
+        rows.append({
+            'symbol': s['symbol'],
+            'capital': round(s['capital'], 2),
+            'pnl': round(st['final_equity'] - s['capital'], 2),
+            'return_pct': st['return_pct'],
+            'max_drawdown_pct': st['max_drawdown_pct'],
+            'profit_factor': st['profit_factor'],
+            'trades': c['total_trades'],
+            'win_rate': c['win_rate'],
+            'buy_hold_pct': st['buy_hold_pct'],
+        })
+    curve = [(int(t), float(v)) for t, v in total.items()]
+    return trades, stats, curve, rows
+
+
+def _native_engine(strategy):
+    if strategy == trident.STRATEGY:
+        return trident, 'Trident', _trident_settings
+    if strategy == avpt.STRATEGY:
+        return avpt, 'AVPT', _avpt_settings
+    return trend_rider, 'Trend Rider', _trend_rider_settings
+
+
+def _env_block_from_result(label, res, capital, status='verified'):
+    """Compact validation environment row from a simulate / sleeve result."""
+    st = res.get('stats') or {}
+    trades = res.get('trades') or []
+    counts = _trend_rider_counts(trades)
+    eq = res.get('equity') or []
+    start_ms = int(eq[0][0]) if eq else None
+    end_ms = int(eq[-1][0]) if eq else None
+    period = None
+    if start_ms and end_ms:
+        period = f"{pd.Timestamp(start_ms, unit='ms').strftime('%d %b %Y')} → {pd.Timestamp(end_ms, unit='ms').strftime('%d %b %Y')}"
+    return {
+        'label': label,
+        'status': status,
+        'period': period,
+        'start_ms': start_ms,
+        'end_ms': end_ms,
+        'candles': res.get('candles'),
+        'closed_trades': counts['total_trades'],
+        'net_return_pct': st.get('return_pct'),
+        'max_drawdown_pct': st.get('max_drawdown_pct'),
+        'win_rate': counts['win_rate'],
+        'profit_factor': st.get('profit_factor'),
+        'note': None,
+    }
+
+
+def _trend_rider_oos_and_wfa(symbol, history, tf_min, days, capital, params, btc_history, engine):
+    """
+    Fixed-param out-of-sample (last 20% of trading window) + 4-fold walk-forward.
+    Params are NOT re-optimized — label as fixed-param WFA only.
+    """
+    df, times = history
+    if engine is trident:
+        min_warmup = trident.min_bars({**trident.DEFAULTS, **params})
+    elif engine is avpt:
+        min_warmup = avpt.min_bars({**avpt.DEFAULTS, **params})
+    else:
+        min_warmup = trend_rider.DEFAULTS['ema_slow'] + 10
+    window_bars = int(days * 1440 / tf_min)
+    start_index = max(len(df) - window_bars, min_warmup)
+    trade_len = len(df) - start_index
+    if trade_len < 40:
+        return {
+            'oos': {'status': 'No Data', 'note': 'Too few bars for OOS holdout'},
+            'walk_forward': {'status': 'No Data', 'note': 'Too few bars for walk-forward'},
+        }
+
+    confirm = None
+    if params.get('btc_confirm') and not _is_btc(symbol) and btc_history is not None:
+        confirm = trend_rider.btc_confirm_arrays(times, btc_history[1], btc_history[0]['Close'].to_numpy(), params)
+
+    def _run(si, ei=None):
+        end = ei if ei is not None else len(df)
+        t = times[:end]
+        o = df['Open'].to_numpy()[:end]
+        h = df['High'].to_numpy()[:end]
+        l = df['Low'].to_numpy()[:end]
+        c = df['Close'].to_numpy()[:end]
+        common = dict(params=params, capital=capital, start_index=si, bar_hours=tf_min / 60)
+        if engine is avpt:
+            vol = df['Volume'].to_numpy()[:end] if 'Volume' in df.columns else None
+            res = engine.simulate(t, o, h, l, c, volume=vol, **common)
+        else:
+            conf = None
+            if confirm is not None:
+                conf = confirm[:end] if hasattr(confirm, '__getitem__') else confirm
+            res = engine.simulate(t, o, h, l, c, confirm=conf, **common)
+        res['candles'] = max(0, end - si)
+        return res
+
+    oos_start = start_index + int(0.8 * trade_len)
+    oos_res = _run(oos_start)
+    oos = _env_block_from_result('Out-of-Sample (last 20%)', oos_res, capital, status='verified')
+    oos['note'] = 'Params unchanged from Historical — holdout only; not a separate optimized model'
+
+    n_folds = 4
+    fold_size = trade_len // n_folds
+    folds = []
+    if fold_size >= 15:
+        for i in range(n_folds):
+            fs = start_index + i * fold_size
+            fe = start_index + (i + 1) * fold_size if i < n_folds - 1 else len(df)
+            fres = _run(fs, fe)
+            block = _env_block_from_result(f'Fold {i + 1}', fres, capital, status='verified')
+            folds.append(block)
+        # Aggregate fold metrics (equal weight on return / mean of DDs)
+        rets = [f['net_return_pct'] for f in folds if f.get('net_return_pct') is not None]
+        dds = [f['max_drawdown_pct'] for f in folds if f.get('max_drawdown_pct') is not None]
+        wrs = [f['win_rate'] for f in folds if f.get('win_rate') is not None]
+        trades_n = sum(f.get('closed_trades') or 0 for f in folds)
+        wfa = {
+            'label': 'Walk-Forward (fixed-param)',
+            'status': 'verified',
+            'period': f'{n_folds} contiguous folds · params fixed',
+            'closed_trades': trades_n,
+            'net_return_pct': round(float(np.mean(rets)), 2) if rets else None,
+            'max_drawdown_pct': round(float(np.max(dds)), 2) if dds else None,
+            'win_rate': round(float(np.mean(wrs)), 2) if wrs else None,
+            'profit_factor': None,
+            'note': 'Fixed-param walk-forward — NOT optimized parameter search',
+            'folds': folds,
+        }
+    else:
+        wfa = {'status': 'No Data', 'note': 'Fold size too small for walk-forward'}
+
+    return {'oos': oos, 'walk_forward': wfa}
+
+
+def _trend_rider_backtest(args, symbol, timeframe, days, exchange, strategy='trend-rider'):
+    """
+    Trend Rider / Trident / AVPT ka backtest — P&L capital ke % mein (fees, slippage, funding
+    ke baad). `symbols=BTCUSDT,ETHUSDT,SOLUSDT` diya ho to portfolio: capital barabar baant kar
+    har coin par alag chalata hai. Rules `trend_rider.py` / `trident.py` / `avpt.py` mein.
+    """
+    engine, name, settings_fn = _native_engine(strategy)
+    tf_min = _TF_MINUTES.get(timeframe)
+    if not tf_min:
+        return jsonify({'success': False, 'error': f"{name} does not support {timeframe} — choose 15m to 1d (4h recommended)."}), 400
+    try:
+        capital, risk_pct, params = settings_fn(args)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    symbols = []
+    for raw in str(args.get('symbols') or '').split(','):
+        s = raw.strip().upper()
+        if s and s not in symbols:
+            symbols.append(s)
+    if len(symbols) > 5:
+        return jsonify({'success': False, 'error': 'Portfolio allows at most 5 coins.'}), 400
+    portfolio = len(symbols) >= 2
+    if not portfolio:
+        symbols = [symbol]
+
+    share = capital / len(symbols)
+    # Pro: alt coins ko BTC ka regime chahiye — BTC history ek hi baar laao.
+    need_btc = params.get('btc_confirm') and any(not _is_btc(s) for s in symbols)
+    fetch = list(symbols)
+    btc_key = next((s for s in symbols if _is_btc(s)), None) or 'BTCUSDT'
+    if need_btc and btc_key not in fetch:
+        fetch.append(btc_key)
+    try:
+        with ThreadPoolExecutor(max_workers=len(fetch)) as pool:
+            histories = dict(zip(fetch, pool.map(
+                lambda s: _trend_rider_history(s, timeframe, tf_min, days, exchange), fetch)))
+        btc_history = histories.get(btc_key) if need_btc else None
+        sleeves = [_trend_rider_sleeve(s, histories[s], tf_min, days, share, params, btc_history, engine=engine)
+                   for s in symbols]
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+    meta = _trend_rider_meta(sleeves[0]['params'], engine=engine)
+    common = {
+        'success': True,
+        'strategy': strategy,
+        'exchange': exchange,
+        'timeframe': timeframe,
+        'days_requested': days,
+        'days_covered': round(max(s['covered_days'] for s in sleeves), 2),
+        'total_candles': max(s['candles'] for s in sleeves),
+        'lots': None,
+        'sl_points': None,
+        'target_points': None,
+        'capital': capital,
+        'risk_pct': risk_pct,
+        **meta,
+    }
+
+    # Validation environments — primary sleeve (single or first portfolio coin).
+    try:
+        val_extra = _trend_rider_oos_and_wfa(
+            symbols[0], histories[symbols[0]], tf_min, days, share, params, btc_history, engine)
+    except Exception:
+        val_extra = {
+            'oos': {'status': 'NOT TESTED', 'note': 'OOS computation failed'},
+            'walk_forward': {'status': 'NOT TESTED', 'note': 'Walk-forward computation failed'},
+        }
+
+    if not portfolio:
+        res = sleeves[0]
+        trades = res['trades']
+        hist_block = _env_block_from_result('Historical Backtest', res, capital, status='verified')
+        hist_block['note'] = 'In-sample / full requested window · verified ledger'
+        payload = {
+            **common,
+            **_trend_rider_counts(trades),
+            'symbol': symbol,
+            'total_signals': len(trades) + (1 if res['open_position'] else 0),
+            'total_profit': round(res['stats']['final_equity'] - capital, 2),
+            'trades': trades,
+            'stats': res['stats'],
+            'equity_curve': trend_rider.downsample(res['equity']),
+            'open_position': res['open_position'],
+            'validation': {
+                'historical': hist_block,
+                **val_extra,
+                'paper': {'status': 'No Data', 'note': 'Paper forward is the live Paper panel — not this backtest'},
+                'live': {'status': 'NOT TESTED', 'note': 'Requires real bot fills'},
+            },
+        }
+        if res.get('phenlabs'):
+            payload['phenlabs'] = res['phenlabs']
+        return jsonify(payload)
+
+    trades, stats, curve, rows = _trend_rider_portfolio(sleeves, capital)
+    open_positions = [{**s['open_position'], 'symbol': s['symbol']} for s in sleeves if s['open_position']]
+    hist_block = {
+        'label': 'Historical Backtest',
+        'status': 'verified',
+        'period': None,
+        'closed_trades': len(trades),
+        'net_return_pct': stats.get('return_pct'),
+        'max_drawdown_pct': stats.get('max_drawdown_pct'),
+        'win_rate': _trend_rider_counts(trades)['win_rate'],
+        'profit_factor': stats.get('profit_factor'),
+        'note': 'Portfolio aggregate · verified ledger',
+    }
+    if curve:
+        hist_block['start_ms'] = int(curve[0][0])
+        hist_block['end_ms'] = int(curve[-1][0])
+        hist_block['period'] = (
+            f"{pd.Timestamp(curve[0][0], unit='ms').strftime('%d %b %Y')} → "
+            f"{pd.Timestamp(curve[-1][0], unit='ms').strftime('%d %b %Y')}"
+        )
+    return jsonify({
+        **common,
+        **_trend_rider_counts(trades),
+        'symbol': '+'.join(symbols),
+        'symbols': symbols,
+        'total_signals': len(trades) + len(open_positions),
+        'total_profit': round(stats['final_equity'] - capital, 2),
+        'trades': trades,
+        'stats': stats,
+        'equity_curve': trend_rider.downsample(curve),
+        'open_position': None,
+        'open_positions': open_positions,
+        'portfolio': rows,
+        'validation': {
+            'historical': hist_block,
+            **val_extra,
+            'paper': {'status': 'No Data', 'note': 'Paper forward is the live Paper panel — not this backtest'},
+            'live': {'status': 'NOT TESTED', 'note': 'Requires real bot fills'},
+        },
+    })
+
+
+# ── Strategy bots — server par chalne wala auto-trader (abhi sirf Trend Rider) ──
+#
+# Bot ka executor `bot_worker.py` hai (backend/main.py startup par chalu karta hai); yahan
+# sirf deploy / pause / resume / stop aur list. Live bot ke liye teen switch chahiye:
+# server ka LIVE_ORDERS_ENABLED, account ka live toggle, aur deploy par `confirm_live: true`.
+
+def _bot_view(bot):
+    view = {k: v for k, v in bot.items() if k != 'user_id'}
+    view['events'] = list(reversed(bot['events'][-25:]))
+    view['bar_minutes'] = _TF_MINUTES.get(bot['timeframe'])
+    return view
+
+
+def _bots_payload(user_id):
+    return {
+        'success': True,
+        'data': [_bot_view(b) for b in list_strategy_bots(user_id)],
+        'live_orders_enabled': LIVE_ORDERS_ENABLED,
+        'worker_running': bot_worker.is_running(),
+    }
+
+
+@app.route('/api/bots', methods=['GET'])
+@require_auth
+def list_bots():
+    """User ke saare bots, unke abhi ke trade aur event log ke saath."""
+    try:
+        return jsonify(_bots_payload(g.user['id']))
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/bots', methods=['POST'])
+@require_auth
+def deploy_bot():
+    """
+    Bot deploy — order turant nahi lagta. Replay isi candle se shuru hota hai, aur agla
+    signal aate hi worker entry lagata hai (browser band ho tab bhi).
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        user_id = g.user['id']
+        strategy = str(data.get('strategy') or 'trend-rider').strip().lower()
+        if strategy not in ('trend-rider', 'trend-rider-steady', 'trend-rider-pro', trident.STRATEGY, avpt.STRATEGY):
+            return jsonify({'success': False, 'error': 'Server bots currently support Channel Break / Bank Steady / Rider Pro, Trident and AVPT only.'}), 400
+        if strategy in ('trend-rider-steady', 'trend-rider-pro') and not data.get('tp1_r'):
+            # Steady/Pro ka matlab hi pehla profit hai — research wala default.
+            data = {**data, 'tp1_r': 1.0, 'tp1_frac': data.get('tp1_frac', trend_rider.DEFAULTS['tp1_frac'])}
+        if strategy == 'trend-rider-pro':
+            # Pro ke dono filters research mein saath test hue — dono hamesha on.
+            data = {**data, 'skip_weekend': 'true', 'btc_confirm': 'true'}
+        symbol = _spot_key(str(data.get('symbol') or '').strip().upper())
+        if not symbol:
+            return jsonify({'success': False, 'error': 'symbol is required'}), 400
+        if split_spot_key(symbol)[1]:
+            return jsonify({'success': False, 'error': 'This strategy runs on perps (long/short) — not spot pairs.'}), 400
+        timeframe = str(data.get('timeframe') or '4h').strip()
+        if timeframe not in _TF_MINUTES:
+            return jsonify({'success': False, 'error': f"This strategy does not support {timeframe} — choose 15m to 1d (4h recommended)."}), 400
+        try:
+            if strategy == avpt.STRATEGY:
+                settings = _avpt_settings
+            elif strategy == trident.STRATEGY:
+                settings = _trident_settings
+            else:
+                settings = _trend_rider_settings
+            capital, risk_pct, params = settings(data)
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
+        params.pop('risk_pct', None)
+        # Deployment safety — enforced by bot_worker (Master Spec Part F/J).
+        try:
+            mdl = float(data.get('max_daily_loss_pct', params.get('max_daily_loss_pct', 3)))
+            mls = int(data.get('max_losing_streak', params.get('max_losing_streak', 5)))
+            mpos = int(data.get('max_positions', params.get('max_positions', 1)))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid risk limits (max_daily_loss_pct / max_losing_streak / max_positions).'}), 400
+        if not (0.1 <= mdl <= 50):
+            return jsonify({'success': False, 'error': 'max_daily_loss_pct must be between 0.1 and 50.'}), 400
+        if not (1 <= mls <= 50):
+            return jsonify({'success': False, 'error': 'max_losing_streak must be between 1 and 50.'}), 400
+        if not (1 <= mpos <= 5):
+            return jsonify({'success': False, 'error': 'max_positions must be between 1 and 5.'}), 400
+        params['max_daily_loss_pct'] = mdl
+        params['max_losing_streak'] = mls
+        params['max_positions'] = mpos
+        params.setdefault('_risk', {'day': '', 'day_pnl': 0.0, 'losing_streak': 0, 'paused_reason': ''})
+
+        mode = 'live' if str(data.get('mode') or '').strip().lower() == 'live' else 'paper'
+        account_id = None
+        if mode == 'live':
+            if data.get('confirm_live') is not True:
+                return jsonify({'success': False, 'error': 'A live bot will trade with real money — send confirm_live: true.', 'reason': 'confirm_live'}), 400
+            if not LIVE_ORDERS_ENABLED:
+                return jsonify({'success': False, 'error': 'Live orders are disabled on the server (LIVE_ORDERS_ENABLED). Run a paper bot for now.', 'reason': 'live_disabled'}), 403
+            raw_id = data.get('exchange_account_id')
+            account = (get_exchange_account_for_user(int(raw_id), user_id) if raw_id
+                       else _primary_exchange_account(user_id))
+            if not account or not account.get('is_active'):
+                return jsonify({'success': False, 'error': 'No active exchange account found. Connect a Delta key on the Exchanges page first.', 'reason': 'not_connected'}), 404
+            if account['exchange'] != 'delta':
+                return jsonify({'success': False, 'error': 'Live bots currently only work with a Delta Exchange account.'}), 400
+            if not account.get('live_trading_enabled'):
+                return jsonify({'success': False, 'error': 'Live trading is off for this account. Enable it on the Exchanges page.', 'reason': 'live_trading_disabled'}), 403
+            if not account.get('can_trade') or account.get('can_withdraw'):
+                return jsonify({'success': False, 'error': 'This key cannot run a bot — trading permission is required and withdrawal must be off.'}), 400
+            account_id = account['id']
+
+        existing = find_active_strategy_bot(user_id, symbol)
+        if existing:
+            return jsonify({
+                'success': False,
+                'error': f'{symbol} already has a running bot — one position per symbol. Stop it first.',
+                'reason': 'bot_exists',
+                'data': _bot_view(existing),
+            }), 409
+
+        label = 'LIVE' if mode == 'live' else 'Paper'
+        bot = create_strategy_bot(
+            user_id,
+            strategy=strategy,
+            symbol=symbol,
+            timeframe=timeframe,
+            capital=capital,
+            risk_pct=risk_pct,
+            params=params,
+            mode=mode,
+            exchange_account_id=account_id,
+            status='running',
+            events=[{
+                'at': datetime.now(timezone.utc).isoformat(),
+                'text': f'{label} bot deploy — {symbol} {timeframe}, ${capital:,.0f} par {risk_pct:g}% risk. Waiting for the next signal.',
+            }],
+        )
+        return jsonify({'success': True, 'message': f'{label} bot chalu — browser band ho tab bhi chalega', 'data': _bot_view(bot)}), 201
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Invalid exchange_account_id'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _set_bot_status(bot_id, status, event):
+    bot = get_strategy_bot(bot_id, user_id=g.user['id'])
+    if not bot:
+        return jsonify({'success': False, 'error': 'Bot not found'}), 404
+    if bot['status'] == 'stopped':
+        return jsonify({'success': False, 'error': 'Bot stop ho chuka hai — naya deploy karo.'}), 400
+    with bot_worker.bot_lock(bot_id):
+        update_strategy_bot(bot_id, status=status, events=[event])
+    return jsonify({'success': True, 'data': _bot_view(get_strategy_bot(bot_id))})
+
+
+@app.route('/api/bots/<int:bot_id>/pause', methods=['POST'])
+@require_auth
+def pause_bot(bot_id):
+    """Naya trade nahi khulega; chalu trade ka stop trail aur exit chalta rahega."""
+    return _set_bot_status(bot_id, 'paused', 'Paused — no new entries; open trades keep managing')
+
+
+@app.route('/api/bots/<int:bot_id>/resume', methods=['POST'])
+@require_auth
+def resume_bot(bot_id):
+    return _set_bot_status(bot_id, 'running', 'Resume — agle signal se entry phir chalu (pause ke dauraan wale signal chhoot gaye)')
+
+
+@app.route('/api/bots/<int:bot_id>/stop', methods=['POST'])
+@require_auth
+def stop_bot(bot_id):
+    """
+    Bot band. `flatten` (default true) — chalu position abhi market par band. false — position
+    aur uska stop (paper bracket / exchange stop order) jaise hain waise chhod do.
+    """
+    try:
+        bot = get_strategy_bot(bot_id, user_id=g.user['id'])
+        if not bot:
+            return jsonify({'success': False, 'error': 'Bot not found'}), 404
+        if bot['status'] == 'stopped':
+            return jsonify({'success': True, 'data': _bot_view(bot)})
+        flatten = (request.get_json(silent=True) or {}).get('flatten', True) is not False
+        with bot_worker.bot_lock(bot_id):
+            bot = get_strategy_bot(bot_id)
+            fields, events = {}, []
+            if flatten and bot['trade_state'] in ('open', 'entering'):
+                try:
+                    fields, events = bot_worker.close_bot_trade(sys.modules[__name__], bot, 'Bot stop')
+                except BotOrderError as exc:
+                    return jsonify({'success': False, 'error': f'Could not close position: {exc}. Bot is still running.'}), 502
+            elif bot['trade_state'] == 'open':
+                events.append('Bot stop — position aur uska stop waise hi chhode')
+            events.append('Bot stopped')
+            update_strategy_bot(bot_id, status='stopped', events=events, **fields)
+        return jsonify({'success': True, 'data': _bot_view(get_strategy_bot(bot_id))})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/backtest', methods=['GET'])
@@ -3272,8 +4856,10 @@ def backtest_strategy():
     try:
         strategy_name = (request.args.get('strategy') or 'ema-crossover').strip().lower()
         symbol = request.args.get('symbol', 'BTCUSDT')
-        sl_points = float(request.args.get('sl_points', 400))
-        target_points = float(request.args.get('target_points', 800))
+        # 0 = band. Tab trade opposite signal (EMA) ya din ke end (range) par
+        # band hoti hai — entry price par SL/target lagakar turant exit nahi.
+        sl_points = float(request.args.get('sl_points', 0))
+        target_points = float(request.args.get('target_points', 0))
         lots = max(0.01, float(request.args.get('lots', 1)))  # Position size (lots); default 1
         ema9 = int(request.args.get('ema9', 9))
         ema21 = int(request.args.get('ema21', 21))
@@ -3305,7 +4891,21 @@ def backtest_strategy():
                 'success': False,
                 'error': 'Days must be 700 or less'
             }), 400
-        
+        if sl_points < 0 or target_points < 0:
+            return jsonify({
+                'success': False,
+                'error': 'Stop loss and target must be ≥ 0 (0 = off).'
+            }), 400
+        sl_on = sl_points > 0
+        target_on = target_points > 0
+
+        if strategy_name == 'trend-rider':
+            return _trend_rider_backtest(request.args, symbol, timeframe, days, exchange)
+        if strategy_name == trident.STRATEGY:
+            return _trend_rider_backtest(request.args, symbol, timeframe, days, exchange, strategy=trident.STRATEGY)
+        if strategy_name == avpt.STRATEGY:
+            return _trend_rider_backtest(request.args, symbol, timeframe, days, exchange, strategy=avpt.STRATEGY)
+
         print(f"📊 Starting professional backtest for {symbol}")
         print(f"   Strategy: {strategy_name}")
         print(f"   Parameters: {days} days, {timeframe} timeframe, Lots: {lots}, Exchange: {exchange}")
@@ -3321,7 +4921,7 @@ def backtest_strategy():
         else:
             return jsonify({
                 'success': False,
-                'error': f"Unknown strategy '{strategy_name}'. Use 'ema-crossover' or 'range-breakout'."
+                'error': f"Unknown strategy '{strategy_name}'. Use 'ema-crossover', 'range-breakout', 'trend-rider', 'trident-momentum' or 'avpt-pullback'."
             }), 400
         
         all_candles = []
@@ -3474,6 +5074,34 @@ def backtest_strategy():
                 else:
                     losing_trades += 1
 
+        def _open_position(side, entry_price, entry_time):
+            sign = 1 if side == 'buy' else -1
+            return {
+                'side': side,
+                'entry_price': entry_price,
+                'entry_time': entry_time,
+                'sl': entry_price - sign * sl_points if sl_on else None,
+                'target': entry_price + sign * target_points if target_on else None,
+            }
+
+        def _check_exit(pos, candle):
+            """SL/target hit hua to trade likho aur True do. Jo band hai (None) wo check nahi hota."""
+            if pos['side'] == 'buy':
+                if pos['sl'] is not None and candle['low'] <= pos['sl']:
+                    _append_trade(pos, candle['time'], pos['sl'], 'SL_HIT')
+                    return True
+                if pos['target'] is not None and candle['high'] >= pos['target']:
+                    _append_trade(pos, candle['time'], pos['target'], 'TARGET_HIT')
+                    return True
+            else:
+                if pos['sl'] is not None and candle['high'] >= pos['sl']:
+                    _append_trade(pos, candle['time'], pos['sl'], 'SL_HIT')
+                    return True
+                if pos['target'] is not None and candle['low'] <= pos['target']:
+                    _append_trade(pos, candle['time'], pos['target'], 'TARGET_HIT')
+                    return True
+            return False
+
         if strategy_name == "ema-crossover":
             for i in range(1, len(all_candles)):
                 current = all_candles[i]
@@ -3509,21 +5137,17 @@ def backtest_strategy():
                 ema9_below_both_prev = prev_ema9 < prev_ema21 and prev_ema9 < prev_ema50
 
                 # Check existing position for SL/Target
-                if position:
-                    if position['side'] == 'buy':
-                        if current['low'] <= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['high'] >= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
-                    elif position['side'] == 'sell':
-                        if current['high'] >= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['low'] <= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
+                if position and _check_exit(position, current):
+                    position = None
+
+                # SL ya target band ho to trade kabhi band hi na ho — isliye
+                # ulta crossover hi exit hai (aur wahi candle nayi entry bhi de sakti hai).
+                if position and not (sl_on and target_on):
+                    crossed_down = not ema9_below_both_prev and ema9_below_both_now
+                    crossed_up = not ema9_above_both_prev and ema9_above_both_now
+                    if (position['side'] == 'buy' and crossed_down) or (position['side'] == 'sell' and crossed_up):
+                        _append_trade(position, current['time'], current_price, 'SIGNAL_EXIT')
+                        position = None
 
                 # Check for new signals
                 if not position:
@@ -3541,14 +5165,7 @@ def backtest_strategy():
                                     rsi_filter_pass = False
 
                         if rsi_filter_pass:
-                            entry_price = current_price
-                            position = {
-                                'side': 'buy',
-                                'entry_price': entry_price,
-                                'entry_time': current['time'],
-                                'sl': entry_price - sl_points,
-                                'target': entry_price + target_points
-                            }
+                            position = _open_position('buy', current_price, current['time'])
                             total_trades += 1
 
                     elif not ema9_below_both_prev and ema9_below_both_now:
@@ -3562,14 +5179,7 @@ def backtest_strategy():
                                     rsi_filter_pass = False
 
                         if rsi_filter_pass:
-                            entry_price = current_price
-                            position = {
-                                'side': 'sell',
-                                'entry_price': entry_price,
-                                'entry_time': current['time'],
-                                'sl': entry_price + sl_points,
-                                'target': entry_price - target_points
-                            }
+                            position = _open_position('sell', current_price, current['time'])
                             total_trades += 1
         else:
             # Range Breakout implementation
@@ -3590,13 +5200,8 @@ def backtest_strategy():
                     'success': False,
                     'error': 'range_start must be earlier than range_end (same day, IST).'
                 }), 400
-            if sl_points <= 0 or target_points <= 0:
-                return jsonify({
-                    'success': False,
-                    'error': 'sl_points and target_points must be greater than 0 (range breakout).'
-                }), 400
-
             current_day = None
+            prev_candle = None
             range_high = None
             range_low = None
             range_finalized = False
@@ -3612,6 +5217,10 @@ def backtest_strategy():
                 minutes_local = ts_local.hour * 60 + ts_local.minute
 
                 if current_day != day_key:
+                    # Intraday setup: SL/target band ho to trade din ki aakhri candle par band.
+                    if position and prev_candle and not (sl_on and target_on):
+                        _append_trade(position, prev_candle['time'], prev_candle['close'], 'DAY_END')
+                        position = None
                     current_day = day_key
                     range_high = None
                     range_low = None
@@ -3620,6 +5229,8 @@ def backtest_strategy():
                     breakout_short = None
                     traded_long = False
                     traded_short = False
+
+                prev_candle = current
 
                 # Build the range inside the time window (inclusive start, exclusive end)
                 if start_min <= minutes_local < end_min:
@@ -3634,21 +5245,8 @@ def backtest_strategy():
                     range_finalized = True
 
                 # Manage open position exits first
-                if position:
-                    if position['side'] == 'buy':
-                        if current['low'] <= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['high'] >= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
-                    else:
-                        if current['high'] >= position['sl']:
-                            _append_trade(position, current['time'], position['sl'], 'SL_HIT')
-                            position = None
-                        elif current['low'] <= position['target']:
-                            _append_trade(position, current['time'], position['target'], 'TARGET_HIT')
-                            position = None
+                if position and _check_exit(position, current):
+                    position = None
 
                 if not range_finalized or position:
                     continue
@@ -3668,28 +5266,14 @@ def backtest_strategy():
 
                 if breakout_long and not position:
                     if (not traded_long) and (current['time'] > breakout_long['time']) and current['high'] > breakout_long['high'] and float(current_rsi) > rsi_overbought:
-                        entry_price = float(breakout_long['high'])
-                        position = {
-                            'side': 'buy',
-                            'entry_price': entry_price,
-                            'entry_time': current['time'],
-                            'sl': entry_price - sl_points,
-                            'target': entry_price + target_points
-                        }
+                        position = _open_position('buy', float(breakout_long['high']), current['time'])
                         total_trades += 1
                         traded_long = True
                         breakout_long = None
 
                 if breakout_short and not position:
                     if (not traded_short) and (current['time'] > breakout_short['time']) and current['low'] < breakout_short['low'] and float(current_rsi) < rsi_oversold:
-                        entry_price = float(breakout_short['low'])
-                        position = {
-                            'side': 'sell',
-                            'entry_price': entry_price,
-                            'entry_time': current['time'],
-                            'sl': entry_price + sl_points,
-                            'target': entry_price - target_points
-                        }
+                        position = _open_position('sell', float(breakout_short['low']), current['time'])
                         total_trades += 1
                         traded_short = True
                         breakout_short = None
@@ -3803,7 +5387,7 @@ def index():
     aur order laga sakta tha. Asli UI alag frontend hai.
     """
     return jsonify({
-        'service': 'Mukul Crypto Club API',
+        'service': 'Cryptomantra API',
         'status': 'ok',
         'frontend': os.getenv('FRONTEND_URL', ''),
         'docs': '/api/health',

@@ -3,7 +3,6 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ArrowLeft, UserRound } from "lucide-react";
-
 /**
  * Profile ka data sirf logged-in user ka hai (session token localStorage mein
  * hai), isliye server par render karne ka koi matlab nahi — client-only.
@@ -30,7 +29,7 @@ export default function ProfilePage() {
                 <UserRound className="w-4 h-4" />
               </span>
               <div className="trade-brand-text min-w-0">
-                <div className="trade-brand-kicker">Mukul Crypto Club</div>
+                <div className="trade-brand-kicker">Cryptomantra</div>
                 <div className="trade-brand-line">
                   <h1 className="trade-brand-title truncate">Profile</h1>
                 </div>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, RefreshCw, Waves } from "lucide-react";
 import { fetchIronCondor, optionUnderlying, type CondorResponse, type IronCondor } from "@/lib/cryptoApi";
 import { num, str, type StrategyDef, type StrategyValues } from "@/lib/strategies";
+import PayoffGraph from "@/components/trade/PayoffGraph";
 
 interface Props {
   def: StrategyDef;
@@ -40,10 +41,10 @@ export default function CondorPanel({ def, values }: Props) {
     setError(null);
     try {
       const res = await fetchIronCondor({ underlying, shortDelta, longDelta, maxSpreadPct: maxSpread });
-      if (!res.success) throw new Error(res.error || "Condor load nahi hua");
+      if (!res.success) throw new Error(res.error || "Could not load condor");
       setData(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Condor load nahi hua");
+      setError(err instanceof Error ? err.message : "Could not load condor");
       setData(null);
     } finally {
       setLoading(false);
@@ -104,7 +105,7 @@ export default function CondorPanel({ def, values }: Props) {
           <>
             {ivElevated && (
               <p className="rounded-xl px-4 py-3 text-[12.5px]" style={{ background: "rgba(217,119,6,.08)", border: "1px solid rgba(217,119,6,.3)", color: "var(--amber)" }}>
-                <b>IV elevated hai</b> — short legs {shortIv?.toFixed(0)}% par, aapki limit {maxIv}%.
+                <b>IV is elevated</b> — short legs at {shortIv?.toFixed(0)}%, your limit {maxIv}%.
                 Spec kehta hai aise waqt naye condor entries block karein: ye position short vega hai,
                 IV aur badhi to nuksaan hoga.
               </p>
@@ -156,6 +157,23 @@ export default function CondorPanel({ def, values }: Props) {
               </p>
             </div>
 
+            {/* ── Payoff Graph ──────────────────────────── */}
+            {condor.spot != null && (
+              <PayoffGraph
+                type="condor"
+                spot={condor.spot}
+                longPutStrike={condor.long_put.strike}
+                shortPutStrike={condor.short_put.strike}
+                shortCallStrike={condor.short_call.strike}
+                longCallStrike={condor.long_call.strike}
+                netCredit={condor.net_credit}
+                maxLoss={condor.max_loss}
+                breakevenLow={condor.breakeven_low}
+                breakevenHigh={condor.breakeven_high}
+                underlying={underlying}
+              />
+            )}
+
             {/* ── Net greeks — yahan ulta hai ───────────── */}
             <div>
               <div className="trade-section-label">Net greeks · A aur B se ulta</div>
@@ -166,7 +184,7 @@ export default function CondorPanel({ def, values }: Props) {
                     {fmt(condor.net_theta)}
                   </div>
                   <div className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
-                    {(condor.net_theta ?? 0) > 0 ? "time aapke saath hai" : "time khilaf hai"}
+                    {(condor.net_theta ?? 0) > 0 ? "time on your side" : "time against you"}
                   </div>
                 </div>
                 <div className="trade-stat">

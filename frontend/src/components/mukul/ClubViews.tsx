@@ -73,18 +73,18 @@ export const CLUB_VIEWS: { id: string; label: string }[] = [
 ];
 
 const STRATEGIES: { id: string; name: string; learn: string; rules: StudyRules }[] = [
-  { id: "trend", name: "Strategy 01 — Trend Following", learn: "EMA structure upar ho, aur price usi direction mein ho. Pehle filter, phir trade sochna.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 55, volMult: 1.5 } },
-  { id: "breakout", name: "Strategy 02 — Breakout", learn: "Recent high ke upar close, volume ke saath. Volume na ho to setup incomplete maana jata hai.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 60, volMult: 1.5 } },
-  { id: "momentum", name: "Strategy 03 — Momentum", learn: "RSI strong ho aur chhoti EMA badi EMA ke upar ho. Momentum akele entry nahi hai.", rules: { emaFast: 9, emaSlow: 21, rsiMin: 60, volMult: 1.2 } },
-  { id: "mean", name: "Strategy 04 — Mean Reversion", learn: "Price average se bahut door jaaye to wapas aane ki padhai. Ye simplified study hai, signal service nahi.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 30, volMult: 1 } },
-  { id: "dca", name: "Strategy 05 — DCA", learn: "Fixed INR, fixed schedule. Live automation se pehle API review. Withdrawal permission kabhi on nahi karni.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 45, volMult: 1 } },
+  { id: "trend", name: "Strategy 01 — Trend Following", learn: "EMA structure should be up and price aligned. Filter first, then consider a trade.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 55, volMult: 1.5 } },
+  { id: "breakout", name: "Strategy 02 — Breakout", learn: "Close above recent high with volume. Without volume the setup is incomplete.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 60, volMult: 1.5 } },
+  { id: "momentum", name: "Strategy 03 — Momentum", learn: "Strong RSI and fast EMA above slow EMA. Momentum alone is not an entry.", rules: { emaFast: 9, emaSlow: 21, rsiMin: 60, volMult: 1.2 } },
+  { id: "mean", name: "Strategy 04 — Mean Reversion", learn: "Study mean reversion when price stretches far from average. Simplified study, not a signal service.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 30, volMult: 1 } },
+  { id: "dca", name: "Strategy 05 — DCA", learn: "Fixed INR, fixed schedule. Review API before live automation. Never enable withdrawal permission.", rules: { emaFast: 20, emaSlow: 50, rsiMin: 45, volMult: 1 } },
 ];
 
 const MISSIONS = [
-  { prompt: "BTC 4H chart mein support identify karein.", analysis: "Support wo zone hai jahan price pehle ruk kar buyers aaye the. Swing low aur uske aas-paas ka volume dekhein. Level likhna chart padhne ki practice hai — trade lene ka homework nahi." },
-  { prompt: "ETH par likhein: price EMA 50 ke upar hai ya neeche, aur ek line mein kyun.", analysis: "EMA 50 ek trend filter hai. Upar hona bullish bias ka study note hai, buy order nahi. Neeche hona bhi automatic sell nahi." },
-  { prompt: "SOL ka volume average se upar hai ya neeche? Market Radar se match karke likhein.", analysis: "Volume confirmation ke bina breakout incomplete maana jata hai. Radar ka WHY isi liye sirf score nahi hai." },
-  { prompt: "Ek plan likhein jisme stop pehle se decide ho. Stop idea likhein, order nahi.", analysis: "Stop baad mein hatana journal mein mistake count hota hai. Mission ka jawab plan hai, execution nahi." },
+  { prompt: "Identify support on the BTC 4H chart.", analysis: "Support is where price previously stalled and buyers stepped in. Check swing low and nearby volume. Writing levels is chart-reading practice — not homework to place a trade." },
+  { prompt: "For ETH, write whether price is above or below EMA 50 and why in one line.", analysis: "EMA 50 is a trend filter. Above is a bullish bias note, not a buy order. Below is not an automatic sell." },
+  { prompt: "Is SOL volume above or below average? Match with Market Radar and write.", analysis: "Without volume confirmation a breakout is incomplete. That is why Radar shows WHY, not just a score." },
+  { prompt: "Write a plan with the stop decided upfront. Write the stop idea, not an order.", analysis: "Moving the stop later counts as a journal mistake. The mission answer is a plan, not execution." },
 ];
 
 const CHANNELS: { id: CommunityPost["channel"]; label: string }[] = [
@@ -115,8 +115,8 @@ export function WelcomeView({ club, onOpen }: { club: ClubState; onOpen: (view: 
         <img src="/mukul/mukul-face.webp" alt="Dr. Mukul Agrawal" width={160} height={160} />
         <div>
           <p className="mc-kicker">Verified claim</p>
-          <h1>Welcome to Mukul Crypto Club</h1>
-          <p className="mc-lede">Aapka free access unlock ho gaya. Neeche se koi bhi tool kholiye — poora Trading Desk bhi saath mein hai.</p>
+          <h1>Welcome to Cryptomantra</h1>
+          <p className="mc-lede">Your free access is unlocked. Open any tool below — the full Trading Desk is included.</p>
         </div>
       </div>
       <ul className="mc-access">
@@ -138,7 +138,7 @@ export function WelcomeView({ club, onOpen }: { club: ClubState; onOpen: (view: 
         <Link href="/trade" className="mc-btn">Open Trading Desk</Link>
       </div>
       <p className="mc-fine">
-        Discipline score: {score.total == null ? "abhi data kam hai" : `${score.total}/100`}. Ye trade-count leaderboard nahi hai.
+        Discipline score: {score.total == null ? "not enough data yet" : `${score.total}/100`}. This is not a trade-count leaderboard.
         Exchange confirmation: claim recorded, partner API se match baaki.
       </p>
     </div>
@@ -154,7 +154,7 @@ export function RadarView({ market }: { market: MarketBag }) {
           {market.loading ? "Reading…" : "Refresh"}
         </button>
       </div>
-      <p className="mc-fine">Har coin ka readout educational hai. Buy/sell tip nahi.</p>
+      <p className="mc-fine">Each coin readout is educational. Not buy/sell tips.</p>
       {market.error && <p className="mc-error" role="alert">{market.error}</p>}
       <div className="mc-radar">
         {market.reads.map((row) => (
@@ -186,14 +186,14 @@ export function AlgoView({ market }: { market: MarketBag }) {
   return (
     <div className="mc-panel">
       <h1>Mukul Algo</h1>
-      <p className="mc-lede">MUKUL TREND — signal aur explanation. Auto buy/sell nahi.</p>
+      <p className="mc-lede">MUKUL TREND — signal and explanation. No auto buy/sell.</p>
       <label className="mc-field">
         Coin
         <select value={symbol} onChange={(e) => setSymbol(e.target.value)}>
           {market.reads.map((row) => <option key={row.symbol} value={row.symbol}>{row.base}</option>)}
         </select>
       </label>
-      {!algo && <p className="mc-fine">{market.loading ? "Candles aa rahi hain." : "Is coin ka data abhi nahi mila."}</p>}
+      {!algo && <p className="mc-fine">{market.loading ? "Loading candles…" : "No data for this coin yet."}</p>}
       {algo && (
         <>
           <p className="mc-status" data-status={algo.status}>
@@ -254,7 +254,7 @@ export function AlertsView({ club, market }: { club: ClubState; market: MarketBa
         <label className="mc-check"><input type="checkbox" checked={telegram} onChange={(e) => setTelegram(e.target.checked)} /> Telegram share option</label>
         <button type="submit" className="mc-btn mc-btn-gold">Alert Me</button>
       </form>
-      <p className="mc-fine">Alert club ke andar save hoti hai. Email aur Telegram ke liye ready link tab dikhta hai jab condition meet ho — alag push server abhi connected nahi.</p>
+      <p className="mc-fine">Alerts save inside the club. Email/Telegram share links appear when conditions hit — separate push server not connected yet.</p>
       <ul className="mc-list">
         {club.alerts.map((rule) => {
           const read = market.reads.find((row) => row.symbol === rule.symbol);
@@ -281,7 +281,7 @@ export function AlertsView({ club, market }: { club: ClubState; market: MarketBa
             )}
           </li>
         ))}
-        {!club.notices.length && <li>Abhi koi alert fire nahi hui.</li>}
+        {!club.notices.length && <li>No alerts fired yet.</li>}
       </ul>
     </div>
   );
@@ -306,7 +306,7 @@ export function AnalyzerView({ market }: { market: MarketBag }) {
   return (
     <div className="mc-panel">
       <h1>AI Chart Analyzer</h1>
-      <p className="mc-fine">Chart screenshot aapke note ke saath rehta hai. Checklist live candles se banta hai. Ye guaranteed prediction ya personal financial advice nahi hai.</p>
+      <p className="mc-fine">Chart screenshot stays with your note. Checklist builds from live candles. Not guaranteed prediction or personal financial advice.</p>
       <label className="mc-field">
         Chart screenshot
         <input
@@ -370,7 +370,7 @@ export function BacktestView({ market, preset }: { market: MarketBag; preset?: s
     try {
       const res = await fetchCandles({ symbol, interval: "1d", limit: 400 });
       const study = studyBacktest(res.candles, rules);
-      if (!study) setError("Itni candles nahi mili.");
+      if (!study) setError("Not enough candles.");
       setResult(study);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Backtest fail");
@@ -382,7 +382,7 @@ export function BacktestView({ market, preset }: { market: MarketBag; preset?: s
   return (
     <div className="mc-panel">
       <h1>Backtest</h1>
-      <p className="mc-fine">EMA, RSI aur volume ki simplified long-only study. Poora desk backtester alag se /trade par hai.</p>
+      <p className="mc-fine">Simplified long-only study on EMA, RSI, and volume. Full desk backtester is on /trade.</p>
       <div className="mc-grid-form">
         <label>EMA fast <input type="number" value={rules.emaFast} min={2} onChange={(e) => setRules({ ...rules, emaFast: Number(e.target.value) })} /></label>
         <label>EMA slow <input type="number" value={rules.emaSlow} min={3} onChange={(e) => setRules({ ...rules, emaSlow: Number(e.target.value) })} /></label>
@@ -397,7 +397,7 @@ export function BacktestView({ market, preset }: { market: MarketBag; preset?: s
         </label>
       </div>
       <button type="button" className="mc-btn mc-btn-gold" onClick={run} disabled={running}>{running ? "Running…" : "BACKTEST · 1Y"}</button>
-      <Link href="/trade?tab=backtest" className="mc-btn">Full desk backtester</Link>
+      <Link href="/trade/backtester" className="mc-btn">Full desk backtester</Link>
       {error && <p className="mc-error" role="alert">{error}</p>}
       {result && (
         <dl className="mc-metrics">
@@ -426,7 +426,7 @@ export function PaperView({ club, market }: { club: ClubState; market: MarketBag
   return (
     <div className="mc-panel">
       <h1>Paper Trading</h1>
-      <p className="mc-lede">{inr(PAPER_START_INR)} virtual capital. Real order nahi jaata.</p>
+      <p className="mc-lede">{inr(PAPER_START_INR)} virtual capital. No real orders.</p>
       <dl className="mc-metrics">
         <div><dt>Virtual P&amp;L</dt><dd>{inr(stats.equity - PAPER_START_INR)}</dd></div>
         <div><dt>Equity</dt><dd>{inr(stats.equity)}</dd></div>
@@ -434,7 +434,7 @@ export function PaperView({ club, market }: { club: ClubState; market: MarketBag
         <div><dt>Drawdown</dt><dd>{stats.drawdown.toFixed(1)}%</dd></div>
         <div><dt>Risk/Reward</dt><dd>{stats.rr == null ? "—" : stats.rr.toFixed(2)}</dd></div>
       </dl>
-      <p className="mc-fine">Marks {PAPER_USD_INR} INR per USD ke study rate par hain.</p>
+      <p className="mc-fine">Marks use {PAPER_USD_INR} INR per USD as a study rate.</p>
       <form className="mc-grid-form" onSubmit={(event) => {
         event.preventDefault();
         if (!price) return;
@@ -455,7 +455,7 @@ export function PaperView({ club, market }: { club: ClubState; market: MarketBag
         <label>Amount INR <input type="number" min={100} value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></label>
         <button type="submit" className="mc-btn mc-btn-gold" disabled={!price || amount > club.paperCash}>Paper buy</button>
       </form>
-      <p className="mc-fine">Cash left {inr(club.paperCash)}. Live ticket ke liye <Link href="/trade">Trading Desk</Link>.</p>
+      <p className="mc-fine">Cash left {inr(club.paperCash)}. For live orders <Link href="/trade">Trading Desk</Link>.</p>
       <ul className="mc-list">
         {club.positions.map((pos) => (
           <li key={pos.id}>
@@ -480,8 +480,8 @@ export function RoomView({ market }: { market: MarketBag }) {
         <li>Major setups</li>
         <li>Risk discussion</li>
       </ol>
-      <p>Yahi Market Radar live room ke saath dikhta hai — YouTube par jo padhai hai, wahi yahan numbers mein.</p>
-      <p><a href="https://www.youtube.com/@mukulagrawal/streams" target="_blank" rel="noreferrer">YouTube live / streams kholen</a></p>
+      <p>This is the same Market Radar shown with the live room — the teaching on YouTube, here in numbers.</p>
+      <p><a href="https://www.youtube.com/@mukulagrawal/streams" target="_blank" rel="noreferrer">Open YouTube live / streams</a></p>
       <RadarView market={market} />
     </div>
   );
@@ -494,7 +494,7 @@ export function CommunityView({ club }: { club: ClubState }) {
   return (
     <div className="mc-panel">
       <h1>Private Community</h1>
-      <p className="mc-fine">Seekhne wala room hai. Signal dump nahi.</p>
+      <p className="mc-fine">A learning room. Not a signal dump.</p>
       <div className="mc-chips">
         {CHANNELS.map((item) => (
           <button type="button" key={item.id} data-active={channel === item.id} onClick={() => setChannel(item.id)}>{item.label}</button>
@@ -504,7 +504,7 @@ export function CommunityView({ club }: { club: ClubState }) {
         {posts.map((post) => (
           <li key={post.id}><strong>{post.author}</strong><p>{post.body}</p></li>
         ))}
-        {!posts.length && <li>Is channel par abhi koi note nahi.</li>}
+        {!posts.length && <li>No notes on this channel yet.</li>}
       </ul>
       <form className="mc-form" onSubmit={(event) => {
         event.preventDefault();
@@ -548,7 +548,7 @@ export function ClassesView({ onOpen }: { onOpen: (view: string) => void }) {
   return (
     <div className="mc-panel">
       <h1>Exclusive Classes</h1>
-      <p>Class ka path: video dekho, strategy padho, phir paper par try karo.</p>
+      <p>Path: watch video, read strategy, then try on paper.</p>
       <div className="mc-inline">
         <button type="button" className="mc-btn mc-btn-gold" onClick={() => onOpen("videos")}>Videos</button>
         <button type="button" className="mc-btn" onClick={() => onOpen("library")}>Strategy Library</button>
@@ -569,8 +569,8 @@ export function DcaView({ club, market }: { club: ClubState; market: MarketBag }
     <div className="mc-panel">
       <h1>Free DCA Bot</h1>
       <p className="mc-error" role="note">
-        Live orders band hain jab tak exchange API permissions, security aur compliance review na ho.
-        API key par withdrawal permission kabhi enable mat karna.
+        Live orders are off until exchange API permissions, security, and compliance review complete.
+        Never enable withdrawal permission on the API key.
       </p>
       <form className="mc-grid-form" onSubmit={(event) => {
         event.preventDefault();
@@ -595,7 +595,7 @@ export function DcaView({ club, market }: { club: ClubState; market: MarketBag }
         <button type="submit" className="mc-btn mc-btn-gold">Save paper plan</button>
       </form>
       {club.dca && <p>Next paper date {club.dca.nextDate} · {club.dca.symbol.replace("USDT", "")} · {inr(club.dca.amountInr)}</p>}
-      {saved && <p className="mc-fine">Plan save ho gaya. Exchange par order nahi gaya.</p>}
+      {saved && <p className="mc-fine">Plan saved. No order went to the exchange.</p>}
       <button
         type="button"
         className="mc-btn"
@@ -624,7 +624,7 @@ export function JournalView({ club, market }: { club: ClubState; market: MarketB
         <div><dt>Max Drawdown</dt><dd>{stats.drawdown.toFixed(1)}%</dd></div>
       </dl>
       <h2>Your Mistakes</h2>
-      <p>{stats.stopsMoved} trades mein predefined stop-loss badla gaya.</p>
+      <p>{stats.stopsMoved} trades had the predefined stop-loss moved.</p>
       <ul className="mc-list">
         {club.paperTrades.map((trade) => (
           <li key={trade.id}>
@@ -632,9 +632,9 @@ export function JournalView({ club, market }: { club: ClubState; market: MarketB
             {trade.stopMoved ? " · stop moved" : ""}
           </li>
         ))}
-        {!club.paperTrades.length && <li>Paper trade close hone par journal yahan aata hai. Desk trades /trade par hain.</li>}
+        {!club.paperTrades.length && <li>Journal entries appear here when paper trades close. Desk trades are on /trade.</li>}
       </ul>
-      <Link href="/trade?tab=trades">Desk trades kholen</Link>
+      <Link href="/trade?tab=trades">Open desk trades</Link>
     </div>
   );
 }
@@ -651,7 +651,7 @@ export function ScoreView({ club }: { club: ClubState }) {
     <div className="mc-panel">
       <h1>Mukul Score</h1>
       <p className="mc-score">{score.total == null ? "—" : `${score.total}/100`}</p>
-      <p className="mc-fine">Trading discipline score. Zyada trades karne wale ka leaderboard nahi.</p>
+      <p className="mc-fine">Trading discipline score. Not a leaderboard for most trades.</p>
       <ul className="mc-score-list">
         {rows.map(([label, value]) => (
           <li key={label}>
@@ -706,14 +706,14 @@ export function MissedView({ club }: { club: ClubState }) {
     return (
       <div className="mc-panel">
         <h1>Missed Setup</h1>
-        <p>Radar ek baar refresh hone ke baad yahan replay banta hai.</p>
+        <p>Replay appears here after Radar refreshes at least once.</p>
       </div>
     );
   }
   return (
     <div className="mc-panel">
       <h1>{preview ? "Setup replay preview" : "You missed this setup yesterday."}</h1>
-      <p className="mc-fine">{preview ? "Kal isi saved radar se missed-setup banega. Ye abhi aaj ka study replay hai." : `${row.symbol.replace("USDT", "")} · ${row.setup}`}</p>
+      <p className="mc-fine">{preview ? "Tomorrow’s missed setup will use saved radar. This is today’s study replay." : `${row.symbol.replace("USDT", "")} · ${row.setup}`}</p>
       <ol className="mc-agenda">
         <li>09:30 — Setup forming</li>
         <li>10:05 — Confirmation</li>
@@ -722,9 +722,9 @@ export function MissedView({ club }: { club: ClubState }) {
       <p>{row.why}</p>
       <h2>Why did you miss it?</h2>
       <ul>
-        <li>{hadAlert ? "Alert enabled thi." : "Alert not enabled"}</li>
-        <li>{row.setup === "ALIGNED" ? "Setup study complete tha." : "Setup incomplete"}</li>
-        <li>{checked ? "Dashboard kal khula tha." : "User didn’t check dashboard"}</li>
+        <li>{hadAlert ? "Alert was enabled." : "Alert not enabled"}</li>
+        <li>{row.setup === "ALIGNED" ? "Setup study was complete." : "Setup incomplete"}</li>
+        <li>{checked ? "Dashboard was open yesterday." : "User didn’t check dashboard"}</li>
       </ul>
     </div>
   );

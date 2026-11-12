@@ -90,6 +90,13 @@ CANDLES_RETRIES = 3
 CANDLES_BATCH_LIMIT = 500  # Max candles per request (Delta may cap this)
 AUTH_TIMEOUT = 12
 
+# Har request par naya client banta hai, isliye ye dono process-level hain:
+# product_id kabhi badalta nahi, aur reused connection har call se TLS
+# handshake (~0.1-0.3s) bacha leta hai — screener mein ye 30 baar judta hai.
+_PRODUCT_ID_CACHE = {}
+_PUBLIC_HTTP = requests.Session()
+_PUBLIC_HTTP.mount("https://", requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=16))
+
 
 class DeltaExchangeClient:
     """Delta Exchange India API Client"""
@@ -98,7 +105,7 @@ class DeltaExchangeClient:
         self.api_key = api_key
         self.secret_key = secret_key
         self.base_url = BASE_URL
-        self._product_id_cache = {}  # symbol -> product_id
+        self._product_id_cache = _PRODUCT_ID_CACHE  # symbol -> product_id
         self.last_error = None  # last API error (e.g. 401 expired_signature)
     
     def _get_product_id(self, symbol):
@@ -113,7 +120,7 @@ class DeltaExchangeClient:
         # Try GET /v2/products/{symbol} first (official doc: Get product by symbol)
         try:
             path = f"/v2/products/{delta_symbol}"
-            r = requests.get(self.base_url + path, headers=headers, timeout=CANDLES_TIMEOUT)
+            r = _PUBLIC_HTTP.get(self.base_url + path, headers=headers, timeout=CANDLES_TIMEOUT)
             if r.status_code == 200:
                 data = r.json()
                 if data.get('success') and data.get('result'):
@@ -125,7 +132,7 @@ class DeltaExchangeClient:
             print(f"   ⚠️ Product by symbol failed: {e}")
         # Fallback: fetch products list and find by symbol
         try:
-            r = requests.get(
+            r = _PUBLIC_HTTP.get(
                 self.base_url + "/v2/products",
                 params={"contract_types": "perpetual_futures", "states": "live"},
                 headers=headers,
@@ -208,7 +215,8 @@ class DeltaExchangeClient:
             if method == 'POST':
                 return requests.post(url, headers=headers, json=body, timeout=AUTH_TIMEOUT)
             if method == 'DELETE':
-                return requests.delete(url, headers=headers, timeout=AUTH_TIMEOUT)
+                # `DELETE /v2/orders` id body mein leta hai; bina body wale calls par json=None kuch nahi bhejta.
+                return requests.delete(url, headers=headers, json=body, timeout=AUTH_TIMEOUT)
             return requests.request(method, url, headers=headers, json=body, timeout=AUTH_TIMEOUT)
 
         def parse_server_time_candidates(response_text):
@@ -364,7 +372,7 @@ class DeltaExchangeClient:
     def _request_candles_once(self, path, params, headers):
         """Single candles request with timeout. Returns (candles_list, None) or (None, error_msg)."""
         try:
-            response = requests.get(
+            response = _PUBLIC_HTTP.get(
                 self.base_url + path,
                 params=params,
                 headers=headers,
@@ -434,28 +442,31 @@ class DeltaExchangeClient:
         from_us = from_timestamp_ms * 1000
         to_us = to_timestamp_ms * 1000
         
-        # Build param variants: prefer product_id (Delta doc), fallback symbol
-        product_id = self._get_product_id(symbol)
-        param_sets = []
-        # Delta India candles API expects "start" and "end" (not from/to)
-        if product_id is not None:
-            param_sets.append({"product_id": product_id, "resolution": resolution, "start": from_sec, "end": to_sec})
-            param_sets.append({"product_id": product_id, "resolution": resolution, "start": from_timestamp_ms, "end": to_timestamp_ms})
-            param_sets.append({"product_id": product_id, "resolution": resolution, "start": from_us, "end": to_us})
-        param_sets.append({"symbol": delta_symbol, "resolution": resolution, "start": from_sec, "end": to_sec})
-        param_sets.append({"symbol": delta_symbol, "resolution": resolution, "start": from_timestamp_ms, "end": to_timestamp_ms})
-        param_sets.append({"symbol": delta_symbol, "resolution": resolution, "start": from_us, "end": to_us})
-        
+        # Delta India candles API "start"/"end" seconds mein aur `symbol` ke saath
+        # leta hai — product_id wale variants 400 dete hain. Jo chalta hai wo pehle,
+        # taaki har request teen bekaar round-trip na kare; baaki sirf fallback hain.
+        def _param_sets():
+            yield {"symbol": delta_symbol, "resolution": resolution, "start": from_sec, "end": to_sec}
+            product_id = self._get_product_id(symbol)
+            if product_id is not None:
+                yield {"product_id": product_id, "resolution": resolution, "start": from_sec, "end": to_sec}
+                yield {"product_id": product_id, "resolution": resolution, "start": from_timestamp_ms, "end": to_timestamp_ms}
+                yield {"product_id": product_id, "resolution": resolution, "start": from_us, "end": to_us}
+            yield {"symbol": delta_symbol, "resolution": resolution, "start": from_timestamp_ms, "end": to_timestamp_ms}
+            yield {"symbol": delta_symbol, "resolution": resolution, "start": from_us, "end": to_us}
+
         all_candles = []
+        working_params = None
         last_error = None
         for attempt in range(CANDLES_RETRIES):
-            for params in param_sets:
+            for params in _param_sets():
                 candles, err = self._request_candles_once(path, params, headers)
                 if err:
                     last_error = err
                     continue
                 if candles:
                     all_candles = candles
+                    working_params = params
                     break
             if all_candles:
                 break
@@ -484,13 +495,16 @@ class DeltaExchangeClient:
             return int(t / 1_000_000)
         
         while len(all_candles) >= CANDLES_BATCH_LIMIT:
-            # Assume ascending order (oldest first); oldest is first
-            oldest = all_candles[0]
-            oldest_sec = _ts_to_sec(oldest.get('time', oldest.get('t')))
+            # Delta nayi se purani taraf bhejta hai, isliye order par bharosa nahi —
+            # sabse purana timestamp khud nikalo.
+            stamps = [_ts_to_sec(c.get('time', c.get('t'))) for c in all_candles]
+            stamps = [s for s in stamps if s is not None]
+            oldest_sec = min(stamps) if stamps else None
             if oldest_sec is None or oldest_sec <= from_sec:
                 break
             to_older = oldest_sec - 1
-            params_next = ({"product_id": product_id} if product_id else {"symbol": delta_symbol})
+            params_next = ({"product_id": working_params["product_id"]} if "product_id" in working_params
+                           else {"symbol": delta_symbol})
             params_next["resolution"] = resolution
             params_next["start"] = from_sec
             params_next["end"] = to_older
@@ -499,12 +513,15 @@ class DeltaExchangeClient:
                 break
             # Prepend older candles (avoid duplicates by time)
             existing_ts = {_ts_to_sec(c.get('time', c.get('t'))) for c in all_candles}
+            added = 0
             for c in more:
                 s = _ts_to_sec(c.get('time', c.get('t')))
                 if s is not None and s not in existing_ts:
                     existing_ts.add(s)
                     all_candles.insert(0, c)
-            if len(more) < CANDLES_BATCH_LIMIT:
+                    added += 1
+            # Kuch naya na mila to aage bhi nahi milega — warna ye loop kabhi na ruke.
+            if added == 0 or len(more) < CANDLES_BATCH_LIMIT:
                 break
             time.sleep(0.3)
         
@@ -530,7 +547,9 @@ class DeltaExchangeClient:
             interval_minutes = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
                 '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440, '1w': 10080, '1M': 43200}
             mins = interval_minutes.get(interval, 60)
-            from_ts = to_ts - (limit * mins * 60 * 1000)
+            # 1w x 4000 candles 1950 se pehle chala jaata hai — Delta negative start
+            # par 400 deta hai. 2015 se pehle koi perp tha hi nahi.
+            from_ts = max(1_420_070_400_000, to_ts - (limit * mins * 60 * 1000))
         if start_time:
             print(f"      📅 Requesting from: {start_time} to {end_time}")
         out = self.fetch_historical_data_public(symbol, interval, from_ts, to_ts)
@@ -625,6 +644,50 @@ class DeltaExchangeClient:
         """Order cancel karta hai"""
         endpoint = f"/v2/orders/{order_id}"
         return self._make_request('DELETE', endpoint)
+
+    def place_stop_order(self, symbol, side, quantity, stop_price, client_order_id=None,
+                         trigger_method="last_traded_price"):
+        """
+        Stop-market order (`stop_order_type: stop_loss_order`) — hamesha reduce_only, yaani ye
+        sirf position band kar sakta hai, kabhi nayi nahi kholta. Exchange par pada rehta hai,
+        isliye hamara server band ho tab bhi position bachi rehti hai.
+
+        Trigger `last_traded_price` par: backtest ka stop candle ke low/high (traded price) se
+        lagta hai, mark price se nahi.
+        """
+        body = {
+            'product_symbol': self._delta_symbol(symbol),
+            'size': int(quantity),
+            'side': side,
+            'order_type': 'market_order',
+            'stop_order_type': 'stop_loss_order',
+            'stop_price': str(stop_price),
+            'stop_trigger_method': trigger_method,
+            'reduce_only': True,
+        }
+        if client_order_id:
+            body['client_order_id'] = str(client_order_id)[:64]
+        return self._make_request('POST', "/v2/orders", body=body)
+
+    def edit_stop_order(self, order_id, symbol, stop_price):
+        """`PUT /v2/orders` — pade hue stop order ka stop_price badlo (trailing stop)."""
+        body = {'id': int(order_id), 'product_symbol': self._delta_symbol(symbol), 'stop_price': str(stop_price)}
+        product_id = self._get_product_id(symbol)
+        if product_id is not None:
+            body['product_id'] = product_id
+        return self._make_request('PUT', "/v2/orders", body=body)
+
+    def cancel_order_by_id(self, order_id, symbol):
+        """Documented `DELETE /v2/orders` — id aur product_id body mein."""
+        body = {'id': int(order_id)}
+        product_id = self._get_product_id(symbol)
+        if product_id is not None:
+            body['product_id'] = product_id
+        return self._make_request('DELETE', "/v2/orders", body=body)
+
+    def get_order(self, order_id):
+        """Ek order ki abhi ki haalat (stop order trigger se pehle `pending` rehta hai)."""
+        return self._make_request('GET', f"/v2/orders/{order_id}")
 
 
 class CryptoAPIClient:

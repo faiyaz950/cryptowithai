@@ -35,9 +35,9 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_FILES_PER_UPLOAD = 5;
 
 const AI_SUGGESTIONS = [
-  "Meri portfolio diversification kaisi hai?",
-  "Sabse zyada risk kis holding mein hai?",
-  "Portfolio rebalance karna chahiye toh kya badlun?",
+  "How diversified is my portfolio?",
+  "Which holding has the most risk?",
+  "If I should rebalance, what should I change?",
   "Mere portfolio par tax ka kya impact hoga?",
 ];
 
@@ -182,7 +182,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
       try {
         const result = await parsePortfolioFile(file);
         if (!result.holdingsReady.length && !result.rawText?.trim()) {
-          failed.push(`${file.name} — ${result.errors[0] ?? "koi data nahi mila"}`);
+          failed.push(`${file.name} — ${result.errors[0] ?? "no data found"}`);
           continue;
         }
         const imported = importPortfolioFile(result, file.size);
@@ -197,7 +197,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
     reloadData();
 
     if (!holdingsAdded && !docsConnected) {
-      setUpload({ status: "error", message: failed.join(" · ") || "File process nahi ho payi" });
+      setUpload({ status: "error", message: failed.join(" · ") || "Could not process file" });
       return;
     }
 
@@ -251,7 +251,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
   };
 
   const handleClearAll = () => {
-    if (!confirm("Saari files aur portfolio data remove karein? Yeh undo nahi hoga.")) return;
+    if (!confirm("Remove all files and portfolio data? This cannot be undone.")) return;
     clearPortfolio();
     reloadData();
   };
@@ -264,7 +264,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
   const handleAnalyze = () => {
     const prompt = holdings.length
       ? buildPortfolioPrompt(priced, usdInr)
-      : "Meri uploaded portfolio file analyze karo — allocation, risk aur improvements batao.";
+      : "Analyze my uploaded portfolio file — allocation, risk, and improvements.";
     goToChat(prompt);
   };
 
@@ -329,7 +329,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
             <svg className="w-10 h-10 mx-auto mb-3" style={{ color: "var(--accent)" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <p className="text-base font-semibold">Portfolio file yahan drop karein</p>
+            <p className="text-base font-semibold">Drop portfolio file here</p>
             <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>CSV · Excel · PDF</p>
           </div>
         </div>
@@ -383,9 +383,9 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
             disabled={upload.status === "parsing"}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
             style={{
-              background: "linear-gradient(135deg, #005a8e, #19a2dd)",
+              background: "linear-gradient(135deg, #c2410c, #f97316)",
               color: "#ffffff",
-              boxShadow: "0 4px 12px rgba(25, 162, 221, 0.22)",
+              boxShadow: "0 4px 12px rgba(249, 115, 22, 0.22)",
               opacity: upload.status === "parsing" ? 0.6 : 1,
             }}>
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -443,7 +443,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
               upload.status === "error"
                 ? { background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)", color: "#dc2626" }
                 : upload.status === "success"
-                ? { background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(25, 162, 221, 0.22)", color: "var(--accent)" }
+                ? { background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(249, 115, 22, 0.22)", color: "var(--accent)" }
                 : { background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-secondary)" }
             }
           >
@@ -468,12 +468,12 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
           <>
             <div className="card-elevated rounded-2xl p-8 sm:p-12 text-center">
               <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5"
-                style={{ background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(25, 162, 221, 0.22)" }}>
+                style={{ background: "rgba(37, 99, 235, 0.1)", border: "1px solid rgba(249, 115, 22, 0.22)" }}>
                 <svg className="w-8 h-8" style={{ color: "var(--accent)" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>
-              <h2 className="text-lg font-bold mb-2">Portfolio file se connect karein</h2>
+              <h2 className="text-lg font-bold mb-2">Connect via portfolio file</h2>
               <p className="text-sm max-w-md mx-auto mb-6" style={{ color: "var(--text-secondary)" }}>
                 Apne broker ka holdings ya statement file upload karo — Mukul AI usse padh kar
                 aapke portfolio ke har sawaal ka jawab dega.
@@ -492,7 +492,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                 <svg className="w-8 h-8 mx-auto mb-3" style={{ color: "var(--accent)" }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
-                <p className="text-sm font-semibold mb-1">File yahan drop karein ya click karke select karein</p>
+                <p className="text-sm font-semibold mb-1">Drop a file here or click to select</p>
                 <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
                   Zerodha, Groww, Upstox, Angel One — kisi bhi broker ka export chalega
                 </p>
@@ -514,8 +514,8 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
             {/* How it works */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
-                { step: "1", title: "File upload karein", desc: "Broker se holdings/statement download karke yahan add karo", icon: "📄" },
-                { step: "2", title: "Data auto-parse hota hai", desc: "Holdings, quantity aur buy price file se nikal aate hain", icon: "⚡" },
+                { step: "1", title: "Upload file", desc: "Download holdings/statement from your broker and add here", icon: "📄" },
+                { step: "2", title: "Data auto-parses", desc: "Holdings, quantity, and buy price are extracted from the file", icon: "⚡" },
                 { step: "3", title: "AI se poochhein", desc: "Diversification, risk, P&L — apne data par based jawab", icon: "✨" },
               ].map((s) => (
                 <div key={s.step} className="card-elevated rounded-2xl p-5">
@@ -535,7 +535,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                100% secure — aapka data sirf aapke browser mein rehta hai, kahin upload nahi hota
+                100% secure — your data stays in your browser only, never uploaded
               </span>
             </div>
           </>
@@ -613,7 +613,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <p>
-                  File se structured holdings nahi mili, lekin document AI se connected hai —
+                  No structured holdings from file, but the document is connected to AI —
                   neeche se apne portfolio ke baare mein kuch bhi poochh sakte hain.
                 </p>
               </div>
@@ -655,7 +655,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                   value={askText}
                   onChange={(e) => setAskText(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleAsk(askText)}
-                  placeholder="Ya apna sawaal likhein — jaise 'IT stocks mein kitna paisa laga hai?'"
+                  placeholder="Or type your question — e.g. 'How much is in IT stocks?'"
                   className="flex-1 px-3.5 py-2.5 rounded-xl text-sm outline-none min-w-0"
                   style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
                   onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(37, 99, 235, 0.32)")}
@@ -666,7 +666,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                   disabled={!askText.trim()}
                   className="px-4 py-2.5 rounded-xl text-sm font-semibold transition-all flex-shrink-0"
                   style={{
-                    background: askText.trim() ? "linear-gradient(135deg, #005a8e, #19a2dd)" : "var(--bg-hover)",
+                    background: askText.trim() ? "linear-gradient(135deg, #c2410c, #f97316)" : "var(--bg-hover)",
                     color: askText.trim() ? "#ffffff" : "var(--text-muted)",
                   }}
                 >
@@ -678,9 +678,9 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                 <button
                   onClick={handleAnalyze}
                   className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
-                  style={{ background: "linear-gradient(135deg, #005a8e, #19a2dd)", color: "#ffffff", boxShadow: "0 4px 16px rgba(25, 162, 221, 0.22)" }}
+                  style={{ background: "linear-gradient(135deg, #c2410c, #f97316)", color: "#ffffff", boxShadow: "0 4px 16px rgba(249, 115, 22, 0.22)" }}
                   onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 4px 24px rgba(37, 99, 235, 0.28)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(25, 162, 221, 0.22)"; }}>
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(249, 115, 22, 0.22)"; }}>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                   </svg>
@@ -719,7 +719,7 @@ export default function PortfolioDesk({ embedded = false }: { embedded?: boolean
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                   </svg>
-                  Aur file add karein
+                  Add another file
                 </button>
               </div>
             </section>

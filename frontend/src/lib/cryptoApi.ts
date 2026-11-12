@@ -61,6 +61,7 @@ export type CryptoInterval = (typeof CRYPTO_INTERVALS)[number]["value"];
 const INTERVAL_MINUTES: Record<string, number> = {
   "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
   "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720, "1d": 1440,
+  "1w": 10080, "1M": 43200,
 };
 
 /**
@@ -145,7 +146,21 @@ export interface MarketInfo {
   source?: "ticker" | "candles";
   exchange?: string;
   exchange_name?: string;
+  /** Sirf CoinDCX spot par — order ke niyam. */
+  spot?: SpotRules | null;
   error?: string;
+}
+
+export interface SpotRules {
+  base: string;
+  quote: string;
+  /** 1 quote = itne USD (INR par ~0.011). */
+  quote_usd: number | null;
+  qty_step: number | null;
+  min_qty: number | null;
+  /** Quote currency mein. */
+  min_notional: number | null;
+  order_types: ("limit" | "market")[];
 }
 
 /** Chart kis exchange se aa sakta hai — backend `/api/market/sources` se. */
@@ -159,22 +174,28 @@ export const DEFAULT_MARKET_SOURCES: MarketSourceInfo[] = [
   {
     id: "delta",
     name: "Delta Exchange India",
-    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "1d", "1w", "1M"],
   },
   {
     id: "coindcx",
     name: "CoinDCX",
-    intervals: ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    intervals: ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"],
   },
   {
     id: "bybit",
     name: "Bybit",
-    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    intervals: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w", "1M"],
+  },
+  {
+    id: "coindcx-spot",
+    name: "CoinDCX Spot",
+    intervals: ["1m", "15m", "1h", "1d", "1w", "1M"],
   },
 ];
 
 export function venueShort(exchangeId: string | null | undefined): string {
   const id = (exchangeId || "delta").toLowerCase();
+  if (id === "coindcx-spot") return "CoinDCX Spot";
   if (id === "coindcx") return "CoinDCX";
   if (id === "bybit") return "Bybit";
   if (id === "delta") return "Delta";
@@ -197,6 +218,9 @@ export interface DemoOrder {
   timestamp?: string;
   size?: number;
   limit_price?: number;
+  /** Paper: order ke saath diya Target/SL — fill par position par lagta hai. */
+  stop_loss?: number | null;
+  take_profit?: number | null;
 }
 
 export interface BacktestTrade {
@@ -209,9 +233,22 @@ export interface BacktestTrade {
   target?: number;
   pnl: number;
   pnl_points: number;
+  /**
+   * Grid basket (Buy Grid Recovery): saare legs ka P&L, un legs ki kul raqam ke % mein.
+   * Basket mein pehli buy se exit ka price move nateeja nahi batata — ye batata hai.
+   */
+  pnl_pct?: number;
   status: string;
+  /** Trend Rider: coin quantity aur risk ke multiple mein nateeja. */
+  quantity?: number;
+  r_multiple?: number;
+  bars_held?: number;
   /** Options backtest: legs + expiry, jaise "+C76000 · 16 Sep". */
   instrument?: string;
+  /** Portfolio backtest mein ye trade kis coin ka hai. */
+  symbol?: string;
+  /** Steady: is trade mein pehla profit book hua. */
+  tp1_hit?: boolean;
   symbols?: string[];
   spot?: number;
   iv?: number;
@@ -258,11 +295,145 @@ export interface BacktestResult {
     target_points: number;
   } | null;
   options?: OptionsBacktestInfo;
+  /** Trend Rider: capital ke hisaab se poora hisaab (fees, slippage, funding ke baad). */
+  capital?: number;
+  risk_pct?: number;
+  stats?: BacktestStats;
+  /** [time ms, equity] — max ~400 points. */
+  equity_curve?: [number, number][];
+  open_position?: BacktestOpenPosition | null;
+  /** Portfolio backtest: har coin ka hisaab, aur un sab ke chalu trades. */
+  symbols?: string[];
+  portfolio?: BacktestPortfolioRow[];
+  open_positions?: (BacktestOpenPosition & { symbol: string })[];
+  rules?: {
+    /** Trend Rider ke — Trident ke result mein nahi aate. */
+    channel?: number;
+    exit_channel?: number;
+    /** Trident: teen momentum horizon (candles). */
+    h1?: number;
+    h2?: number;
+    h3?: number;
+    stop_atr?: number;
+    ema_fast?: number;
+    ema_slow?: number;
+    allow_shorts?: boolean;
+    tp1_r?: number | null;
+    tp1_frac?: number | null;
+    skip_weekend?: boolean;
+    btc_confirm?: boolean;
+    /** AVPT */
+    swing_len?: number;
+    max_pb_per_anchor?: number;
+    min_impulse_atr?: number;
+    filter_mode?: string;
+    target_mode?: string;
+    sl_buffer_atr?: number;
+    use_be_ratchet?: boolean;
+  };
+  /** Fractions of notional (0.00059 = 0.059%). UI multiplies by 100 for "%/side". */
+  costs?: { fee_pct_per_side: number; slippage_pct_per_side: number; long_funding_pct_per_8h: number };
+  /**
+   * Separate testing environments (Master Spec Part I).
+   * Paper / live stay NOT TESTED until real fills exist — never fabricate.
+   */
+  validation?: {
+    historical?: ValidationEnvBlock;
+    oos?: ValidationEnvBlock;
+    walk_forward?: ValidationEnvBlock & { folds?: ValidationEnvBlock[] };
+    paper?: ValidationEnvBlock;
+    live?: ValidationEnvBlock;
+  };
   error?: string;
 }
 
+export interface ValidationEnvBlock {
+  label?: string;
+  status: "PASS" | "FAIL" | "NOT TESTED" | "No Data" | "verified";
+  period?: string;
+  start_ms?: number;
+  end_ms?: number;
+  candles?: number;
+  closed_trades?: number;
+  net_return_pct?: number | null;
+  max_drawdown_pct?: number | null;
+  win_rate?: number | null;
+  profit_factor?: number | null;
+  note?: string;
+  folds?: ValidationEnvBlock[];
+}
+
+export interface BacktestStats {
+  final_equity: number;
+  return_pct: number;
+  max_drawdown_pct: number;
+  /** null = koi trade nahi; 999 = koi loss nahi. */
+  profit_factor: number | null;
+  avg_r: number;
+  best_r: number;
+  worst_r: number;
+  fees_paid: number;
+  funding_paid: number;
+  exposure_pct: number;
+  /** Usi window mein coin khareed ke rakhte to. */
+  buy_hold_pct: number;
+}
+
+export interface BacktestPortfolioRow {
+  symbol: string;
+  capital: number;
+  pnl: number;
+  return_pct: number;
+  max_drawdown_pct: number;
+  profit_factor: number | null;
+  trades: number;
+  win_rate: number;
+  buy_hold_pct: number;
+}
+
+export interface BacktestOpenPosition {
+  side: "buy" | "sell";
+  entry_time: number;
+  entry_price: number;
+  stop_loss: number;
+  initial_stop: number;
+  quantity: number;
+  unrealized_pnl: number;
+  /** Grid basket: khule legs ka P&L un legs ki kul raqam ke % mein (pnl_pct jaisa). */
+  unrealized_pct?: number;
+  mark_price: number;
+}
+
 export interface BacktestParams {
-  strategy: "ema-crossover" | "range-breakout";
+  strategy: "ema-crossover" | "range-breakout" | "trend-rider" | "trident-momentum" | "avpt-pullback";
+  /** Trend Rider: capital ($) aur har trade ka risk (%) — P&L inhi par banta hai. */
+  capital?: number;
+  risk_pct?: number;
+  channel?: number;
+  exit_channel?: number;
+  stop_atr?: number;
+  allow_shorts?: boolean;
+  /** Trend Rider portfolio: "BTCUSDT,ETHUSDT,SOLUSDT" — capital barabar baant kar sab par saath. */
+  symbols?: string;
+  /** Steady: pehla profit kitne R par aur kitna hissa (0–1). */
+  tp1_r?: number;
+  tp1_frac?: number;
+  /** Pro: weekend signal nahi, aur alt ka trade BTC ke regime ke saath. */
+  skip_weekend?: boolean;
+  btc_confirm?: boolean;
+  /** Trident: chhota / beech ka / lamba momentum horizon (candles). */
+  h1?: number;
+  h2?: number;
+  h3?: number;
+  /** AVPT (Anchored VWAP Pullback) knobs. */
+  swing_len?: number;
+  filter_mode?: string;
+  min_impulse_atr?: number;
+  sl_buffer_atr?: number;
+  target_mode?: string;
+  use_be_ratchet?: boolean;
+  custom_min_er?: number;
+  custom_band_sig?: number;
   symbol: string;
   timeframe: string;
   days: number;
@@ -305,6 +476,8 @@ export async function fetchCandles(params: {
   emaPeriods?: number[];
   /** Chart ka source — connected exchange. Default delta. */
   exchange?: string;
+  /** Is time (ms) se pehle ki candles. Scroll-back history ke liye. */
+  end?: number;
 }): Promise<CandlesResponse> {
   const q = new URLSearchParams({
     symbol: params.symbol,
@@ -314,6 +487,7 @@ export async function fetchCandles(params: {
     include_rsi: "true",
     exchange: params.exchange || "delta",
   });
+  if (params.end) q.set("end", String(params.end));
   return cryptoFetch<CandlesResponse>(`/candles?${q}`);
 }
 
@@ -375,8 +549,13 @@ export async function placeDemoOrder(
     order_type: "market" | "limit";
     quantity: number;
     price?: number | null;
+    stop_loss?: number | null;
+    take_profit?: number | null;
+    /** Pehle target ke baad ke targets. Paper deal inhe ek-ek karke kaat-ta hai. */
+    targets?: number[];
+    trail?: boolean;
   },
-): Promise<{ success: boolean; order_id?: string; error?: string }> {
+): Promise<{ success: boolean; order_id?: string; message?: string; error?: string; data?: DemoOrder }> {
   return cryptoFetch("/place-order", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -389,6 +568,203 @@ export async function fetchDemoOrders(token: string): Promise<DemoOrder[]> {
     headers: { Authorization: `Bearer ${token}` },
   });
   return data.data ?? [];
+}
+
+/** Paper positions exchange positions jaisi hi shape mein aati hain, taaki UI ek hi rahe. */
+export interface PaperPosition {
+  symbol: string;
+  /** "coindcx-spot" par entry/mark pair ki currency mein; P&L aur margin hamesha USD. */
+  venue?: string;
+  quote?: string;
+  side: "long" | "short";
+  size: number;
+  entry_price: number;
+  mark_price: number | null;
+  move_pct: number | null;
+  unrealized_pnl: number | null;
+  realized_pnl: number;
+  realized_funding: number;
+  margin: number;
+  /** Size × mark (mark na mile to entry). */
+  notional: number;
+  liquidation_price: number | null;
+  opened_at: string | null;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  /** Agla target pehle, phir bache hue. */
+  targets?: number[];
+  trail?: boolean;
+}
+
+export interface PaperStats {
+  closed_trades: number;
+  wins: number;
+  losses: number;
+  breakeven: number;
+  /** Sirf jeet/haar wale trades par — barabar wale ginti mein nahi. */
+  win_rate: number | null;
+  best_trade: number | null;
+  worst_trade: number | null;
+  filled_orders: number;
+}
+
+export interface PaperAccount {
+  start_balance: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  equity: number;
+  return_pct: number;
+  used_margin: number;
+  available: number;
+  positions: PaperPosition[];
+  stats: PaperStats;
+  /** order_id → us fill se band hue hisse ka realized P&L. */
+  closes: Record<string, number>;
+}
+
+export async function fetchPaperAccount(token: string): Promise<PaperAccount> {
+  const data = await cryptoFetch<{ success: boolean; data: PaperAccount }>("/paper/account", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return data.data;
+}
+
+export async function cancelPaperOrder(token: string, orderId: string): Promise<void> {
+  await cryptoFetch("/paper/orders/cancel", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ order_id: orderId }),
+  });
+}
+
+/** Pending paper order badlo. Jo field na bhejo wo waisa hi rehta; Target/SL ko null = hatao. */
+export async function modifyPaperOrder(
+  token: string,
+  payload: {
+    order_id: string;
+    order_type?: "market" | "limit";
+    quantity?: number;
+    price?: number | null;
+    stop_loss?: number | null;
+    take_profit?: number | null;
+  },
+): Promise<{ success: boolean; message?: string; data?: DemoOrder }> {
+  return cryptoFetch("/paper/orders/modify", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Khuli paper position ka Target/SL. null = hatao. */
+export async function setPaperBracket(
+  token: string,
+  payload: { symbol: string; stop_loss: number | null; take_profit: number | null },
+): Promise<{ success: boolean; message?: string }> {
+  return cryptoFetch("/paper/positions/bracket", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+/* ── Server strategy bots — backend worker chalata hai, browser band ho tab bhi ── */
+
+export interface StrategyBotEvent {
+  at: string;
+  text: string;
+}
+
+export interface StrategyBot {
+  id: number;
+  strategy: string;
+  symbol: string;
+  timeframe: string;
+  capital: number;
+  risk_pct: number;
+  params: Record<string, number | boolean>;
+  mode: "paper" | "live";
+  exchange_account_id: number | null;
+  /** paused = naya trade nahi, chalu trade ka stop/exit chalta rehta hai. */
+  status: "running" | "paused" | "stopped";
+  started_at: string;
+  /** Abhi wale trade ki entry candle (ms) — trade ki pehchaan. */
+  entry_time: number | null;
+  trade_state: "" | "entering" | "open" | "closed" | "skipped";
+  side: "" | "long" | "short";
+  quantity: number | null;
+  entry_price: number | null;
+  stop_loss: number | null;
+  stop_order_id: string;
+  /** Steady: pehle profit ka level aur kya wo hissa book ho chuka. */
+  tp1_price: number | null;
+  tp1_done: boolean;
+  last_bar_time: number | null;
+  last_run_at: string | null;
+  last_error: string;
+  /** Sabse naya pehle. */
+  events: StrategyBotEvent[];
+  created_at: string | null;
+  updated_at: string | null;
+  bar_minutes: number | null;
+}
+
+export interface StrategyBotsResponse {
+  success: boolean;
+  data: StrategyBot[];
+  live_orders_enabled: boolean;
+  /** false = server par worker nahi chal raha (BOT_WORKER=0 ya serverless) — bot trade nahi karega. */
+  worker_running: boolean;
+}
+
+export async function fetchStrategyBots(token: string): Promise<StrategyBotsResponse> {
+  return cryptoFetch("/bots", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export async function deployStrategyBot(
+  token: string,
+  payload: {
+    strategy: string;
+    symbol: string;
+    timeframe: string;
+    capital: number;
+    risk_pct: number;
+    mode: "paper" | "live";
+    confirm_live?: boolean;
+    exchange_account_id?: number;
+    /** Trend Rider / Trident knobs — server ignores unknown keys. */
+    [key: string]: string | number | boolean | undefined;
+  },
+): Promise<{ success: boolean; message?: string; data: StrategyBot }> {
+  return cryptoFetch("/bots", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function setStrategyBotStatus(
+  token: string,
+  botId: number,
+  action: "pause" | "resume",
+): Promise<{ success: boolean; data: StrategyBot }> {
+  return cryptoFetch(`/bots/${botId}/${action}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+/** `flatten` true = chalu position abhi market par band; false = position aur stop waise hi rehne do. */
+export async function stopStrategyBot(
+  token: string,
+  botId: number,
+  flatten: boolean,
+): Promise<{ success: boolean; data: StrategyBot }> {
+  return cryptoFetch(`/bots/${botId}/stop`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ flatten }),
+  });
 }
 
 
@@ -414,6 +790,33 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
     range_timezone: params.range_timezone,
     exchange: "delta",
   });
+  const extra = {
+    capital: params.capital,
+    risk_pct: params.risk_pct,
+    channel: params.channel,
+    exit_channel: params.exit_channel,
+    stop_atr: params.stop_atr,
+    allow_shorts: params.allow_shorts,
+    symbols: params.symbols,
+    tp1_r: params.tp1_r,
+    tp1_frac: params.tp1_frac,
+    skip_weekend: params.skip_weekend,
+    btc_confirm: params.btc_confirm,
+    h1: params.h1,
+    h2: params.h2,
+    h3: params.h3,
+    swing_len: params.swing_len,
+    filter_mode: params.filter_mode,
+    min_impulse_atr: params.min_impulse_atr,
+    sl_buffer_atr: params.sl_buffer_atr,
+    target_mode: params.target_mode,
+    use_be_ratchet: params.use_be_ratchet,
+    custom_min_er: params.custom_min_er,
+    custom_band_sig: params.custom_band_sig,
+  };
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined) q.set(key, String(value));
+  }
   return cryptoFetch<BacktestResult>(`/backtest?${q}`);
 }
 
@@ -421,7 +824,7 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
 export async function fetchOptionsBacktestCandles(symbol: string, timeframe: string, days: number): Promise<Candle[]> {
   const q = new URLSearchParams({ symbol, timeframe, days: String(days) });
   const res = await cryptoFetch<{ success: boolean; candles?: Candle[]; error?: string }>(`/options/backtest/candles?${q}`);
-  if (!res.success) throw new Error(res.error || "Candles nahi mili");
+  if (!res.success) throw new Error(res.error || "Could not load candles");
   return res.candles ?? [];
 }
 
@@ -720,6 +1123,80 @@ export async function fetchFunding(symbols?: string[]): Promise<FundingResponse>
   return cryptoFetch<FundingResponse>(`/funding${qs ? `?${qs}` : ""}`);
 }
 
+export interface MarketTicker {
+  /** App ka key, jaise "BTCUSDT" — chart/candles isi se chalte hain. */
+  symbol: string;
+  base: string;
+  name: string;
+  price: number | null;
+  mark_price: number | null;
+  change_24h: number | null;
+  high_24h: number | null;
+  low_24h: number | null;
+  volume_24h: number;
+  turnover_usd: number;
+  oi_value_usd: number;
+  funding_rate: number | null;
+}
+
+/**
+ * Delta ke saare USD perpetuals. Purane backend par ye route nahi hai, to
+ * funding endpoint se desk ke majors par fallback hota hai.
+ */
+export async function fetchMarketTickers(): Promise<MarketTicker[]> {
+  try {
+    const res = await cryptoFetch<{ success: boolean; tickers?: MarketTicker[]; error?: string }>("/market/tickers");
+    if (res.success && res.tickers?.length) return res.tickers;
+    throw new Error(res.error || "tickers empty");
+  } catch {
+    const res = await fetchFunding(CRYPTO_SYMBOLS.map((s) => s.value));
+    if (!res.success) throw new Error(res.error || "Could not load market data");
+    return res.rates
+      .map((r) => {
+        const base = fundingBase(r.symbol);
+        return {
+          symbol: `${base}USDT`,
+          base,
+          name: base,
+          price: r.mark_price,
+          mark_price: r.mark_price,
+          change_24h: r.change_24h,
+          high_24h: null,
+          low_24h: null,
+          volume_24h: 0,
+          turnover_usd: r.turnover_usd,
+          oi_value_usd: r.oi_value_usd,
+          funding_rate: r.funding_rate,
+        };
+      })
+      .sort((a, b) => b.turnover_usd - a.turnover_usd);
+  }
+}
+
+export interface SpotTicker {
+  /** CoinDCX ka naam, jaise "BTCINR" / "ETHBTC" — chart isi se chalta hai. */
+  symbol: string;
+  base: string;
+  quote: string;
+  name: string;
+  price: number | null;
+  change_24h: number | null;
+  high_24h: number | null;
+  low_24h: number | null;
+  /** 24h turnover quote currency mein (BTCINR par rupaye). */
+  turnover_quote: number;
+}
+
+/** CoinDCX ke saare spot pairs. Purane backend par khaali list. */
+export async function fetchSpotTickers(): Promise<SpotTicker[]> {
+  try {
+    const res = await cryptoFetch<{ success: boolean; tickers?: SpotTicker[] }>("/market/spot-tickers");
+    return res.success ? res.tickers ?? [] : [];
+  } catch {
+    return [];
+  }
+}
+
 function fundingBase(symbol: string): string {
   return symbol.toUpperCase().replace(/USDT$|USD$/, "");
 }
@@ -776,7 +1253,16 @@ export function syncStamp(at: Date = new Date()): string {
   return deskClock(at);
 }
 
-export function symbolLabel(symbol: string): string {
+/** CoinDCX spot ke quote — lambe suffix pehle, warna "USDT" ko "…T" + "USD" samajh liya jaata. */
+export const SPOT_QUOTES = ["USDT", "USDC", "INR", "BTC", "ETH", "TRX"] as const;
 
+export function symbolLabel(symbol: string): string {
+  // Spot order/watchlist key: "THETAINR@coindcx-spot" -> "THETA/INR".
+  const at = symbol.indexOf("@");
+  if (at >= 0) {
+    const sym = symbol.slice(0, at).toUpperCase();
+    const q = SPOT_QUOTES.find((x) => sym.endsWith(x) && sym.length > x.length);
+    return q ? `${sym.slice(0, -q.length)}/${q}` : sym;
+  }
   return CRYPTO_SYMBOLS.find((s) => s.value === symbol)?.label ?? symbol.replace(/USDT?$/, "/USD");
 }

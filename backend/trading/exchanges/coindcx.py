@@ -17,12 +17,18 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import time
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from .base import ExchangeAdapter, fnum
+from .market import coindcx_spot_markets, coindcx_spot_price, split_spot_key
+
+# json.dumps 0.00001 ko "1e-05" likhta hai — exchange quantity mein ye nahi leta.
+_SCI_NUMBER = re.compile(r'(?<=[:\[,])(-?\d+(?:\.\d+)?[eE]-?\d+)(?=[,\]}])')
 
 BASE_URL = "https://api.coindcx.com"
 TIMEOUT = 15
@@ -42,6 +48,7 @@ class CoinDCXAdapter(ExchangeAdapter):
         payload = dict(body or {})
         payload["timestamp"] = int(time.time() * 1000)
         json_body = json.dumps(payload, separators=(",", ":"))
+        json_body = _SCI_NUMBER.sub(lambda m: format(Decimal(m.group(1)), "f"), json_body)
         signature = hmac.new(
             self.secret_key.encode("utf-8"), json_body.encode("utf-8"), hashlib.sha256
         ).hexdigest()
@@ -82,6 +89,14 @@ class CoinDCXAdapter(ExchangeAdapter):
             reason = "rate_limited"
         else:
             reason = None
+            # Order ki galti (balance kam, price range ke bahar) JSON ke
+            # "message" mein aati hai — wahi user ko dikhana kaam ka hai.
+            try:
+                msg = (res.json() or {}).get("message")
+            except Exception:
+                msg = None
+            if msg:
+                text = f"CoinDCX: {msg}"
         return self.fail(reason, text)
 
     # ── interface ──────────────────────────────────────────
@@ -179,6 +194,74 @@ class CoinDCXAdapter(ExchangeAdapter):
                 created_at=o.get("created_at"),
             ))
         return out
+
+    # ── spot orders ────────────────────────────────────────
+    #
+    # Desk se CoinDCX par sirf spot order lagta hai ("BTCINR@coindcx-spot").
+    # Futures symbol yahan aaye to contract_info None deta hai aur order
+    # wahin ruk jaata hai — warna "BTCUSDT" perp ka order galti se spot par
+    # chala jaata.
+
+    @staticmethod
+    def _spot(symbol: str) -> Optional[Dict[str, Any]]:
+        sym, spot = split_spot_key(symbol)
+        meta = coindcx_spot_markets().get(sym) if spot else None
+        return {**meta, "market": sym} if meta else None
+
+    def contract_info(self, symbol: str) -> Optional[Dict[str, Any]]:
+        meta = self._spot(symbol)
+        if not meta:
+            return None
+        return {
+            "contract_value": 1.0,
+            "unit": meta["base"],
+            "tick_size": 10 ** -meta.get("price_precision", 0),
+            "spot": True,
+            "meta": meta,
+        }
+
+    def mark_price(self, symbol: str) -> Optional[float]:
+        meta = self._spot(symbol)
+        return coindcx_spot_price(meta["market"]) if meta else None
+
+    def place_order(self, **kw) -> Optional[Dict[str, Any]]:
+        meta = self._spot(kw.get("symbol") or "")
+        if not meta:
+            return self.fail("order_not_supported")
+        order_type = str(kw.get("order_type") or "limit").lower()
+        qty = round(float(kw.get("contracts") or 0), int(meta.get("qty_precision") or 0))
+        body: Dict[str, Any] = {
+            "side": str(kw.get("side") or "").lower(),
+            "order_type": f"{order_type}_order",
+            "market": meta["market"],
+            "total_quantity": qty,
+        }
+        if order_type == "limit":
+            body["price_per_unit"] = round(float(kw.get("price") or 0), int(meta.get("price_precision") or 0))
+        if kw.get("client_order_id"):
+            body["client_order_id"] = str(kw["client_order_id"])[:36]
+        data = self._post("/exchange/v1/orders/create", body)
+        if data is None:
+            return None
+        rows = data.get("orders") if isinstance(data, dict) else None
+        o = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
+        if not o or not o.get("id"):
+            return self.fail(None, json.dumps(data)[:400])
+        return self.order_result(
+            order_id=o.get("id"),
+            symbol=meta["market"],
+            side=o.get("side") or body["side"],
+            order_type=order_type,
+            size=o.get("total_quantity") or qty,
+            price=o.get("price_per_unit") or o.get("avg_price"),
+            state=o.get("status") or "open",
+        )
+
+    def cancel_order(self, order_id):
+        data = self._post("/exchange/v1/orders/cancel", {"id": str(order_id)})
+        if data is None:
+            return None
+        return {"order_id": str(order_id), "state": "cancelled"}
 
     def profile(self) -> Dict[str, Any]:
         data = self._post("/exchange/v1/users/info")

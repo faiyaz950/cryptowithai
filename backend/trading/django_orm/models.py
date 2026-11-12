@@ -42,12 +42,87 @@ class DemoOrder(models.Model):
     side = models.CharField(max_length=16)
     order_type = models.CharField(max_length=16)
     quantity = models.DecimalField(max_digits=28, decimal_places=8)
-    price = models.DecimalField(max_digits=28, decimal_places=8, null=True, blank=True)
+    # Spot pairs (PEPE/USDT, ADA/BTC) ka bhaav 0.0000004 jaisa hota hai — 8 decimal par wo kat jaata.
+    price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     status = models.CharField(max_length=32)
+    # Order ke saath diya Target/SL — fill hote hi position par lag jaata hai.
+    stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    take_profit = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     created_at = models.DateTimeField()
 
     class Meta:
         db_table = "demo_orders"
+        ordering = ["-created_at"]
+
+
+class PaperBracket(models.Model):
+    """Khuli paper position ka Target/SL. Ek symbol par ek position, isliye ek hi row."""
+
+    user = models.ForeignKey("UserAccount", on_delete=models.CASCADE, related_name="paper_brackets")
+    symbol = models.CharField(max_length=32)
+    stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    take_profit = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    # rest = baaki targets, entry, trail, dist, armed, extreme. take_profit agla target hai.
+    plan = models.JSONField(blank=True, default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "paper_brackets"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "symbol"], name="uniq_paper_bracket"),
+        ]
+
+
+class StrategyBot(models.Model):
+    """
+    Server par chalne wala strategy bot (abhi sirf Trend Rider). Browser band ho tab bhi
+    worker (`bot_worker.py`) har band candle par strategy ki position ko account se milata hai.
+
+    Trade ki pehchaan `entry_time` hai (entry candle ka open, ms). Ek entry_time par order
+    ek hi baar lagta hai, worker chahe kitni baar chale — isi se reconcile idempotent hai.
+    """
+
+    user = models.ForeignKey("UserAccount", on_delete=models.CASCADE, related_name="strategy_bots")
+    strategy = models.CharField(max_length=32, default="trend-rider")
+    symbol = models.CharField(max_length=32)
+    timeframe = models.CharField(max_length=8, default="4h")
+    capital = models.DecimalField(max_digits=18, decimal_places=2)
+    risk_pct = models.DecimalField(max_digits=6, decimal_places=3)
+    # channel, exit_channel, stop_atr, allow_shorts — backtest wale hi naam.
+    params = models.JSONField(default=dict)
+    # Live tabhi jab user ne is bot ke liye khud chuna ho — aur server ka LIVE_ORDERS_ENABLED bhi on ho.
+    mode = models.CharField(max_length=8, default="paper")
+    exchange_account_id = models.BigIntegerField(null=True, blank=True)
+    # running | paused (naya trade nahi, chalu trade manage hota hai) | stopped
+    status = models.CharField(max_length=16, default="running", db_index=True)
+    # Strategy ka replay yahin se shuru hota hai — backtest ka "same period" yahi hai.
+    started_at = models.DateTimeField()
+
+    # ── Abhi wala trade (reconcile state) ──
+    entry_time = models.BigIntegerField(null=True, blank=True)
+    # "" | entering | open | closed | skipped
+    trade_state = models.CharField(max_length=16, blank=True, default="")
+    side = models.CharField(max_length=8, blank=True, default="")
+    quantity = models.DecimalField(max_digits=28, decimal_places=10, null=True, blank=True)
+    entry_price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    stop_loss = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    # Live mode mein exchange par pada stop order.
+    stop_order_id = models.CharField(max_length=64, blank=True, default="")
+    # Steady: pehle profit ka level aur kya wo hissa book ho chuka (har nayi entry par reset).
+    tp1_price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
+    tp1_done = models.BooleanField(default=False)
+
+    # Aakhri band candle (open time, ms) jiske baad poora reconcile chala.
+    last_bar_time = models.BigIntegerField(null=True, blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    # [{at, text}] — sabse naya aakhir mein, chhota rakha jaata hai.
+    events = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "strategy_bots"
         ordering = ["-created_at"]
 
 
@@ -125,7 +200,7 @@ class ByokOrder(models.Model):
     side = models.CharField(max_length=8)
     order_type = models.CharField(max_length=16)
     quantity = models.DecimalField(max_digits=28, decimal_places=8)
-    price = models.DecimalField(max_digits=28, decimal_places=8, null=True, blank=True)
+    price = models.DecimalField(max_digits=30, decimal_places=12, null=True, blank=True)
     status = models.CharField(max_length=32)
     # Order kahan se aaya: desk, tradingview, ya api. Baad mein "ye trade
     # kisne lagaya" ka jawab isi se milta hai.

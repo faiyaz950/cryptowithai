@@ -201,8 +201,29 @@ def save_demo_order_entry(order_entry: Dict[str, Any], *, user_id: Optional[int]
         quantity=Decimal(str(order_entry.get("quantity", 0))),
         price=Decimal(str(price)) if price not in (None, "") else None,
         status=str(order_entry.get("status", "")),
+        stop_loss=_dec(order_entry.get("stop_loss")),
+        take_profit=_dec(order_entry.get("take_profit")),
         created_at=ts,
     )
+
+
+def _dec(v: Any) -> Optional[Decimal]:
+    return Decimal(str(v)) if v not in (None, "") else None
+
+
+def _demo_order_dict(r: Any) -> Dict[str, Any]:
+    return {
+        "order_id": r.order_id,
+        "symbol": r.symbol,
+        "side": r.side,
+        "order_type": r.order_type,
+        "quantity": float(r.quantity),
+        "price": float(r.price) if r.price is not None else None,
+        "status": r.status,
+        "stop_loss": float(r.stop_loss) if r.stop_loss is not None else None,
+        "take_profit": float(r.take_profit) if r.take_profit is not None else None,
+        "timestamp": r.created_at.isoformat(),
+    }
 
 
 def fetch_recent_orders(*, limit: int = 50, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -220,21 +241,297 @@ def fetch_recent_orders(*, limit: int = 50, user_id: Optional[int] = None) -> Li
     if user_id is not None:
         rows = rows.filter(user_id=user_id)
 
-    out = []
-    for r in rows[:limit]:
-        out.append(
-            {
-                "order_id": r.order_id,
-                "symbol": r.symbol,
-                "side": r.side,
-                "order_type": r.order_type,
-                "quantity": float(r.quantity),
-                "price": float(r.price) if r.price is not None else None,
-                "status": r.status,
-                "timestamp": r.created_at.isoformat(),
-            }
-        )
+    return [_demo_order_dict(r) for r in rows[:limit]]
+
+
+def fetch_user_demo_orders_oldest_first(user_id: int) -> List[Dict[str, Any]]:
+    """Paper book replay ke liye — saare orders, purane pehle."""
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    rows = DemoOrder.objects.filter(user_id=user_id).order_by("created_at", "id")
+    return [_demo_order_dict(r) for r in rows]
+
+
+def update_demo_order(order_id: str, *, user_id: int, status: str, price: Optional[float] = None) -> bool:
+    """Pending paper order ko fill/cancel/reject karna. Doosre user ka order nahi chhoota."""
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    fields: Dict[str, Any] = {"status": status}
+    if price is not None:
+        fields["price"] = Decimal(str(price))
+    return DemoOrder.objects.filter(order_id=order_id, user_id=user_id).update(**fields) > 0
+
+
+_UNSET: Any = object()
+
+
+def modify_demo_order(
+    order_id: str,
+    *,
+    user_id: int,
+    order_type: Any = _UNSET,
+    quantity: Any = _UNSET,
+    price: Any = _UNSET,
+    status: Any = _UNSET,
+    stop_loss: Any = _UNSET,
+    take_profit: Any = _UNSET,
+    only_if_status: Optional[str] = None,
+) -> bool:
+    """
+    Sirf wahi fields badlo jo di gayi hain; None = khaali karo (Target/SL hatana).
+    `only_if_status` diya ho to row tabhi badle jab status abhi bhi wahi ho.
+    """
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    fields: Dict[str, Any] = {}
+    if order_type is not _UNSET:
+        fields["order_type"] = str(order_type)
+    if status is not _UNSET:
+        fields["status"] = str(status)
+    for name, value in (("quantity", quantity), ("price", price), ("stop_loss", stop_loss), ("take_profit", take_profit)):
+        if value is not _UNSET:
+            fields[name] = _dec(value)
+    if not fields:
+        return False
+    rows = DemoOrder.objects.filter(order_id=order_id, user_id=user_id)
+    if only_if_status is not None:
+        rows = rows.filter(status=only_if_status)
+    return rows.update(**fields) > 0
+
+
+def fetch_paper_brackets(user_id: int) -> Dict[str, Dict[str, Any]]:
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    return {
+        b.symbol: {
+            "stop_loss": float(b.stop_loss) if b.stop_loss is not None else None,
+            "take_profit": float(b.take_profit) if b.take_profit is not None else None,
+            "plan": b.plan if isinstance(b.plan, dict) else {},
+        }
+        for b in PaperBracket.objects.filter(user_id=user_id)
+    }
+
+
+def claim_paper_bracket(user_id: int, symbol: str) -> bool:
+    """
+    Bracket hatao aur batao ki isi call ne hataya. Do requests ek saath SL/Target
+    hit dekhein to sirf ek close order banaye — warna position ulti khul jaati.
+    """
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    deleted, _ = PaperBracket.objects.filter(user_id=user_id, symbol=symbol).delete()
+    return deleted > 0
+
+
+def claim_pending_demo_order(order_id: str, *, user_id: int, status: str) -> bool:
+    """Pending order ka status badlo — sirf tab jab abhi bhi pending ho (ek hi request jeete)."""
+    _ensure_django()
+    from django_orm.models import DemoOrder
+
+    return DemoOrder.objects.filter(order_id=order_id, user_id=user_id, status="pending").update(status=status) > 0
+
+
+def set_paper_bracket(
+    user_id: int,
+    symbol: str,
+    *,
+    stop_loss: Optional[float],
+    take_profit: Optional[float],
+    plan: Any = _UNSET,
+) -> None:
+    """Dono khaali ho to row hi hata do. `plan` na diya ho to purana plan rehta hai."""
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    if stop_loss is None and take_profit is None and (plan is _UNSET or not plan):
+        PaperBracket.objects.filter(user_id=user_id, symbol=symbol).delete()
+        return
+    defaults: Dict[str, Any] = {"stop_loss": _dec(stop_loss), "take_profit": _dec(take_profit)}
+    if plan is not _UNSET:
+        defaults["plan"] = plan if isinstance(plan, dict) else {}
+    PaperBracket.objects.update_or_create(user_id=user_id, symbol=symbol, defaults=defaults)
+
+
+def advance_paper_target(
+    user_id: int,
+    symbol: str,
+    *,
+    expect_tp: float,
+    stop_loss: Optional[float],
+    take_profit: Optional[float],
+    plan: Dict[str, Any],
+) -> bool:
+    """Agla target tabhi lagao jab abhi wahi target pada ho. Do poll ek saath na kaaten."""
+    _ensure_django()
+    from django.db import transaction
+    from django_orm.models import PaperBracket
+
+    with transaction.atomic():
+        row = PaperBracket.objects.select_for_update().filter(user_id=user_id, symbol=symbol).first()
+        if row is None or row.take_profit is None:
+            return False
+        if abs(float(row.take_profit) - float(expect_tp)) > max(1e-8, abs(float(expect_tp)) * 1e-8):
+            return False
+        row.stop_loss = _dec(stop_loss)
+        row.take_profit = _dec(take_profit)
+        row.plan = plan or {}
+        row.save(update_fields=["stop_loss", "take_profit", "plan", "updated_at"])
+        return True
+
+
+def touch_paper_plan(user_id: int, symbol: str, *, stop_loss: Optional[float], plan: Dict[str, Any]) -> None:
+    """Trail ka high-water aur stop likho, target na badlo."""
+    _ensure_django()
+    from django_orm.models import PaperBracket
+
+    PaperBracket.objects.filter(user_id=user_id, symbol=symbol).update(stop_loss=_dec(stop_loss), plan=plan or {})
+
+
+# --- Strategy bots ---
+
+BOT_ACTIVE_STATUSES = ("running", "paused")
+# Bot ka event log row par hi rehta hai — bas itne aakhri.
+BOT_EVENTS_KEEP = 60
+
+_BOT_DECIMALS = ("capital", "risk_pct", "quantity", "entry_price", "stop_loss", "tp1_price")
+
+
+def _fl(v: Any) -> Optional[float]:
+    return float(v) if v is not None else None
+
+
+def _bot_dict(b: Any) -> Dict[str, Any]:
+    return {
+        "id": b.id,
+        "user_id": b.user_id,
+        "strategy": b.strategy,
+        "symbol": b.symbol,
+        "timeframe": b.timeframe,
+        "capital": float(b.capital),
+        "risk_pct": float(b.risk_pct),
+        "params": dict(b.params or {}),
+        "mode": b.mode,
+        "exchange_account_id": b.exchange_account_id,
+        "status": b.status,
+        "started_at": b.started_at.isoformat(),
+        "entry_time": b.entry_time,
+        "trade_state": b.trade_state,
+        "side": b.side,
+        "quantity": _fl(b.quantity),
+        "entry_price": _fl(b.entry_price),
+        "stop_loss": _fl(b.stop_loss),
+        "stop_order_id": b.stop_order_id,
+        "tp1_price": _fl(b.tp1_price),
+        "tp1_done": bool(b.tp1_done),
+        "last_bar_time": b.last_bar_time,
+        "last_run_at": b.last_run_at.isoformat() if b.last_run_at else None,
+        "last_error": b.last_error,
+        "events": list(b.events or []),
+        "created_at": b.created_at.isoformat() if b.created_at else None,
+        "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+    }
+
+
+def _bot_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(fields)
+    for name in _BOT_DECIMALS:
+        if name in out:
+            out[name] = _dec(out[name])
     return out
+
+
+def create_strategy_bot(user_id: int, **fields: Any) -> Dict[str, Any]:
+    _ensure_django()
+    from django.utils import timezone
+    from django_orm.models import StrategyBot
+
+    fields.setdefault("started_at", timezone.now())
+    b = StrategyBot.objects.create(user_id=user_id, **_bot_fields(fields))
+    return _bot_dict(b)
+
+
+def get_strategy_bot(bot_id: int, *, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """`user_id` do to doosre user ka bot nahi milta."""
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    rows = StrategyBot.objects.filter(pk=bot_id)
+    if user_id is not None:
+        rows = rows.filter(user_id=user_id)
+    b = rows.first()
+    return _bot_dict(b) if b else None
+
+
+def list_strategy_bots(user_id: int, *, include_stopped: bool = True) -> List[Dict[str, Any]]:
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    rows = StrategyBot.objects.filter(user_id=user_id)
+    if not include_stopped:
+        rows = rows.filter(status__in=BOT_ACTIVE_STATUSES)
+    return [_bot_dict(b) for b in rows]
+
+
+def list_active_strategy_bots() -> List[Dict[str, Any]]:
+    """Worker ke liye — saare users ke running/paused bots, purane pehle."""
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    rows = StrategyBot.objects.filter(status__in=BOT_ACTIVE_STATUSES).order_by("created_at", "id")
+    return [_bot_dict(b) for b in rows]
+
+
+def find_active_strategy_bot(user_id: int, symbol: str) -> Optional[Dict[str, Any]]:
+    """Paper book ek symbol par ek hi position rakhta hai, isliye ek symbol par ek hi chalu bot."""
+    _ensure_django()
+    from django_orm.models import StrategyBot
+
+    b = StrategyBot.objects.filter(user_id=user_id, symbol=symbol, status__in=BOT_ACTIVE_STATUSES).first()
+    return _bot_dict(b) if b else None
+
+
+def update_strategy_bot(bot_id: int, *, events: Optional[List[str]] = None, **fields: Any) -> None:
+    """
+    Diye gaye fields badlo. `events` naye log lines hain — pichhli line jaisi hi ho to
+    dobara nahi likhte (fail hui entry har tick par wahi error na bhare).
+    """
+    _ensure_django()
+    from django.utils import timezone
+    from django_orm.models import StrategyBot
+
+    fields = _bot_fields(fields)
+    if events:
+        b = StrategyBot.objects.filter(pk=bot_id).first()
+        if not b:
+            return
+        log = list(b.events or [])
+        for text in events:
+            if log and log[-1].get("text") == text:
+                continue
+            log.append({"at": timezone.now().isoformat(), "text": text})
+        fields["events"] = log[-BOT_EVENTS_KEEP:]
+    if fields:
+        fields["updated_at"] = timezone.now()
+        StrategyBot.objects.filter(pk=bot_id).update(**fields)
+
+
+def claim_bot_entry(bot_id: int, entry_time: int, **fields: Any) -> bool:
+    """
+    Is entry_time ka order lagane ka haq lo — sirf tab jab bot ne ye entry_time pehle
+    nahi dekha. Do worker (ya worker + API) ek saath chalein to bhi order ek hi lagta hai.
+    """
+    _ensure_django()
+    from django.utils import timezone
+    from django_orm.models import StrategyBot
+
+    fields = _bot_fields(fields)
+    fields.update(entry_time=entry_time, updated_at=timezone.now())
+    return StrategyBot.objects.filter(pk=bot_id).exclude(entry_time=entry_time).update(**fields) > 0
 
 
 # --- Users & sessions ---
@@ -311,6 +608,20 @@ def update_user_account_fields(user_id: int, **kwargs: Any) -> None:
         if hasattr(u, key):
             setattr(u, key, val)
     u.save()
+
+
+def get_user_tv_token(user_id: int) -> str:
+    """
+    User ka maujooda webhook token, seedha DB se.
+
+    `_user_dict` jaan-boojh kar token nahi bhejta (wo dict kai jagah ghoomta
+    hai), isliye setup ko token yahin se padhna chahiye — warna har load par
+    naya token banta aur TradingView mein daala purana URL toot jaata.
+    """
+    _ensure_django()
+    from django_orm.models import UserAccount
+
+    return (UserAccount.objects.filter(pk=user_id).values_list("tv_token", flat=True).first() or "").strip()
 
 
 def get_user_account_by_tv_token(token: str) -> Optional[Dict[str, Any]]:

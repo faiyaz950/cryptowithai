@@ -112,7 +112,7 @@ export function readRadar(symbol: string, candles: Candle[]): RadarRead | null {
       ? "Price trend filter ke upar hai."
       : trend === "Bearish"
         ? "Price trend filter ke neeche hai."
-        : "Price trend filter clear nahi hai.",
+        : "Price trend filter is not clear.",
     momentum === "Strong"
       ? "Momentum positive hai."
       : momentum === "Weak"
@@ -120,8 +120,8 @@ export function readRadar(symbol: string, candles: Candle[]): RadarRead | null {
         : "Momentum abhi neutral hai.",
     volume === "Above Average"
       ? "Volume confirmation mil chuki hai."
-      : "Volume confirmation abhi incomplete hai.",
-    "Ye padhai ka readout hai — buy ya sell instruction nahi.",
+      : "Volume confirmation is still incomplete.",
+    "This is a study readout — not a buy/sell instruction.",
   ].join(" ");
 
   return { symbol, base: baseOf(symbol), price, trend, momentum, volume, volatility, structure, setup, why };
@@ -144,11 +144,11 @@ export function readAlgo(candles: Candle[]): AlgoRead | null {
   const structure = e20 > e50 && price > e20;
 
   const checks: AlgoCheck[] = [
-    { label: "EMA structure", ok: e20 > e50, note: e20 > e50 ? "EMA 20 EMA 50 ke upar hai." : "EMA 20 EMA 50 ke neeche aa gayi hai." },
-    { label: "RSI", ok: rsiNow != null && rsiNow > 55, note: rsiNow == null ? "RSI abhi ready nahi." : `RSI ${rsiNow.toFixed(1)}.` },
-    { label: "Volume", ok: volOk, note: volOk ? "Volume 1.5× average se upar hai." : "Volume abhi average ke aas-paas hai." },
-    { label: "Breakout", ok: breakout, note: breakout ? "Price recent high ke upar hai." : "Breakout abhi confirm nahi hua." },
-    { label: "Market structure", ok: structure, note: structure ? "Structure upar ki taraf hai." : "Structure mixed ya weak hai." },
+    { label: "EMA structure", ok: e20 > e50, note: e20 > e50 ? "EMA 20 is above EMA 50." : "EMA 20 has moved below EMA 50." },
+    { label: "RSI", ok: rsiNow != null && rsiNow > 55, note: rsiNow == null ? "RSI is not ready yet." : `RSI ${rsiNow.toFixed(1)}.` },
+    { label: "Volume", ok: volOk, note: volOk ? "Volume is above 1.5× average." : "Volume is around average." },
+    { label: "Breakout", ok: breakout, note: breakout ? "Price is above the recent high." : "Breakout is not confirmed yet." },
+    { label: "Market structure", ok: structure, note: structure ? "Structure is skewed upward." : "Structure is mixed or weak." },
   ];
 
   const passed = checks.filter((c) => c.ok).length;
@@ -156,7 +156,7 @@ export function readAlgo(candles: Candle[]): AlgoRead | null {
   const status: AlgoRead["status"] = emaBroken ? "invalidated" : passed >= 4 ? "awaited" : passed >= 2 ? "forming" : "invalidated";
   const explanation =
     status === "invalidated"
-      ? "EMA structure toot chuki hai, isliye ye setup invalidated hai. Auto buy/sell nahi hota."
+      ? "EMA structure has broken, so this setup is invalidated. No auto buy/sell."
       : status === "awaited"
         ? `${passed}/5 conditions pass hain. Confirmation awaited — ek missing piece ke bina ye trade signal nahi hai.`
         : `${passed}/5 conditions pass hain. Setup forming hai. Ye explanation hai, order nahi.`;

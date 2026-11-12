@@ -150,8 +150,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signup = useCallback(
     async (name: string, email: string, password: string) => {
-      if (!name.trim()) throw new Error("Naam zaroori hai");
-      if (password.length < 8) throw new Error("Password kam se kam 8 characters ka ho");
+      if (!name.trim()) throw new Error("Please enter your name.");
+      if (password.length < 8) throw new Error("Password must be at least 8 characters.");
       applySession(await registerAccount(name.trim(), email.trim(), password));
     },
     [applySession],

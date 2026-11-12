@@ -74,7 +74,7 @@ export default function PnlPanel({
       .catch((err) => {
         onApiError(err);
         if (!alive) return;
-        setError(err instanceof AccountApiError ? err.message : "P&L load nahi hua");
+        setError(err instanceof AccountApiError ? err.message : "Could not load P&L");
         setLoading(false);
       });
     return () => {
@@ -220,7 +220,7 @@ export default function PnlPanel({
                         <Tooltip
                           cursor={{ fill: "rgba(255,255,255,0.04)" }}
                           contentStyle={{
-                            background: "#0f141c",
+                            background: "#1e1d1c",
                             border: "1px solid var(--tr-line)",
                             borderRadius: 10,
                             fontSize: 12,
@@ -289,7 +289,7 @@ export default function PnlPanel({
                       // Number dikhana yahan jhooth hota: 0 ka matlab "koi
                       // munafa nahi" hai, aur hume to pata hi nahi chala.
                       <span className="pnl-exchange-na">
-                        {e.error ? "nahi aaya" : "abhi support nahi"}
+                        {e.error ? "unavailable" : "not supported yet"}
                       </span>
                     ) : (
                       <span className="tnum pnl-exchange-value" data-up={e.pnl >= 0}>
