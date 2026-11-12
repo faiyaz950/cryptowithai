@@ -62,6 +62,7 @@ from django_orm import (
     get_user_account_by_email,
     get_user_account_by_id,
     get_user_account_by_tv_token,
+    get_user_tv_token,
     update_user_account_fields,
     create_user_session,
     get_active_session_by_token,
@@ -3001,7 +3002,9 @@ def _tv_webhook_url(token):
 
 def _ensure_tv_token(user):
     """Token pehli baar maangne par hi banta hai, aur DB mein rehta hai."""
-    token = (user.get('tv_token') or '').strip()
+    # g.user mein tv_token hota hi nahi — use padhne se har baar naya token
+    # banta tha aur user ka TradingView URL chupchaap toot jaata tha.
+    token = get_user_tv_token(user['id'])
     if len(token) >= 32:
         return token
     token = secrets.token_urlsafe(32)

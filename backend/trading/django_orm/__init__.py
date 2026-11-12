@@ -610,6 +610,20 @@ def update_user_account_fields(user_id: int, **kwargs: Any) -> None:
     u.save()
 
 
+def get_user_tv_token(user_id: int) -> str:
+    """
+    User ka maujooda webhook token, seedha DB se.
+
+    `_user_dict` jaan-boojh kar token nahi bhejta (wo dict kai jagah ghoomta
+    hai), isliye setup ko token yahin se padhna chahiye — warna har load par
+    naya token banta aur TradingView mein daala purana URL toot jaata.
+    """
+    _ensure_django()
+    from django_orm.models import UserAccount
+
+    return (UserAccount.objects.filter(pk=user_id).values_list("tv_token", flat=True).first() or "").strip()
+
+
 def get_user_account_by_tv_token(token: str) -> Optional[Dict[str, Any]]:
     """
     Webhook token se user.
