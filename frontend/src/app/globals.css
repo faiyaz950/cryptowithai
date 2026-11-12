@@ -3594,6 +3594,14 @@ textarea:focus-visible {
   width: 240px;
   padding: 14px 12px 12px;
 }
+/* Phone par khula menu content ke upar aaye, use 135px tak na dabaye. */
+@media (max-width: 767px) {
+  .desk-flow-side[data-open="true"] {
+    margin-right: -172px;
+    background: rgb(var(--surface-rgb));
+    box-shadow: 18px 0 40px -18px rgb(0 0 0 / 0.6);
+  }
+}
 .desk-flow-side .desk-flow-group:first-of-type { margin-top: 0; }
 .desk-flow-side:not([data-open="true"]) .desk-flow-kicker,
 .desk-flow-side:not([data-open="true"]) .desk-flow-next,
@@ -6064,63 +6072,52 @@ textarea:focus-visible {
 
 /* ══ Exchanges (BYOK) ════════════════════════════════════ */
 
-.ex-page { display: grid; gap: 16px; }
-.ex-page .ex-head { align-items: center; }
+.ex-page { display: grid; gap: 22px; container: expage / inline-size; }
+.ex-page .ex-head { align-items: flex-end; }
 .ex-head-copy { min-width: 0; flex: 1; }
 .ex-page .ex-head .trade-page-sub { max-width: 62ch; margin-top: 4px; }
-.ex-page .ex-head .trade-page-actions { flex: none; align-self: center; }
+.ex-page .ex-head .trade-page-actions { flex: none; }
+@container expage (max-width: 520px) {
+  .ex-page .ex-head .trade-page-actions,
+  .ex-page .ex-head .trade-page-actions .trade-btn { width: 100%; }
+}
 
+/* Teen bharose wali baatein — ek patli patti, bade dibbe nahi. */
 .ex-trust {
   display: grid;
-  gap: 1px;
   grid-template-columns: minmax(0, 1fr);
-  border-radius: var(--tr-radius);
+  border-radius: 14px;
   overflow: hidden;
-  background: var(--tr-line-soft);
   border: 1px solid var(--tr-line);
+  background: linear-gradient(180deg, rgb(var(--surface2-rgb) / 0.72), rgb(var(--surface-rgb) / 0.9));
 }
-@media (min-width: 760px) { .ex-trust { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container expage (min-width: 640px) { .ex-trust { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .ex-trust-item {
   display: flex;
+  align-items: center;
   gap: 12px;
-  align-items: flex-start;
-  min-height: 88px;
-  padding: 14px 16px;
-  background: linear-gradient(180deg, rgb(var(--surface2-rgb) / 0.95), rgb(var(--surface-rgb) / 0.98));
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-muted);
+  min-width: 0;
+  padding: 12px 16px;
 }
-.ex-trust-item > span:last-child { min-width: 0; flex: 1; }
+.ex-trust-item + .ex-trust-item { border-top: 1px solid var(--tr-line-soft); }
+@container expage (min-width: 640px) {
+  .ex-trust-item + .ex-trust-item { border-top: 0; border-left: 1px solid var(--tr-line-soft); }
+}
+.ex-trust-item > span:last-child { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .ex-trust-ico {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   flex: none;
   border-radius: 9px;
   color: var(--accent);
   background: rgba(249, 115, 22, 0.1);
   border: 1px solid rgba(249, 115, 22, 0.22);
 }
-.ex-trust-ico svg { width: 15px; height: 15px; }
-.ex-trust-item b {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-  font-size: 12.5px;
-  font-weight: 700;
-  line-height: 1.25;
-  color: var(--tr-ink-2);
-}
-.ex-trust-item small {
-  display: block;
-  min-height: 2.9em;
-  margin-top: 2px;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text-muted);
-}
+.ex-trust-ico svg { width: 14px; height: 14px; }
+.ex-trust-item b { font-size: 12.5px; font-weight: 700; line-height: 1.3; color: var(--tr-ink-2); }
+.ex-trust-item small { font-size: 11.5px; line-height: 1.4; color: var(--text-muted); }
 
 .ex-empty {
   display: grid;
@@ -6149,7 +6146,7 @@ textarea:focus-visible {
 }
 .ex-skeleton { height: 220px; border-radius: 16px; }
 
-.ex-section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.ex-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 12px; }
 .ex-section-head h3 {
   font-size: 11px;
   font-weight: 700;
@@ -6158,6 +6155,7 @@ textarea:focus-visible {
   color: var(--text-secondary);
 }
 .ex-section-head span { font-size: 11.5px; color: var(--text-muted); }
+.ex-section-head .ex-link { margin-left: auto; }
 
 .ex-mark {
   display: grid;
@@ -6170,26 +6168,37 @@ textarea:focus-visible {
 }
 
 /* ── Catalogue grid ── */
-.ex-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.ex-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); }
 .ex-tile {
+  --tint: var(--accent);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 16px;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px;
   border-radius: 14px;
   border: 1px solid var(--tr-line);
-  background: linear-gradient(180deg, rgb(var(--surface2-rgb) / 0.95), rgb(var(--surface-rgb) / 0.98));
-  transition: border-color 0.15s, transform 0.15s;
+  background:
+    radial-gradient(160px 96px at 0% 0%, color-mix(in srgb, var(--tint) 13%, transparent), transparent 72%),
+    linear-gradient(180deg, rgb(var(--surface2-rgb) / 0.92), rgb(var(--surface-rgb) / 0.97));
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
-.ex-tile[data-available="true"]:hover { border-color: rgba(249, 115, 22, 0.35); transform: translateY(-1px); }
-.ex-tile[data-available="false"] { opacity: 0.62; }
-.ex-tile-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; }
-.ex-tile h4 { font-size: 14px; font-weight: 700; color: var(--tr-ink); letter-spacing: -0.01em; }
+.ex-tile[data-available="true"]:hover {
+  border-color: color-mix(in srgb, var(--tint) 45%, var(--tr-line));
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px -24px rgb(var(--shade-rgb) / calc(0.9 * var(--shade-k)));
+}
+.ex-tile[data-available="false"] { border-style: dashed; background: rgb(var(--surface-rgb) / 0.45); }
+.ex-tile[data-available="false"] .ex-mark { filter: grayscale(0.7); opacity: 0.6; }
+.ex-tile[data-available="false"] h4 { color: var(--text-secondary); }
+.ex-tile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ex-tile h4 { font-size: 13.5px; font-weight: 700; line-height: 1.3; color: var(--tr-ink); letter-spacing: -0.01em; }
 .ex-tile p { font-size: 11.5px; line-height: 1.5; color: var(--text-muted); flex: 1; }
-.ex-tile-btn { margin-top: 10px; width: 100%; height: 34px; font-size: 12.5px; }
+.ex-tile-btn { margin-top: 12px; width: 100%; height: 34px; font-size: 12.5px; }
 .ex-pill {
   display: inline-flex;
   align-items: center;
+  flex: none;
   height: 20px;
   padding: 0 8px;
   border-radius: 999px;
@@ -6197,58 +6206,90 @@ textarea:focus-visible {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: var(--text-muted);
   background: var(--tr-field);
   border: 1px solid var(--tr-line);
 }
 .ex-pill-live { color: var(--p-69f0ae); background: rgba(0, 230, 118, 0.12); border-color: rgba(0, 230, 118, 0.3); }
+/* Phone par tiles ek list ban jaati hain: nishaan | naam + detail | pill. */
+@container expage (max-width: 520px) {
+  .ex-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .ex-tile {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 2px;
+    padding: 12px;
+  }
+  .ex-tile-top { display: contents; }
+  .ex-tile-top .ex-mark { grid-column: 1; grid-row: 1 / span 2; }
+  .ex-tile-top .ex-pill { grid-column: 3; grid-row: 1; }
+  .ex-tile h4 { grid-column: 2; grid-row: 1; }
+  .ex-tile p { grid-column: 2 / -1; grid-row: 2; }
+  .ex-tile-btn { grid-column: 1 / -1; margin-top: 10px; }
+  .ex-tile[data-available="false"] .ex-tile-btn { display: none; }
+  .ex-card, .ex-auto { padding: 14px; }
+  .ex-auto-head { flex-wrap: wrap; row-gap: 8px; }
+  .ex-auto-head > .min-w-0 { flex-basis: calc(100% - 46px); }
+  .ex-auto-head .ex-pill { margin-left: 46px; }
+  .ex-auto-head .ex-auto-toggle { margin-left: auto; }
+}
 
-/* ── Connected cards ── */
-.ex-connected { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr)); }
+/* ── Connected cards ──
+ * Card ka andar ka layout card ki apni chaudai se chalta hai (container query),
+ * screen ki chaudai se nahi — isliye ek card ho ya do, kuch katta nahi. */
+.ex-connected { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 640px), 1fr)); }
 .ex-card {
+  container: excard / inline-size;
   position: relative;
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px;
   border-radius: 16px;
   border: 1px solid var(--tr-line);
-  background: linear-gradient(180deg, rgb(var(--surface2-rgb) / 0.96), rgb(var(--surface-rgb) / 0.98));
+  background:
+    radial-gradient(560px 180px at 0% 0%, color-mix(in srgb, var(--amber) 6%, transparent), transparent 70%),
+    linear-gradient(180deg, rgb(var(--surface2-rgb) / 0.96), rgb(var(--surface-rgb) / 0.98));
   overflow: hidden;
+}
+.ex-card[data-healthy="true"] {
+  background:
+    radial-gradient(560px 180px at 0% 0%, color-mix(in srgb, var(--green) 6%, transparent), transparent 70%),
+    linear-gradient(180deg, rgb(var(--surface2-rgb) / 0.96), rgb(var(--surface-rgb) / 0.98));
 }
 .ex-card::before {
   content: "";
   position: absolute;
   inset: 0 0 auto 0;
   height: 2px;
-  background: var(--amber);
+  background: linear-gradient(90deg, var(--amber), transparent 75%);
 }
-.ex-card[data-healthy="true"]::before { background: var(--green); }
-.ex-card-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-width: 0;
-}
-.ex-card-id { min-width: 0; flex: 1; }
-.ex-card-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ex-card[data-healthy="true"]::before { background: linear-gradient(90deg, var(--green), transparent 75%); }
+
+.ex-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; min-width: 0; }
+.ex-card-id { min-width: 0; flex: 1 1 0; }
+.ex-card-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
 .ex-card-title h4 {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
   color: var(--tr-ink);
-  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
 }
 .ex-card-sub {
-  margin-top: 2px;
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   color: var(--text-muted);
 }
+.ex-card-sub .tnum { font-family: var(--tr-mono); color: var(--text-secondary); }
 .ex-status {
   display: inline-flex;
   align-items: center;
@@ -6266,37 +6307,57 @@ textarea:focus-visible {
 .ex-status-ok { color: var(--p-69f0ae); background: rgba(0, 230, 118, 0.12); }
 .ex-status-warn { color: var(--p-ffb300); background: rgba(255, 179, 0, 0.12); }
 
+.ex-card-actions { display: flex; flex: none; align-items: center; gap: 8px; margin-left: auto; }
+@container excard (max-width: 520px) {
+  .ex-card-actions { flex: 1 1 100%; margin-left: 0; }
+  .ex-card-actions .trade-btn { flex: 1; min-width: 0; padding-inline: 10px; }
+}
+
+/* Facts · Wallet · Trading — chhoti jagah par ek ke neeche ek,
+ * beech mein do column, aur poori chaudai mile to teeno ek line mein. */
+.ex-card-body { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@container excard (min-width: 600px) {
+  .ex-card-body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ex-card-body > .ex-facts { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container excard (min-width: 1060px) {
+  .ex-card-body { grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1fr) minmax(0, 1.25fr); }
+  .ex-card-body > .ex-facts { grid-column: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .ex-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   margin: 0;
-  border-radius: 11px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--tr-line-soft);
   border: 1px solid var(--tr-line-soft);
 }
-@media (min-width: 560px) { .ex-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .ex-facts > div {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: 64px;
-  padding: 10px 14px;
-  background: var(--tr-field);
+  gap: 5px;
   min-width: 0;
+  min-height: 62px;
+  padding: 11px 14px;
+  background: var(--tr-field);
 }
 .ex-facts dt {
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
 .ex-facts dd {
-  margin: 4px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
   font-weight: 600;
@@ -6304,24 +6365,24 @@ textarea:focus-visible {
   color: var(--tr-ink-2);
 }
 .ex-facts dd[data-on="true"] { color: var(--green); }
+.ex-facts dd[data-on="true"]::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 20%, transparent);
+}
 .ex-facts dd[data-on="false"] { color: var(--text-muted); }
-
-.ex-card-split {
-  display: grid;
-  gap: 12px;
-  align-items: stretch;
-}
-@media (min-width: 880px) {
-  .ex-card-split { grid-template-columns: minmax(220px, 0.86fr) minmax(280px, 1.14fr); }
-}
 
 .ex-balances {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 100%;
-  min-height: 132px;
-  padding: 14px;
+  min-width: 0;
+  min-height: 124px;
+  padding: 12px 14px;
   border-radius: 12px;
   background: var(--tr-field);
   border: 1px solid var(--tr-line-soft);
@@ -6330,24 +6391,20 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
+  min-height: 24px;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
+.ex-balances-head svg:first-child { color: var(--text-muted); }
 .ex-balances-head .ex-link { margin-left: auto; text-transform: none; letter-spacing: 0; }
-.ex-balances-body {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-}
+.ex-balances-body { flex: 1; display: flex; align-items: center; min-height: 44px; }
 .ex-balances-body .ex-balance-list,
 .ex-balances-body .ex-balance-note,
 .ex-balances-body .ex-balance-skeleton { width: 100%; }
-.ex-balance-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ex-balance-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
 .ex-balance {
   display: grid;
   min-width: 0;
@@ -6357,24 +6414,27 @@ textarea:focus-visible {
   border: 1px solid var(--tr-line);
 }
 .ex-balance-asset { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-muted); }
-.ex-balance-value { font-family: var(--tr-mono); font-size: 14px; font-weight: 700; color: var(--tr-ink); margin-top: 2px; }
+.ex-balance-value {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--tr-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--tr-ink);
+}
 .ex-balance-avail { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
-.ex-balance-note { font-size: 12px; color: var(--text-muted); }
+.ex-balance-note {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--tr-line);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-muted);
+}
 .ex-balance-skeleton { height: 46px; border-radius: 10px; }
 
-.ex-card-actions {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-left: auto;
-}
-@media (max-width: 720px) {
-  .ex-card-head { flex-wrap: wrap; }
-  .ex-card-actions { width: 100%; margin-left: 0; justify-content: flex-start; }
-}
 .ex-danger-ghost:hover:not(:disabled) { color: var(--p-ff8a80); border-color: rgba(255, 82, 82, 0.45); background: rgba(255, 82, 82, 0.08); }
 .ex-danger { color: #fff; background: #e5484d; border-color: #e5484d; }
 .ex-danger:hover:not(:disabled) { background: #d13b40; }
@@ -6444,6 +6504,7 @@ textarea:focus-visible {
 @keyframes exRise { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
 
 .ex-connect {
+  container: exconnect / inline-size;
   position: relative;
   overflow: hidden;
   border-radius: 18px;
@@ -6478,9 +6539,13 @@ textarea:focus-visible {
 
 .ex-connect-grid {
   display: grid;
-  gap: 24px;
+  gap: 18px;
   padding: 18px;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+@container exconnect (min-width: 820px) {
+  .ex-connect-grid { grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: 24px; }
+  .ex-connect-grid > .ex-connect-side { padding-top: 0; padding-left: 22px; border-top: 0; border-left: 1px solid var(--tr-line-soft); }
 }
 .ex-connect-form { display: grid; gap: 12px; align-content: start; }
 .ex-connect-select {
@@ -6500,8 +6565,9 @@ textarea:focus-visible {
   display: grid;
   gap: 16px;
   align-content: start;
-  padding-left: 22px;
-  border-left: 1px solid var(--tr-line-soft);
+  min-width: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--tr-line-soft);
 }
 .ex-side-block { display: grid; gap: 9px; }
 .ex-side-title {
@@ -6531,7 +6597,8 @@ textarea:focus-visible {
 .ex-howto[open] summary { margin-bottom: 12px; }
 .ex-howto .ex-link { margin-top: 12px; }
 
-.ex-connect-done { display: flex; align-items: center; gap: 16px; padding: 18px; }
+.ex-connect-done { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 18px; }
+.ex-connect-done > .min-w-0 { flex: 1 1 260px; }
 .ex-connect-done h3 { font-size: 16px; color: var(--tr-ink); letter-spacing: -0.02em; }
 .ex-connect-done p { margin-top: 3px; font-size: 12.5px; line-height: 1.55; color: var(--text-muted); }
 .ex-connect-done .ex-done-icon { width: 50px; height: 50px; border-radius: 16px; }
@@ -6543,10 +6610,7 @@ textarea:focus-visible {
   background: rgba(249, 115, 22, 0.08);
 }
 
-@media (max-width: 880px) {
-  .ex-connect-grid { grid-template-columns: 1fr; gap: 18px; }
-  .ex-connect-side { padding-left: 0; padding-top: 16px; border-left: 0; border-top: 1px solid var(--tr-line-soft); }
-  .ex-connect-done { flex-wrap: wrap; }
+@media (max-width: 640px) {
   .ex-connect-done .trade-btn { margin-left: 0; width: 100%; }
 }
 
@@ -6917,37 +6981,32 @@ textarea:focus-visible {
 
 /* ── Live trading controls + automation ── */
 .ex-trade-ctl {
+  container: extrade / inline-size;
   display: grid;
   align-content: center;
-  gap: 2px;
-  height: 100%;
-  min-height: 132px;
-  padding: 8px 14px;
+  min-width: 0;
+  padding: 2px 14px;
   border-radius: 12px;
   background: var(--tr-field);
   border: 1px solid var(--tr-line-soft);
 }
+.ex-trade-ctl > .ex-issue { margin-bottom: 12px; }
 .ex-trade-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 168px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
-  min-height: 56px;
+  gap: 14px;
+  padding: 12px 0;
 }
+.ex-trade-row + .ex-trade-row { border-top: 1px solid var(--tr-line-soft); }
 .ex-trade-row b { display: block; font-size: 12.5px; line-height: 1.3; color: var(--tr-ink-2); }
-.ex-trade-row small { display: block; margin-top: 2px; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
-.ex-cap {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 68px;
-  align-items: center;
-  gap: 8px;
-  width: 168px;
-}
-.ex-cap .trade-input { width: 100%; height: 34px; font-size: 12.5px; text-align: right; }
+.ex-trade-row small { display: block; margin-top: 3px; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+.ex-cap { display: grid; grid-template-columns: 96px auto; align-items: center; gap: 8px; }
+.ex-cap .trade-input { width: 100%; height: 34px; font-family: var(--tr-mono); font-size: 12.5px; text-align: right; }
 .ex-switch { justify-self: end; }
-@media (max-width: 560px) {
-  .ex-trade-row { grid-template-columns: minmax(0, 1fr); gap: 8px; min-height: 0; padding: 8px 0; }
-  .ex-cap { width: 100%; }
+@container extrade (max-width: 400px) {
+  .ex-trade-row-cap { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .ex-trade-row-cap .ex-cap { grid-template-columns: minmax(0, 1fr) auto; }
 }
 
 .ex-switch {
@@ -6974,8 +7033,10 @@ textarea:focus-visible {
 .ex-switch:disabled { opacity: 0.6; cursor: default; }
 
 .ex-auto {
+  container: exauto / inline-size;
   display: grid;
-  gap: 14px;
+  gap: 16px;
+  min-width: 0;
   padding: 18px;
   border-radius: 16px;
   border: 1px solid var(--tr-line);
@@ -6998,64 +7059,126 @@ textarea:focus-visible {
 }
 .ex-auto-note { font-size: 12px; line-height: 1.55; color: var(--text-muted); }
 .ex-auto-note b { color: var(--tr-ink-2); }
-.ex-auto-callout {
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(249, 115, 22, 0.06);
-  border: 1px solid rgba(249, 115, 22, 0.16);
+/* Badi jagah par steps baayein aur copy karne wali cheezein daayein. */
+.ex-auto-body { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@container exauto (min-width: 980px) {
+  .ex-auto-body { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 28px; }
 }
-.ex-guide-grid { align-items: stretch; }
-@media (min-width: 900px) {
+
+/* Steps: patli jagah par timeline, beech mein teen cards. */
+.ex-guide-grid { gap: 0; }
+.ex-guide-grid > li { position: relative; padding-bottom: 16px; }
+.ex-guide-grid > li:last-child { padding-bottom: 0; }
+.ex-guide-grid > li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 11.5px;
+  top: 30px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--tr-line);
+}
+@container exauto (min-width: 640px) and (max-width: 979px) {
   .ex-guide-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-  .ex-guide-grid > li {
+  .ex-guide-grid > li,
+  .ex-guide-grid > li:last-child {
     flex-direction: column;
     gap: 10px;
-    height: 100%;
     padding: 14px;
     border-radius: 12px;
     background: var(--tr-field);
     border: 1px solid var(--tr-line-soft);
   }
+  .ex-guide-grid > li:not(:last-child)::before { display: none; }
 }
+@container exauto (min-width: 980px) {
+  .ex-guide-grid { padding: 16px; border-radius: 12px; background: var(--tr-field); border: 1px solid var(--tr-line-soft); }
+}
+
+.ex-auto-fields { display: grid; gap: 14px; min-width: 0; }
+/* Label aur Copy ek line mein, neeche poori chaudai ka code box. */
 .ex-auto-row {
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-}
-.ex-auto-row .trade-label { margin: 0; padding-top: 11px; }
-@media (max-width: 720px) {
-  .ex-auto-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .ex-auto-row .trade-label { padding-top: 0; }
-}
-.ex-auto-value { display: flex; align-items: flex-start; gap: 8px; }
-.ex-auto-value .trade-btn { flex: none; align-self: flex-start; }
-.ex-auto-value code {
-  flex: 1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px 10px;
   min-width: 0;
-  padding: 9px 11px;
-  border-radius: 9px;
-  font-size: 11.5px;
-  word-break: break-all;
-  color: var(--tr-ink-2);
-  background: var(--tr-field);
-  border: 1px solid var(--tr-line-soft);
 }
+.ex-auto-row .trade-label { grid-column: 1; grid-row: 1; margin: 0; }
+.ex-auto-value { display: contents; }
+.ex-auto-value > .trade-btn,
+.ex-auto-actions { grid-column: 2; grid-row: 1; }
+.ex-auto-actions { display: flex; gap: 6px; }
+.ex-auto-value code[data-hidden] { letter-spacing: 0.02em; color: var(--text-secondary); }
+/* Phone par label ke liye jagah — Show/Hide sirf aankh ka icon. */
+@container exauto (max-width: 440px) {
+  .ex-reveal-text { display: none; }
+}
+.ex-auto-value code,
 .ex-auto-code {
-  flex: 1;
+  grid-column: 1 / -1;
+  grid-row: 2;
   min-width: 0;
   margin: 0;
   padding: 10px 12px;
-  border-radius: 9px;
+  border-radius: 11px;
   font-family: var(--tr-mono);
   font-size: 11.5px;
-  line-height: 1.6;
   color: var(--tr-ink-2);
   background: var(--tr-field);
   border: 1px solid var(--tr-line-soft);
-  overflow-x: auto;
 }
+.ex-auto-value code { line-height: 1.55; word-break: break-all; }
+.ex-auto-code { line-height: 1.6; overflow-x: auto; }
+/* Opt-in: band ho to sirf ek patli line — khulne par poora setup. */
+.ex-auto[data-open="false"] { gap: 0; }
+.ex-auto-toggle { flex: none; }
+.ex-auto-chev { transition: transform 0.15s; }
+.ex-auto[data-open="true"] .ex-auto-chev { transform: rotate(180deg); }
+.ex-pill-warn { color: var(--p-ffb300); background: rgba(255, 179, 0, 0.12); border-color: rgba(255, 179, 0, 0.32); }
+
+/* Alert aane par asal mein kya hoga — Ready / Paper only / Blocked. */
+.ex-auto-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid;
+}
+.ex-auto-status[data-tone="ready"] { color: var(--green); background: rgba(34, 197, 94, 0.07); border-color: rgba(34, 197, 94, 0.26); }
+.ex-auto-status[data-tone="paper"] { color: var(--accent); background: rgba(249, 115, 22, 0.06); border-color: rgba(249, 115, 22, 0.18); }
+.ex-auto-status[data-tone="blocked"] { color: var(--amber); background: rgba(255, 179, 0, 0.07); border-color: rgba(255, 179, 0, 0.3); }
+.ex-auto-status > svg { flex: none; margin-top: 1px; }
+.ex-auto-status-copy { flex: 1; min-width: 0; }
+.ex-auto-status b { display: block; font-size: 12.5px; font-weight: 700; line-height: 1.35; color: var(--tr-ink); }
+.ex-auto-status p { margin-top: 2px; font-size: 12px; line-height: 1.5; color: var(--text-secondary); }
+.ex-auto-status code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-family: var(--tr-mono);
+  font-size: 11px;
+  color: var(--tr-ink-2);
+  background: rgb(var(--ink-rgb) / 0.07);
+}
+.ex-auto-status .trade-btn { flex: none; align-self: center; }
+@container exauto (max-width: 560px) {
+  .ex-auto-status { flex-wrap: wrap; }
+  .ex-auto-status .trade-btn { margin-left: 28px; }
+}
+
+/* "Turn on live trading" se yahan aaye to switch wala dabba ek baar chamke. */
+@keyframes exFlash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+  25%, 60% { box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.45); border-color: rgba(249, 115, 22, 0.6); }
+}
+.ex-trade-ctl[data-flash="true"] { animation: exFlash 1.6s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .ex-trade-ctl[data-flash="true"] { animation: none; border-color: rgba(249, 115, 22, 0.6); }
+}
+
+.ex-auto-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.ex-auto-foot .ex-confirm { flex: 1 1 100%; }
 
 /* ── P&L panel ── */
 .pnl { display: grid; gap: 14px; }

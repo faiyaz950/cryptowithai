@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -9,16 +9,19 @@ import {
   Copy as CopyIcon,
   Check,
   CheckCircle2,
+  ChevronDown,
   Copy,
   ExternalLink,
   Eye,
   EyeOff,
   Globe2,
+  Info,
   KeyRound,
   Loader2,
   Lock,
   Plug,
   Plus,
+  Power,
   RefreshCw,
   ShieldCheck,
   ShieldOff,
@@ -214,6 +217,11 @@ export default function ExchangesDesk() {
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "failed">("loading");
   const [catalogTry, setCatalogTry] = useState(0);
   const [balances, setBalances] = useState<Record<number, BalanceState>>({});
+  // Webhook bina `exchange_account_id` ke usi account par jaata hai jo backend
+  // ki list mein sabse upar ho (sabse haal mein update hua). Live toggle save
+  // karna bhi account ko update karta hai, isliye wo turant primary ban jaata hai.
+  const [primaryId, setPrimaryId] = useState<number | null>(null);
+  const [flashLive, setFlashLive] = useState<number | null>(null);
 
   const onApiError = useCallback(
     (err: unknown) => {
@@ -249,6 +257,7 @@ export default function ExchangesDesk() {
     try {
       const list = (await listExchangeAccounts(token)).filter((a) => a.is_active);
       setAccounts(list);
+      setPrimaryId(list[0]?.id ?? null);
       setLoadError(null);
       for (const account of list) void loadBalances(account.id);
     } catch (err) {
@@ -261,6 +270,28 @@ export default function ExchangesDesk() {
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
+
+  const onSettingsSaved = useCallback((accountId: number, saved: TradingSettings) => {
+    setAccounts((list) =>
+      list
+        ? list.map((a) =>
+            a.id === accountId
+              ? { ...a, live_trading_enabled: saved.live_trading_enabled, max_order_notional: saved.max_order_notional }
+              : a,
+          )
+        : list,
+    );
+    setPrimaryId(accountId);
+  }, []);
+
+  /** Automation ke "Turn on" se seedha us card ke Live trading switch tak. */
+  const showLiveSwitch = useCallback((accountId: number) => {
+    const el = document.getElementById(`ex-live-${accountId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.focus({ preventScroll: true });
+    setFlashLive(accountId);
+    window.setTimeout(() => setFlashLive((cur) => (cur === accountId ? null : cur)), 1800);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -382,19 +413,27 @@ export default function ExchangesDesk() {
               </button>
             </section>
           ) : (
-            <section className="ex-connected">
-              {accounts.map((account) => (
-                <ConnectedCard
-                  key={account.id}
-                  account={account}
-                  catalog={catalog}
-                  token={token!}
-                  balance={balances[account.id]}
-                  onReloadBalance={() => loadBalances(account.id)}
-                  onChanged={loadAccounts}
-                  onApiError={onApiError}
-                />
-              ))}
+            <section>
+              <div className="ex-section-head">
+                <h3>Connected accounts</h3>
+                <span>{accounts.length === 1 ? "1 key" : `${accounts.length} keys`}</span>
+              </div>
+              <div className="ex-connected">
+                {accounts.map((account) => (
+                  <ConnectedCard
+                    key={account.id}
+                    account={account}
+                    catalog={catalog}
+                    token={token!}
+                    balance={balances[account.id]}
+                    onReloadBalance={() => loadBalances(account.id)}
+                    onChanged={loadAccounts}
+                    onApiError={onApiError}
+                    flashLive={flashLive === account.id}
+                    onSettingsSaved={(saved) => onSettingsSaved(account.id, saved)}
+                  />
+                ))}
+              </div>
             </section>
           )}
         </>
@@ -412,7 +451,17 @@ export default function ExchangesDesk() {
         />
       )}
 
-      {user && token && <AutomationPanel token={token} onApiError={onApiError} />}
+      {/* Bina exchange ke webhook ka koi kaam nahi — har alert reject hi hota. */}
+      {user && token && accounts && accounts.length > 0 && (
+        <AutomationPanel
+          token={token}
+          onApiError={onApiError}
+          primary={accounts.find((a) => a.id === primaryId) ?? accounts[0]}
+          catalog={catalog}
+          accountCount={accounts.length}
+          onShowLiveSwitch={showLiveSwitch}
+        />
+      )}
 
       <section>
         <div className="ex-section-head">
@@ -445,7 +494,12 @@ export default function ExchangesDesk() {
         )}
         <div className="ex-grid">
           {catalog.map((entry) => (
-            <article key={entry.id} className="ex-tile" data-available={entry.available}>
+            <article
+              key={entry.id}
+              className="ex-tile"
+              data-available={entry.available}
+              style={{ "--tint": entry.tint } as CSSProperties}
+            >
               <div className="ex-tile-top">
                 <ExchangeMark entry={entry} size={36} />
                 <span className={`ex-pill ${entry.available ? "ex-pill-live" : ""}`}>
@@ -496,6 +550,8 @@ function ConnectedCard({
   onReloadBalance,
   onChanged,
   onApiError,
+  flashLive,
+  onSettingsSaved,
 }: {
   account: ExchangeAccount;
   catalog: CatalogEntry[];
@@ -504,6 +560,8 @@ function ConnectedCard({
   onReloadBalance: () => void;
   onChanged: () => Promise<void>;
   onApiError: (err: unknown) => void;
+  flashLive: boolean;
+  onSettingsSaved: (saved: TradingSettings) => void;
 }) {
   const entry = catalogFor(catalog, account.exchange);
   const [busy, setBusy] = useState<"verify" | "delete" | null>(null);
@@ -616,26 +674,26 @@ function ConnectedCard({
         </div>
       )}
 
-      <dl className="ex-facts">
-        <div>
-          <dt>Trading</dt>
-          <dd data-on={account.can_trade ? "true" : "false"}>{account.can_trade ? "Enabled" : "Off"}</dd>
-        </div>
-        <div>
-          <dt>Withdrawal</dt>
-          <dd title="Exchange par withdrawal permission OFF rakhein">Off</dd>
-        </div>
-        <div>
-          <dt>Last verified</dt>
-          <dd>{timeAgo(account.last_verified_at)}</dd>
-        </div>
-        <div>
-          <dt>Connected</dt>
-          <dd>{account.created_at ? new Date(account.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}</dd>
-        </div>
-      </dl>
+      <div className="ex-card-body">
+        <dl className="ex-facts">
+          <div>
+            <dt>Trading</dt>
+            <dd data-on={account.can_trade ? "true" : "false"}>{account.can_trade ? "Enabled" : "Off"}</dd>
+          </div>
+          <div>
+            <dt>Withdrawal</dt>
+            <dd title="Exchange par withdrawal permission OFF rakhein">Off</dd>
+          </div>
+          <div>
+            <dt>Last verified</dt>
+            <dd>{timeAgo(account.last_verified_at)}</dd>
+          </div>
+          <div>
+            <dt>Connected</dt>
+            <dd>{account.created_at ? new Date(account.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}</dd>
+          </div>
+        </dl>
 
-      <div className="ex-card-split">
         <div className="ex-balances">
           <div className="ex-balances-head">
             <Wallet className="w-3.5 h-3.5" />
@@ -648,7 +706,13 @@ function ConnectedCard({
           <div className="ex-balances-body">{balanceBody}</div>
         </div>
 
-        <TradingControls account={account} token={token} onApiError={onApiError} />
+        <TradingControls
+          account={account}
+          token={token}
+          onApiError={onApiError}
+          flash={flashLive}
+          onSaved={onSettingsSaved}
+        />
       </div>
 
       {(issue || account.last_error) && (
@@ -993,10 +1057,14 @@ function TradingControls({
   account,
   token,
   onApiError,
+  flash,
+  onSaved,
 }: {
   account: ExchangeAccount;
   token: string;
   onApiError: (err: unknown) => void;
+  flash: boolean;
+  onSaved: (saved: TradingSettings) => void;
 }) {
   const [settings, setSettings] = useState<TradingSettings | null>(null);
   const [cap, setCap] = useState(account.max_order_notional ? String(account.max_order_notional) : "");
@@ -1010,7 +1078,9 @@ function TradingControls({
     setBusy(true);
     setError("");
     try {
-      setSettings(await updateTradingSettings(token, account.id, input));
+      const saved = await updateTradingSettings(token, account.id, input);
+      setSettings(saved);
+      onSaved(saved);
     } catch (err) {
       onApiError(err);
       setError(err instanceof Error ? err.message : "Save failed");
@@ -1020,7 +1090,7 @@ function TradingControls({
   };
 
   return (
-    <div className="ex-trade-ctl">
+    <div className="ex-trade-ctl" data-flash={flash || undefined}>
       <div className="ex-trade-row">
         <span className="min-w-0">
           <b>Live trading</b>
@@ -1034,6 +1104,7 @@ function TradingControls({
         </span>
         <button
           type="button"
+          id={`ex-live-${account.id}`}
           className={`ex-switch ${enabled ? "is-on" : ""}`}
           role="switch"
           aria-checked={enabled}
@@ -1045,7 +1116,7 @@ function TradingControls({
         </button>
       </div>
 
-      <div className="ex-trade-row">
+      <div className="ex-trade-row ex-trade-row-cap">
         <span className="min-w-0">
           <b>Ek order ki limit</b>
           <small>
@@ -1081,47 +1152,164 @@ function TradingControls({
 
 /* ── TradingView automation ────────────────────────────── */
 
-function CopyRow({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
+/** Token ko chhupao, sirf aakhri 4 akshar dikhein — screenshot mein leak na ho. */
+function maskSecret(value: string, secret?: string): string {
+  if (!secret) return value;
+  const hidden = `${"•".repeat(12)}${secret.slice(-4)}`;
+  return value.includes(secret) ? value.replace(secret, hidden) : value.replace(/[^/]+$/, hidden);
+}
+
+function CopyRow({ label, value, secret }: { label: string; value: string; secret?: string }) {
   const [copied, setCopied] = useState(false);
+  const [shown, setShown] = useState(false);
+  const hidden = Boolean(secret) && !shown;
   return (
     <div className="ex-auto-row">
       <span className="trade-label">{label}</span>
       <span className="ex-auto-value">
-        <code className={mono ? "ex-mono" : ""}>{value}</code>
-        <button
-          type="button"
-          className="trade-btn trade-btn-ghost trade-size-sm"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(value);
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1600);
-            } catch {
-              /* clipboard band ho to user khud select kar le */
-            }
-          }}
-        >
-          {copied ? <Check className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
-          {copied ? "Copied" : "Copy"}
-        </button>
+        <code className="ex-mono" data-hidden={hidden || undefined}>
+          {hidden ? maskSecret(value, secret) : value}
+        </code>
+        <span className="ex-auto-actions">
+          {secret && (
+            <button
+              type="button"
+              className="trade-btn trade-btn-ghost trade-size-sm"
+              aria-pressed={shown}
+              aria-label={shown ? `Hide ${label}` : `Show ${label}`}
+              onClick={() => setShown((v) => !v)}
+            >
+              {shown ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              <span className="ex-reveal-text">{shown ? "Hide" : "Show"}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="trade-btn trade-btn-ghost trade-size-sm"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(value);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1600);
+              } catch {
+                /* clipboard band ho to user khud select kar le */
+              }
+            }}
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <CopyIcon className="w-3.5 h-3.5" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </span>
       </span>
     </div>
   );
 }
+
+const TV_OPEN_KEY = "cryptomantra_tv_automation_open";
+
+type AlertStatus = {
+  tone: "ready" | "paper" | "blocked";
+  pill: string;
+  title: string;
+  text: ReactNode;
+  fixLive?: boolean;
+};
+
+/**
+ * Alert aane par asal mein kya hoga — server ka switch, key ki permission
+ * aur account ka Live trading toggle, teeno milakar. Sirf server ka "LIVE"
+ * dikhana galat bharosa deta tha jab account ka toggle off ho.
+ */
+function alertStatus(setup: TradingViewSetup, primary: ExchangeAccount, name: string, accountCount: number): AlertStatus {
+  if (setup.mode === "paper") {
+    return {
+      tone: "paper",
+      pill: "Paper only",
+      title: "Alerts are recorded, not sent",
+      text: <>Live orders are off on the server, so alerts stay in paper mode and never reach {name}.</>,
+    };
+  }
+  if (!primary.can_trade) {
+    return {
+      tone: "blocked",
+      pill: "Blocked",
+      title: "Alerts will be rejected",
+      text: <>The {name} key has no trading permission. Re-verify it, or connect a key with Trading on.</>,
+    };
+  }
+  if (!primary.live_trading_enabled) {
+    return {
+      tone: "blocked",
+      pill: "Blocked",
+      title: "Alerts will be rejected",
+      text: (
+        <>
+          Live trading is off for {name}. Turn it on to let alerts place real orders — or add{" "}
+          <code>&quot;mode&quot;: &quot;paper&quot;</code> to the message to test first.
+        </>
+      ),
+      fixLive: true,
+    };
+  }
+  return {
+    tone: "ready",
+    pill: "Ready",
+    title: "Alerts place real orders",
+    text: (
+      <>
+        Orders go to {name} ({primary.label}) and stop at its per-order limit.
+        {accountCount > 1 && (
+          <>
+            {" "}For another account, add <code>exchange_account_id</code> to the message.
+          </>
+        )}
+      </>
+    ),
+  };
+}
+
+const STATUS_ICON = { ready: CheckCircle2, paper: Info, blocked: AlertTriangle } as const;
 
 /**
  * TradingView se signal lekar order lagana.
  *
  * URL mein token hi poori pehchan hai (TradingView login nahi bhej sakta),
  * isliye ise password ki tarah dikhaya aur samjhaya jaata hai.
+ *
+ * Ye advanced cheez hai, isliye band hi khulta hai — user khud "Set up"
+ * dabaye tab setup laaya jaata hai (aur tabhi token banta hai).
  */
-function AutomationPanel({ token, onApiError }: { token: string; onApiError: (err: unknown) => void }) {
+function AutomationPanel({
+  token,
+  onApiError,
+  primary,
+  catalog,
+  accountCount,
+  onShowLiveSwitch,
+}: {
+  token: string;
+  onApiError: (err: unknown) => void;
+  primary: ExchangeAccount;
+  catalog: CatalogEntry[];
+  accountCount: number;
+  onShowLiveSwitch: (accountId: number) => void;
+}) {
+  // Ye panel sirf accounts aane ke baad (browser mein) banta hai, isliye
+  // localStorage seedha padhna safe hai — server render mein ye hota hi nahi.
+  const [open, setOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(TV_OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [setup, setSetup] = useState<TradingViewSetup | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
+    if (!open) return;
     let alive = true;
     fetchTradingViewSetup(token)
       .then((data) => alive && setSetup(data))
@@ -1132,7 +1320,17 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
     return () => {
       alive = false;
     };
-  }, [token, onApiError]);
+  }, [open, token, onApiError]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try {
+      window.localStorage.setItem(TV_OPEN_KEY, next ? "1" : "0");
+    } catch {
+      /* private mode — sirf is visit tak yaad rahega */
+    }
+  };
 
   const regenerate = async () => {
     setBusy(true);
@@ -1148,8 +1346,11 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
     }
   };
 
+  const status = setup ? alertStatus(setup, primary, catalogFor(catalog, primary.exchange).name, accountCount) : null;
+  const StatusIcon = status ? STATUS_ICON[status.tone] : null;
+
   return (
-    <section className="ex-auto">
+    <section className="ex-auto" data-open={open}>
       <div className="ex-auto-head">
         <span className="ex-auto-icon">
           <Bot className="w-4 h-4" />
@@ -1158,102 +1359,133 @@ function AutomationPanel({ token, onApiError }: { token: string; onApiError: (er
           <h3>TradingView automation</h3>
           <p>Apne chart ke alert se seedha order — bina kuch code kiye.</p>
         </div>
-        {setup && (
-          <span className={`ex-pill ${setup.mode === "live" ? "ex-pill-live" : ""}`}>
-            {setup.mode === "live" ? "Live" : "Paper mode"}
+        {open && status && (
+          <span
+            className={`ex-pill ${status.tone === "ready" ? "ex-pill-live" : status.tone === "blocked" ? "ex-pill-warn" : ""}`}
+          >
+            {status.pill}
           </span>
         )}
+        <button
+          type="button"
+          className="trade-btn trade-btn-ghost trade-size-sm ex-auto-toggle"
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          {open ? "Hide" : "Set up"}
+          <ChevronDown className="w-3.5 h-3.5 ex-auto-chev" />
+        </button>
       </div>
 
-      {error && <IssueBox message={error} />}
+      {open && error && <IssueBox message={error} />}
 
-      {!setup ? (
+      {!open ? null : !setup ? (
         <div className="ex-balance-skeleton shimmer" />
       ) : (
         <>
-          {setup.mode === "paper" && (
-            <p className="ex-auto-note ex-auto-callout">
-              Paper mode — signals are recorded, not sent to the exchange.
-            </p>
-          )}
-
-          <ol className="ex-guide ex-guide-grid">
-            <li>
-              <span className="ex-guide-num">1</span>
-              <div>
-                <b>Create TradingView alert</b>
-                <p>Enable Webhook URL in Notifications.</p>
+          {status && StatusIcon && (
+            <div className="ex-auto-status" data-tone={status.tone} role="status">
+              <StatusIcon className="w-4 h-4" aria-hidden />
+              <div className="ex-auto-status-copy">
+                <b>{status.title}</b>
+                <p>{status.text}</p>
               </div>
-            </li>
-            <li>
-              <span className="ex-guide-num">2</span>
-              <div>
-                <b>Paste webhook URL</b>
-                <p>Do not share this URL.</p>
-              </div>
-            </li>
-            <li>
-              <span className="ex-guide-num">3</span>
-              <div>
-                <b>Paste JSON message</b>
-                <p>
-                  Use <code className="ex-mono">{"{{close}}"}</code> for price; set{" "}
-                  <code className="ex-mono">order_type</code> to <code className="ex-mono">market</code> for market orders.
-                </p>
-              </div>
-            </li>
-          </ol>
-
-          <CopyRow label="Webhook URL" value={setup.webhook_url} />
-          <div className="ex-auto-row">
-            <span className="trade-label">Alert message</span>
-            <span className="ex-auto-value">
-              <pre className="ex-auto-code">{setup.message_template}</pre>
-              <button
-                type="button"
-                className="trade-btn trade-btn-ghost trade-size-sm"
-                onClick={() => void navigator.clipboard.writeText(setup.message_template).catch(() => {})}
-              >
-                <CopyIcon className="w-3.5 h-3.5" />
-                Copy
-              </button>
-            </span>
-          </div>
-
-          <p className="ex-auto-note">
-            Max <b>{setup.rate_limit_per_minute} signals</b>/min.
-          </p>
-
-          {confirming ? (
-            <div className="ex-confirm">
-              <p>
-                <b>Create new URL?</b> The old URL stops working immediately — paste the new URL in TradingView too.
-              </p>
-              <div className="flex gap-2">
+              {status.fixLive && (
                 <button
                   type="button"
                   className="trade-btn trade-btn-ghost trade-size-sm"
-                  onClick={() => setConfirming(false)}
-                  disabled={busy}
+                  onClick={() => onShowLiveSwitch(primary.id)}
                 >
-                  Cancel
+                  <Power className="w-3.5 h-3.5" />
+                  Turn on live trading
                 </button>
-                <button type="button" className="trade-btn trade-size-sm ex-danger" onClick={regenerate} disabled={busy}>
-                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                  Yes, create new
-                </button>
+              )}
+            </div>
+          )}
+
+          <div className="ex-auto-body">
+            <ol className="ex-guide ex-guide-grid">
+              <li>
+                <span className="ex-guide-num">1</span>
+                <div>
+                  <b>Create TradingView alert</b>
+                  <p>Enable Webhook URL in Notifications.</p>
+                </div>
+              </li>
+              <li>
+                <span className="ex-guide-num">2</span>
+                <div>
+                  <b>Paste webhook URL</b>
+                  <p>Do not share this URL.</p>
+                </div>
+              </li>
+              <li>
+                <span className="ex-guide-num">3</span>
+                <div>
+                  <b>Paste JSON message</b>
+                  <p>
+                    Use <code className="ex-mono">{"{{close}}"}</code> for price; set{" "}
+                    <code className="ex-mono">order_type</code> to <code className="ex-mono">market</code> for market orders.
+                  </p>
+                </div>
+              </li>
+            </ol>
+
+            <div className="ex-auto-fields">
+              <CopyRow key={setup.token} label="Webhook URL" value={setup.webhook_url} secret={setup.token} />
+              <div className="ex-auto-row">
+                <span className="trade-label">Alert message</span>
+                <span className="ex-auto-value">
+                  <pre className="ex-auto-code">{setup.message_template}</pre>
+                  <button
+                    type="button"
+                    className="trade-btn trade-btn-ghost trade-size-sm"
+                    onClick={() => void navigator.clipboard.writeText(setup.message_template).catch(() => {})}
+                  >
+                    <CopyIcon className="w-3.5 h-3.5" />
+                    Copy
+                  </button>
+                </span>
+              </div>
+
+              <div className="ex-auto-foot">
+                <p className="ex-auto-note">
+                  Max <b>{setup.rate_limit_per_minute} signals</b>/min.
+                </p>
+
+                {confirming ? (
+                  <div className="ex-confirm">
+                    <p>
+                      <b>Create new URL?</b> The old URL stops working immediately — paste the new URL in TradingView too.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="trade-btn trade-btn-ghost trade-size-sm"
+                        onClick={() => setConfirming(false)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </button>
+                      <button type="button" className="trade-btn trade-size-sm ex-danger" onClick={regenerate} disabled={busy}>
+                        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        Yes, create new
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="trade-btn trade-btn-ghost trade-size-sm ex-danger-ghost"
+                    onClick={() => setConfirming(true)}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Create new URL
+                  </button>
+                )}
               </div>
             </div>
-          ) : (
-            <button
-              type="button"
-              className="trade-btn trade-btn-ghost trade-size-sm ex-danger-ghost"
-              onClick={() => setConfirming(true)}
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Create new URL
-            </button>
-          )}
+          </div>
         </>
       )}
     </section>
