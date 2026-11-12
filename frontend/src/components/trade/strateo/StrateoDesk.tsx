@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
+  ChevronDown,
   ChevronsLeft,
   ChevronsRight,
   Crosshair,
@@ -87,9 +88,10 @@ const TF_CHOICES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const SIGNALS_SEEN_KEY = "strateo.signalsSeen";
 const EMPTY_CANDLES: Candle[] = [];
 
-const ENTRY_COLOR = "#8b7bff";
-const UP = "#2fd67b";
-const DOWN = "#ff5c6c";
+// strateo.css ke --st-up / --st-down / entry amber se match.
+const ENTRY_COLOR = "#f5a524";
+const UP = "#1ed68c";
+const DOWN = "#ff5a5f";
 
 interface Toast {
   id: number;
@@ -295,6 +297,36 @@ export default function StrateoDesk() {
   const chartLoading = chart.key !== chartKey;
   const livePrice = live?.key === chartKey ? live.price : null;
   const lastPrice = livePrice ?? candles[candles.length - 1]?.close ?? null;
+
+  /**
+   * Instrument bar ke liye 24h change / high / low — chart ki candles se hi.
+   * 1m jaise chhote timeframe par 600 candles 24h se kam hoti hain, tab label
+   * utne ghante ka (jaise "10h") taaki number jhooth na bole.
+   */
+  const dayStats = useMemo(() => {
+    if (!candles.length) return null;
+    const last = candles[candles.length - 1];
+    const from = last.time - 24 * 3600_000;
+    let i = candles.length - 1;
+    while (i > 0 && candles[i - 1].time > from) i -= 1;
+    const bars = candles.slice(i);
+    const barMs = intervalMinutes(interval) * 60_000;
+    const hours = (last.time + barMs - bars[0].time) / 3600_000;
+    const price = lastPrice ?? last.close;
+    let high = price;
+    let low = price;
+    for (const b of bars) {
+      if (b.high > high) high = b.high;
+      if (b.low < low) low = b.low;
+    }
+    const open = bars[0].open;
+    return {
+      label: hours >= 23.5 ? "24h" : `${Math.max(1, Math.round(hours))}h`,
+      change: open ? ((price - open) / open) * 100 : 0,
+      high,
+      low,
+    };
+  }, [candles, interval, lastPrice]);
 
   /* ── Derived ───────────────────────────────────────── */
 
@@ -815,23 +847,33 @@ export default function StrateoDesk() {
               : null
       : null;
   const modalBot = modal?.kind === "remove" ? bots.find((b) => b.id === modal.row.botId) : undefined;
+  const coin = symbolLabel(symbol).split("/")[0];
+  const feedState = exchange === "delta" ? liveStatus ?? "connecting" : "poll";
+  const feedLabel =
+    exchange === "delta"
+      ? liveStatus === "live"
+        ? "Live"
+        : liveStatus === "unsupported"
+          ? "Polling"
+          : "Connecting"
+      : "Every 10s";
+  const dayTone = dayStats ? (dayStats.change > 0 ? "st-up" : dayStats.change < 0 ? "st-down" : "") : "";
 
   return (
     <div className="strateo" data-panel={panelOpen}>
       <div className="st-stage">
         <header className="st-topbar">
           <span className="st-brand">
-            <StrateoMark />
+            <StrateoMark size={28} />
             <span className="st-brand-text">
               <span className="st-brand-name">Strateo</span>
-              <span className="st-brand-sub">Strategy console</span>
+              <span className="st-brand-sub">Strategy terminal</span>
             </span>
           </span>
 
           <span className="st-divider" aria-hidden />
 
           <div className="st-exchanges" aria-label="Exchanges">
-            <span className="st-kicker">Venue</span>
             <div className="st-exch-group">
               {prefs.exchanges.map((id) => {
                 const connected = accounts.some((a) => a.exchange === id && a.is_active);
@@ -940,90 +982,127 @@ export default function StrateoDesk() {
           </div>
         </header>
 
-        <div className="st-chartbar">
-          <label className="st-symbol">
-            <span className="sr-only">Coin</span>
-            <select value={symbol} onChange={(e) => writePrefs({ symbol: e.target.value })}>
-              {CRYPTO_SYMBOLS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label.replace("/", "")}
-                </option>
+        <section className="st-chartwrap" aria-label={`${symbolLabel(symbol)} chart`}>
+          <div className="st-instr">
+            <label className="st-symbol">
+              <span className="st-coin" data-coin={coin} aria-hidden>
+                {coin.slice(0, 1)}
+              </span>
+              <span className="sr-only">Coin</span>
+              <select value={symbol} onChange={(e) => writePrefs({ symbol: e.target.value })}>
+                {CRYPTO_SYMBOLS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label.replace("/", "")}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 st-symbol-caret" aria-hidden />
+            </label>
+            <div className="st-instr-px">
+              <b className={dayTone}>{lastPrice != null ? fmtPrice(lastPrice) : "—"}</b>
+              <small>{source?.name ?? venueName(exchange)} · Perpetual</small>
+            </div>
+            <dl className="st-instr-stats">
+              <div>
+                <dt>{dayStats?.label ?? "24h"} change</dt>
+                <dd className={dayTone}>{dayStats ? fmtPct(dayStats.change) : "—"}</dd>
+              </div>
+              <div>
+                <dt>{dayStats?.label ?? "24h"} high</dt>
+                <dd>{dayStats ? fmtPrice(dayStats.high) : "—"}</dd>
+              </div>
+              <div>
+                <dt>{dayStats?.label ?? "24h"} low</dt>
+                <dd>{dayStats ? fmtPrice(dayStats.low) : "—"}</dd>
+              </div>
+              <div>
+                <dt>Feed</dt>
+                <dd>
+                  <span className="st-conn" data-state={feedState}>
+                    <span aria-hidden />
+                    {feedLabel}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+            <div className="st-tfs" role="group" aria-label="Timeframe">
+              {intervals.map((tf) => (
+                <button
+                  key={tf}
+                  type="button"
+                  data-active={tf === interval}
+                  aria-pressed={tf === interval}
+                  onClick={() => writePrefs({ interval: tf })}
+                >
+                  {tf.replace("d", "D")}
+                </button>
               ))}
-            </select>
-          </label>
-          {lastPrice != null && <span className="st-chartbar-px">{fmtPrice(lastPrice)}</span>}
-          <div className="st-tfs" role="group" aria-label="Timeframe">
-            {intervals.map((tf) => (
-              <button key={tf} type="button" data-active={tf === interval} onClick={() => writePrefs({ interval: tf })}>
-                {tf.replace("d", "D")}
-              </button>
-            ))}
+            </div>
           </div>
-          <span className="st-chartbar-venue">{source?.name ?? venueName(exchange)}</span>
-        </div>
 
-        <div className="st-chart">
-          {chartError ? (
-            <div className="st-chart-msg">
-              <AlertTriangle className="w-5 h-5" />
-              <b>{venueName(exchange)} chart unavailable for {symbolLabel(symbol)}</b>
-              <span>{chartError}</span>
-            </div>
-          ) : chartLoading && !candles.length ? (
-            <div className="st-chart-msg">
-              <Loader2 className="w-5 h-5 st-spin" />
-              <span>Loading {venueName(exchange)} chart…</span>
-            </div>
-          ) : (
-            <CandleChart
-              candles={candles}
-              symbol={symbolLabel(symbol).replace("/", "")}
-              interval={interval}
-              venue={exchangeName}
-              showEma9={false}
-              showEma21={false}
-              showEma50={false}
-              viewKey={`${exchange}|${symbol}|${interval}`}
-              live={exchange === "delta" && supportsLiveCandles(interval) ? { symbol, interval } : undefined}
-              onLiveBar={onLiveBar}
-              onLiveStatus={setLiveStatus}
-              markers={markers}
-              levels={levels}
-              priceAnchor={bubble}
-              reveal={reveal}
-              rightGap={34}
-              drawingsKey={`strateo:${exchange}:${symbol}`}
-            />
-          )}
-          {toasts.length > 0 && (
-            <div className="st-toasts" role="status" aria-live="polite">
-              {toasts.map((t) => (
-                <div key={t.id} className="st-toast" data-tone={t.tone}>
-                  <span>{t.text}</span>
-                  {t.action && (
+          <div className="st-chart">
+            {chartError ? (
+              <div className="st-chart-msg">
+                <AlertTriangle className="w-5 h-5" />
+                <b>{venueName(exchange)} chart unavailable for {symbolLabel(symbol)}</b>
+                <span>{chartError}</span>
+              </div>
+            ) : chartLoading && !candles.length ? (
+              <div className="st-chart-msg">
+                <Loader2 className="w-5 h-5 st-spin" />
+                <span>Loading {venueName(exchange)} chart…</span>
+              </div>
+            ) : (
+              <CandleChart
+                candles={candles}
+                symbol={symbolLabel(symbol).replace("/", "")}
+                interval={interval}
+                venue={exchangeName}
+                showEma9={false}
+                showEma21={false}
+                showEma50={false}
+                viewKey={`${exchange}|${symbol}|${interval}`}
+                live={exchange === "delta" && supportsLiveCandles(interval) ? { symbol, interval } : undefined}
+                onLiveBar={onLiveBar}
+                onLiveStatus={setLiveStatus}
+                markers={markers}
+                levels={levels}
+                priceAnchor={bubble}
+                reveal={reveal}
+                rightGap={34}
+                drawingsKey={`strateo:${exchange}:${symbol}`}
+              />
+            )}
+            {toasts.length > 0 && (
+              <div className="st-toasts" role="status" aria-live="polite">
+                {toasts.map((t) => (
+                  <div key={t.id} className="st-toast" data-tone={t.tone}>
+                    <span>{t.text}</span>
+                    {t.action && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          t.action?.run();
+                          setToasts((rows) => rows.filter((x) => x.id !== t.id));
+                        }}
+                      >
+                        {t.action.label}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => {
-                        t.action?.run();
-                        setToasts((rows) => rows.filter((x) => x.id !== t.id));
-                      }}
+                      className="st-toast-x"
+                      aria-label="Dismiss"
+                      onClick={() => setToasts((rows) => rows.filter((x) => x.id !== t.id))}
                     >
-                      {t.action.label}
+                      <X className="w-3.5 h-3.5" />
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    className="st-toast-x"
-                    aria-label="Dismiss"
-                    onClick={() => setToasts((rows) => rows.filter((x) => x.id !== t.id))}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
 
         <footer className="st-dock">
           <span className="st-dock-label" data-on={applied.length > 0}>
@@ -1064,19 +1143,10 @@ export default function StrateoDesk() {
             </button>
           </div>
           <span className="st-dock-status">
-            <span className="st-conn" data-state={exchange === "delta" ? liveStatus ?? "connecting" : "poll"}>
-              <span aria-hidden />
-              {exchange === "delta"
-                ? liveStatus === "live"
-                  ? "Connected"
-                  : liveStatus === "unsupported"
-                    ? "Polling"
-                    : "Connecting"
-                : "Polling every 10s"}
+            <span className="st-mode" data-mode={settings.mode}>
+              {settings.mode === "live" ? "Live" : "Paper"}
             </span>
-            <span className="st-dock-info">
-              {applied.length} applied · {settings.mode === "live" ? "Live" : "Paper"} · 1-Click {oneClickOn ? "on" : "off"}
-            </span>
+            <span className="st-dock-info">1-Click {oneClickOn ? "on" : "off"}</span>
           </span>
         </footer>
       </div>

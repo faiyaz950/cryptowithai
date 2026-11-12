@@ -12,6 +12,7 @@ import {
   Lock,
   Radio,
   RefreshCw,
+  Search,
   SlidersHorizontal,
   Star,
   Trophy,
@@ -89,8 +90,8 @@ interface Props {
 }
 
 const TABS: { id: PanelTab; label: string; icon: typeof Radio }[] = [
-  { id: "signals", label: "Signals", icon: Radio },
   { id: "strategies", label: "Strategies", icon: Layers },
+  { id: "signals", label: "Signals", icon: Radio },
   { id: "settings", label: "Settings", icon: SlidersHorizontal },
 ];
 
@@ -130,6 +131,7 @@ export default function StrateoPanel(props: Props) {
     scrollToken,
   } = props;
   const [market, setMarket] = useState<StrateoMarket>("crypto");
+  const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -197,6 +199,11 @@ export default function StrateoPanel(props: Props) {
     });
   }, [marketDefs, favorites, appliedIds]);
 
+  /** Naam ya banane wale se dhoondo — 25 strategies mein scroll karna lamba hai. */
+  const q = query.trim().toLowerCase();
+  const matches = (d: StrategyDef) => !q || d.name.toLowerCase().includes(q) || authorOf(d).toLowerCase().includes(q);
+  const listed = ordered.filter((d) => d.id !== (q ? null : trending?.def.id) && matches(d));
+
   const card = (def: StrategyDef) => (
     <StrategyCard
       key={def.id}
@@ -246,40 +253,35 @@ export default function StrateoPanel(props: Props) {
       </header>
 
       <div className="st-panel-body" ref={bodyRef}>
-        <section className="st-banner" aria-label="Strateo">
-          <div className="st-banner-top">
-            <span className="st-kicker">Backtested on</span>
-            <span className="st-banner-brand">
-              Strateo <span>×</span> {exchangeName}
+        <section className="st-context" aria-label="Strateo">
+          <div className="st-context-main">
+            <span className="st-coin" data-coin={symbolLabel(symbol).split("/")[0]} aria-hidden>
+              {symbolLabel(symbol).charAt(0)}
             </span>
-          </div>
-          <div className="st-banner-main">
-            <b className="st-banner-coin">{symbolLabel(symbol).split("/")[0]}</b>
-            <div className="st-banner-copy">
-              <span className="st-banner-count">{defs.length} strategies</span>
-              <p className="st-banner-line">Apply a strategy. It trades on your exchange.</p>
+            <div className="st-context-copy">
+              <b>
+                {defs.length} strategies on {symbolLabel(symbol).split("/")[0]}
+              </b>
+              <small title="Every number below is a real backtest on this coin. Past results do not promise future ones.">
+                Backtested on {exchangeName} candles · past ≠ future
+              </small>
             </div>
           </div>
-          <div className="st-banner-foot">
-            <span>Every number below is a real backtest on this coin · Past ≠ future*</span>
-            {gate.ok ? (
-              <button type="button" className="st-banner-cta" onClick={() => onTab("strategies")}>
-                Trade now <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            ) : gate.reason === "login" ? (
-              <Link href={LOGIN_HREF} className="st-banner-cta">
-                Log in to trade <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            ) : gate.reason === "exchange" ? (
-              <Link href={EXCHANGES_HREF} className="st-banner-cta">
-                Connect exchange <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            ) : (
-              <button type="button" className="st-banner-cta" onClick={onGate}>
-                {gate.reason === "error" ? "Retry" : "Checking…"} <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+          {/* Asli CTA (Log in / Connect) LockBar mein hai — yahan sirf haalat. */}
+          {gate.ok ? (
+            <span className="st-ready">
+              <span aria-hidden /> Ready
+            </span>
+          ) : (
+            <button type="button" className="st-ready" data-locked onClick={onGate} title={gate.title}>
+              {gate.reason === "checking" ? (
+                <Loader2 className="w-3 h-3 st-spin" aria-hidden />
+              ) : (
+                <Lock className="w-3 h-3" aria-hidden />
+              )}
+              {gate.reason === "checking" ? "Checking" : "Locked"}
+            </button>
+          )}
         </section>
 
         <div className="st-markets" role="tablist" aria-label="Market">
@@ -306,17 +308,22 @@ export default function StrateoPanel(props: Props) {
           </div>
         ) : tab === "strategies" ? (
           <div className="st-list">
-            <div className="st-list-head">
-              <h2>All strategies ({marketDefs.length})</h2>
-              <button type="button" className="st-text-btn" onClick={onRefresh} title="Run every backtest again">
-                <RefreshCw className={`w-3.5 h-3.5${pending.size ? " st-spin" : ""}`} />
-                {pending.size ? `${defs.length - pending.size}/${defs.length}` : "Refresh"}
-              </button>
-            </div>
+            <label className="st-search">
+              <Search className="w-3.5 h-3.5" aria-hidden />
+              <span className="sr-only">Search strategies</span>
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search strategy or author"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
 
             {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
 
-            {trending && (
+            {trending && !q && (
               <section className="st-trending" aria-label="Trending strategy">
                 <div className="st-trending-head">
                   <Trophy className="w-3.5 h-3.5" aria-hidden />
@@ -335,7 +342,24 @@ export default function StrateoPanel(props: Props) {
               </section>
             )}
 
-            {ordered.filter((d) => d.id !== trending?.def.id).map(card)}
+            <div className="st-list-head">
+              <h2>
+                {q ? `Results (${listed.length})` : `All strategies (${marketDefs.length})`}
+              </h2>
+              <button type="button" className="st-text-btn" onClick={onRefresh} title="Run every backtest again">
+                <RefreshCw className={`w-3.5 h-3.5${pending.size ? " st-spin" : ""}`} />
+                {pending.size ? `${defs.length - pending.size}/${defs.length}` : "Refresh"}
+              </button>
+            </div>
+
+            {listed.length ? (
+              listed.map(card)
+            ) : (
+              <div className="st-empty">
+                <b>No strategy matches “{query.trim()}”</b>
+                <span>Try a shorter name or the author, like “EMA” or “MT5”.</span>
+              </div>
+            )}
           </div>
         ) : tab === "signals" ? (
           <>
@@ -418,13 +442,21 @@ function StrategyCard({
   const week = stats?.week ?? [];
   const weekMax = Math.max(0.01, ...week.map((d) => Math.abs(d.pct)));
   const win = stats?.winRate ?? null;
+  const tone = today > 0 ? "st-up" : today < 0 ? "st-down" : "st-flat";
+  const coin = stats ? symbolLabel(stats.symbol).split("/")[0] : "";
+  const barHeight = (pct: number, result: string) =>
+    `${result === "none" ? 0 : Math.max(14, (Math.abs(pct) / weekMax) * 100)}%`;
+  const detailId = `st-card-${def.id}`;
 
   return (
     <article className="st-card" data-applied={applied} data-focused={focused} aria-label={def.name}>
+      {/* Watchlist row — dabao to chart par trades aur neeche poori detail. */}
       <div
         className="st-card-top"
         role="button"
         tabIndex={0}
+        aria-expanded={focused}
+        aria-controls={focused ? detailId : undefined}
         onClick={onFocus}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -438,7 +470,11 @@ function StrategyCard({
           <Icon className="w-4 h-4" aria-hidden />
         </span>
         <div className="st-card-id">
-          <h3 className="st-card-name">{def.name}</h3>
+          <h3 className="st-card-name">
+            <span>{def.name}</span>
+            {fav && <Star className="w-3 h-3 st-card-flag" fill="currentColor" aria-label="Favourite" />}
+            {bell && <BellRing className="w-3 h-3 st-card-flag" aria-label="Alerts on" />}
+          </h3>
           <div className="st-chips">
             <span className="st-chip">by {authorOf(def)}</span>
             <span className="st-chip st-chip-tf" title={server ? "Runs as a server bot, 24×7" : "Monitored while Strateo is open"}>
@@ -446,132 +482,159 @@ function StrategyCard({
               {server ? " · 24×7" : ""}
             </span>
             {options && (
-              <span className="st-chip" title="Options strategy — Strateo shows the signal; you trade the legs on your exchange">
-                Options · signals
+              <span className="st-chip st-chip-opt" title="Options strategy — signals only: Strateo shows the signal; you trade the legs on your exchange">
+                Options
               </span>
             )}
             {applied && <span className="st-chip st-chip-live">Running</span>}
           </div>
         </div>
-        <div className="st-card-actions">
-          <button
-            type="button"
-            className="st-icon-btn st-toggle"
-            data-on={bell}
-            aria-pressed={bell}
-            aria-label={bell ? "Turn off signal alerts" : "Alert me on signals"}
-            title={bell ? "Alerts on" : "Alert me on signals"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onBell();
-            }}
-          >
-            <BellIcon className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            className="st-icon-btn st-toggle"
-            data-on={fav}
-            aria-pressed={fav}
-            aria-label={fav ? "Remove from favourites" : "Add to favourites"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onFav();
-            }}
-          >
-            <Star className="w-4 h-4" fill={fav ? "currentColor" : "none"} />
-          </button>
-        </div>
-      </div>
-
-      <div className="st-card-stats">
-        <div className="st-stat">
-          <span className="st-label">Win rate</span>
+        <span className="st-spark" aria-hidden>
+          {!loading &&
+            !stats?.error &&
+            week.map((d) => <i key={d.key} data-r={d.result} style={{ height: barHeight(d.pct, d.result) }} />)}
+        </span>
+        <div className="st-card-quote">
           {loading ? (
             <span className="st-shimmer st-shimmer-xs" />
-          ) : (
-            <>
-              <b className="st-stat-val">{win != null ? `${Math.round(win)}%` : "—"}</b>
-              <span className="st-meter" aria-hidden>
-                <span style={{ width: `${Math.max(0, Math.min(100, win ?? 0))}%` }} />
-              </span>
-            </>
-          )}
-        </div>
-        <div className="st-stat st-stat-week">
-          <span className="st-label">Last 5 days</span>
-          {loading ? (
-            <span className="st-shimmer st-shimmer-row" />
           ) : stats?.error ? (
-            <span className="st-muted-sm" title={stats.error}>
-              Not available on {symbolLabel(stats.symbol).split("/")[0]}
+            <span className="st-return st-flat" title={stats.error}>
+              —
             </span>
-          ) : (
-            <div className="st-week" aria-label="Result of each of the last five days">
-              {week.map((d) => (
-                <span
-                  key={d.key}
-                  className="st-day"
-                  data-r={d.result}
-                  title={`${d.label} ${d.key}: ${d.trades ? `${fmtPct(d.pct)} · ${d.trades} trade${d.trades > 1 ? "s" : ""}` : "no closed trade"}`}
-                >
-                  <span className="st-day-bar">
-                    <span style={{ height: `${d.result === "none" ? 0 : Math.max(14, (Math.abs(d.pct) / weekMax) * 100)}%` }} />
-                  </span>
-                  <span className="st-day-letter">{d.letter}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="st-stat st-stat-today">
-          <span className="st-label">Today</span>
-          {loading ? (
-            <span className="st-shimmer st-shimmer-xs" />
-          ) : stats?.error ? (
-            <span className="st-muted-sm">—</span>
           ) : (
             <span
-              className={`st-return ${today > 0 ? "st-up" : today < 0 ? "st-down" : "st-flat"}`}
+              className={`st-return ${tone}`}
               title={
                 options
-                  ? "Trades closed today plus a trade opened today, as % of the option premium (not the coin price)"
-                  : "Trades closed today plus a trade opened today, as % price move (no leverage)"
+                  ? "Today: trades closed today plus a trade opened today, as % of the option premium (not the coin price)"
+                  : "Today: trades closed today plus a trade opened today, as % price move (no leverage)"
               }
             >
-              {fmtPct(today)}
-              {options && <small className="st-prem">premium</small>}
               {refreshing && <Loader2 className="w-3 h-3 st-spin st-muted" />}
+              {fmtPct(today)}
+              {options && <small className="st-prem">prem</small>}
             </span>
           )}
+          <small>
+            {loading ? "Backtesting…" : stats?.error ? `Not on ${coin}` : win != null ? `${Math.round(win)}% win` : "Today"}
+          </small>
         </div>
       </div>
 
-      <div className="st-card-foot">
-        {applied ? (
-          <button type="button" className="st-btn st-btn-outline" onClick={onRemove} disabled={busy}>
-            {busy ? <Loader2 className="w-4 h-4 st-spin" /> : "Remove"}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="st-btn st-btn-solid"
-            onClick={onApply}
-            disabled={busy}
-            title={lockHint ? `${lockHint} first` : undefined}
-          >
-            {busy ? (
-              <Loader2 className="w-4 h-4 st-spin" />
+      {focused && (
+        <div className="st-card-detail" id={detailId}>
+          <div className="st-card-stats">
+            <div className="st-stat">
+              <span className="st-label">Win rate</span>
+              {loading ? (
+                <span className="st-shimmer st-shimmer-xs" />
+              ) : (
+                <>
+                  <b className="st-stat-val">{win != null ? `${Math.round(win)}%` : "—"}</b>
+                  <span className="st-meter" aria-hidden>
+                    <span style={{ width: `${Math.max(0, Math.min(100, win ?? 0))}%` }} />
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="st-stat st-stat-week">
+              <span className="st-label">Last 5 days</span>
+              {loading ? (
+                <span className="st-shimmer st-shimmer-row" />
+              ) : stats?.error ? (
+                <span className="st-muted-sm" title={stats.error}>
+                  Not available on {symbolLabel(stats.symbol).split("/")[0]}
+                </span>
+              ) : (
+                <div className="st-week" aria-label="Result of each of the last five days">
+                  {week.map((d) => (
+                    <span
+                      key={d.key}
+                      className="st-day"
+                      data-r={d.result}
+                      title={`${d.label} ${d.key}: ${d.trades ? `${fmtPct(d.pct)} · ${d.trades} trade${d.trades > 1 ? "s" : ""}` : "no closed trade"}`}
+                    >
+                      <span className="st-day-bar">
+                        <span style={{ height: barHeight(d.pct, d.result) }} />
+                      </span>
+                      <span className="st-day-letter">{d.letter}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="st-stat st-stat-today">
+              <span className="st-label">Today</span>
+              {loading ? (
+                <span className="st-shimmer st-shimmer-xs" />
+              ) : stats?.error ? (
+                <span className="st-muted-sm">—</span>
+              ) : (
+                <span
+                  className={`st-return ${today > 0 ? "st-up" : today < 0 ? "st-down" : "st-flat"}`}
+                  title={
+                    options
+                      ? "Trades closed today plus a trade opened today, as % of the option premium (not the coin price)"
+                      : "Trades closed today plus a trade opened today, as % price move (no leverage)"
+                  }
+                >
+                  {fmtPct(today)}
+                  {options && <small className="st-prem">premium</small>}
+                  {refreshing && <Loader2 className="w-3 h-3 st-spin st-muted" />}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="st-card-foot">
+            <button
+              type="button"
+              className="st-icon-btn st-toggle"
+              data-on={bell}
+              aria-pressed={bell}
+              aria-label={bell ? "Turn off signal alerts" : "Alert me on signals"}
+              title={bell ? "Alerts on" : "Alert me on signals"}
+              onClick={onBell}
+            >
+              <BellIcon className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              className="st-icon-btn st-toggle"
+              data-on={fav}
+              aria-pressed={fav}
+              aria-label={fav ? "Remove from favourites" : "Add to favourites"}
+              title={fav ? "Favourite" : "Add to favourites"}
+              onClick={onFav}
+            >
+              <Star className="w-4 h-4" fill={fav ? "currentColor" : "none"} />
+            </button>
+            {applied ? (
+              <button type="button" className="st-btn st-btn-outline" onClick={onRemove} disabled={busy}>
+                {busy ? <Loader2 className="w-4 h-4 st-spin" /> : "Remove"}
+              </button>
             ) : (
-              <>
-                {lockHint && <Lock className="w-3.5 h-3.5 st-lock" aria-hidden />}
-                Apply
-                <ArrowRight className="w-3.5 h-3.5 st-btn-arrow" aria-hidden />
-              </>
+              <button
+                type="button"
+                className="st-btn st-btn-solid"
+                onClick={onApply}
+                disabled={busy}
+                title={lockHint ? `${lockHint} first` : undefined}
+              >
+                {busy ? (
+                  <Loader2 className="w-4 h-4 st-spin" />
+                ) : (
+                  <>
+                    {lockHint && <Lock className="w-3.5 h-3.5 st-lock" aria-hidden />}
+                    Apply
+                    <ArrowRight className="w-3.5 h-3.5 st-btn-arrow" aria-hidden />
+                  </>
+                )}
+              </button>
             )}
-          </button>
-        )}
-      </div>
+          </div>
+        </div>
+      )}
     </article>
   );
 }
