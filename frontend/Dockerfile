@@ -32,6 +32,9 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000
 RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
+# /app/.data par compose ka `frontend_data` volume lagta hai (funnel events).
+# Khali volume pehli mount par isi dir ki ownership leta hai, isliye nextjs ko do.
+RUN mkdir -p /app/.data && chown nextjs:nodejs /app/.data
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public

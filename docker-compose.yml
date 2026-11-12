@@ -62,6 +62,9 @@ services:
       BACKEND_URL: http://backend:8000
     depends_on:
       - backend
+    # Landing funnel events (/api/mukul/events) rebuild aur deploy ke baad bhi bache rahein.
+    volumes:
+      - frontend_data:/app/.data
 
   caddy:
     image: caddy:2-alpine
@@ -88,6 +91,7 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  frontend_data:
 
 networks:
   # Server ke doosre Compose projects isi network par Caddy tak pahunchte hain.
