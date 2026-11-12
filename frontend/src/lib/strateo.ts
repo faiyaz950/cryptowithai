@@ -105,6 +105,8 @@ export interface StrateoTrade {
   structure?: string;
   /** Options legs + expiry, jaise "-C76000 +C77000 · 16 Sep". */
   instrument?: string;
+  /** Grid basket (kai legs): pct basket ka asli P&L hai — pehli buy se live price ka move nahi. */
+  basket?: boolean;
 }
 
 export interface WeekDay {
@@ -172,9 +174,14 @@ function toTrade(t: BacktestTrade): StrateoTrade | null {
   const rawSide = String(t.side ?? "").toLowerCase();
   const structure = OPTION_STRUCTURES[rawSide];
   const side = sideOf(rawSide);
-  let pct = movePct(side, entry, exit);
+  // Grid basket: engine legs ka asli P&L % deta hai. Pehli buy se exit ka move yahan galat
+  // hota (price gira par hedge se basket profit mein band hua) — isliye wahi lo, flip nahi.
+  const basket = typeof t.pnl_pct === "number" && Number.isFinite(t.pnl_pct);
+  let pct = basket ? (t.pnl_pct as number) : movePct(side, entry, exit);
   // Options (short premium) jaise trades mein price ka move ulta padh sakta hai — P&L ka sign sach hai.
-  if (Number.isFinite(t.pnl) && t.pnl !== 0 && Math.sign(t.pnl) !== Math.sign(pct)) pct = Math.abs(pct) * Math.sign(t.pnl);
+  if (!basket && Number.isFinite(t.pnl) && t.pnl !== 0 && Math.sign(t.pnl) !== Math.sign(pct)) {
+    pct = Math.abs(pct) * Math.sign(t.pnl);
+  }
   const status = String(t.status || "").toUpperCase();
   const open = status === "CLOSED_AT_END" || status === "OPEN" || status === "OPEN_AT_END";
   const outcome: StrateoTrade["outcome"] = open
@@ -200,6 +207,7 @@ function toTrade(t: BacktestTrade): StrateoTrade | null {
     outcome,
     open,
     ...(structure ? { premium: true, structure, instrument: t.instrument || undefined } : {}),
+    ...(basket ? { basket: true } : {}),
   };
 }
 
@@ -220,6 +228,7 @@ export function statsFromResult(
   if (op && op.entry_price > 0) {
     const side = sideOf(op.side);
     const mark = Number(op.mark_price) || op.entry_price;
+    const basket = typeof op.unrealized_pct === "number" && Number.isFinite(op.unrealized_pct);
     trades.push({
       side,
       entryTime: toMs(op.entry_time),
@@ -228,9 +237,10 @@ export function statsFromResult(
       exit: mark,
       stop: op.stop_loss > 0 ? op.stop_loss : null,
       target: null,
-      pct: movePct(side, op.entry_price, mark),
+      pct: basket ? (op.unrealized_pct as number) : movePct(side, op.entry_price, mark),
       outcome: "open",
       open: true,
+      ...(basket ? { basket: true } : {}),
     });
   }
 
@@ -326,7 +336,8 @@ export async function computeStats(def: StrategyDef, symbol: string): Promise<St
 /* ── Stats cache + queue ───────────────────────────────── */
 
 // v2: options trades ab structure / premium ke saath — purana cache inke bina tha.
-const STATS_KEY = "strateo.stats.v2";
+// v3: grid basket (BGRH) ka % ab asli P&L se — purane cache mein ulta-pulta flip hua % tha.
+const STATS_KEY = "strateo.stats.v3";
 const STATS_EVENT = "strateo:stats";
 const memo = new Map<string, StrateoStats>();
 const inflight = new Map<string, Promise<StrateoStats>>();

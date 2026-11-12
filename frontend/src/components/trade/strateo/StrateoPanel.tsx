@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import type { ExchangeAccount } from "@/lib/accountApi";
+import { isBgrhStrategy } from "@/lib/buyGridRecovery";
 import { symbolLabel } from "@/lib/cryptoApi";
 import type { StrategyDef } from "@/lib/strategies";
 import {
@@ -30,6 +31,7 @@ import {
   fmtPct,
   fmtPrice,
   fmtSince,
+  fmtWhen,
   isOptionsStrategy,
   marketOf,
   outcomeLabel,
@@ -95,11 +97,8 @@ const TABS: { id: PanelTab; label: string; icon: typeof Radio }[] = [
   { id: "settings", label: "Settings", icon: SlidersHorizontal },
 ];
 
-const MARKETS: { id: StrateoMarket; label: string; flag: string }[] = [
-  { id: "crypto", label: "Crypto", flag: "₿" },
-  { id: "us", label: "US Stocks", flag: "US" },
-  { id: "in", label: "IN Stocks", flag: "IN" },
-];
+// US / IN stocks ke tab hata diye — Strateo abhi sirf crypto perpetuals par chalta hai.
+const MARKETS: { id: StrateoMarket; label: string; flag: string }[] = [{ id: "crypto", label: "Crypto", flag: "₿" }];
 
 export default function StrateoPanel(props: Props) {
   const {
@@ -130,7 +129,7 @@ export default function StrateoPanel(props: Props) {
     onClose,
     scrollToken,
   } = props;
-  const [market, setMarket] = useState<StrateoMarket>("crypto");
+  const market: StrateoMarket = "crypto";
   const [query, setQuery] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -175,10 +174,15 @@ export default function StrateoPanel(props: Props) {
     const pick = (pool: StrategyDef[]) => {
       let best: { def: StrategyDef; score: number; since: number } | null = null;
       for (const def of pool) {
+        // BGRH gold ka MT5 grid EA hai — candle-path simulation par uska ~100% win har baar top par
+        // aata, jabki Strateo exchange par grid chala hi nahi sakta. Isliye top performer nahi.
+        if (isBgrhStrategy(def.id)) continue;
         const s = stats[def.id];
         if (!s || s.error) continue;
+        // Aaj ghaate mein chal rahi strategy "top performer" nahi — pehle +1000 ke bonus se wo bhi jeet jaati thi.
+        if (s.todayPct < 0) continue;
         const week = s.week.reduce((sum, d) => sum + d.pct, 0);
-        const score = s.todayPct !== 0 ? s.todayPct + 1000 : week;
+        const score = s.todayPct > 0 ? s.todayPct + 1000 : week;
         if (score <= 0) continue;
         const lastToday = [...s.trades].reverse().find((t) => dayKey(t.entryTime) === dayKey(now));
         if (!best || score > best.score) best = { def, score, since: lastToday?.entryTime ?? s.computedAt };
@@ -293,7 +297,6 @@ export default function StrateoPanel(props: Props) {
               aria-selected={market === m.id}
               className="st-market"
               data-active={market === m.id}
-              onClick={() => setMarket(m.id)}
             >
               <span className="st-market-flag" data-m={m.id}>{m.flag}</span>
               {m.label} <span className="st-market-count">{counts[m.id]}</span>
@@ -301,12 +304,7 @@ export default function StrateoPanel(props: Props) {
           ))}
         </div>
 
-        {market !== "crypto" ? (
-          <div className="st-empty">
-            <b>No {market === "us" ? "US stock" : "Indian stock"} strategies yet</b>
-            <span>Strateo strategies run on crypto perpetuals today. Switch to Crypto.</span>
-          </div>
-        ) : tab === "strategies" ? (
+        {tab === "strategies" ? (
           <div className="st-list">
             <label className="st-search">
               <Search className="w-3.5 h-3.5" aria-hidden />
@@ -448,6 +446,19 @@ function StrategyCard({
     `${result === "none" ? 0 : Math.max(14, (Math.abs(pct) / weekMax) * 100)}%`;
   const detailId = `st-card-${def.id}`;
 
+  // Dheemi (4H) strategies hafton tak trade nahi karti — khaali bars ki jagah batao aakhri trade kab tha.
+  const asOf = stats?.computedAt ?? 0;
+  const quietWeek = week.length > 0 && week.every((d) => d.result === "none");
+  const lastDone = stats ? [...stats.trades].reverse().find((t) => !t.open) : undefined;
+  const lastAgo = !lastDone
+    ? null
+    : dayKey(lastDone.exitTime) === dayKey(asOf)
+      ? "today"
+      : `${Math.max(1, Math.floor((asOf - lastDone.exitTime) / 86_400_000))}d ago`;
+  // "Today" sirf aaj band ya aaj khule trades ginta hai — pehle se khula trade alag se dikhao.
+  const openBefore = stats?.open && dayKey(stats.open.entryTime) !== dayKey(asOf) ? stats.open : null;
+  const tradedToday = (stats?.todayClosed ?? 0) > 0 || Boolean(stats?.open && !openBefore);
+
   return (
     <article className="st-card" data-applied={applied} data-focused={focused} aria-label={def.name}>
       {/* Watchlist row — dabao to chart par trades aur neeche poori detail. */}
@@ -484,6 +495,14 @@ function StrategyCard({
             {options && (
               <span className="st-chip st-chip-opt" title="Options strategy — signals only: Strateo shows the signal; you trade the legs on your exchange">
                 Options
+              </span>
+            )}
+            {isBgrhStrategy(def.id) && (
+              <span
+                className="st-chip st-chip-sim"
+                title="Candle-path simulation of an XAUUSD MT5 grid EA — not tick-accurate. Strateo places single orders on its signals, not the grid and hedge basket."
+              >
+                Simulated
               </span>
             )}
             {applied && <span className="st-chip st-chip-live">Running</span>}
@@ -545,6 +564,18 @@ function StrategyCard({
                 <span className="st-muted-sm" title={stats.error}>
                   Not available on {symbolLabel(stats.symbol).split("/")[0]}
                 </span>
+              ) : quietWeek ? (
+                <div
+                  className="st-week-empty"
+                  title={
+                    lastDone
+                      ? `No trade closed in the last 5 days. Last one closed ${fmtWhen(lastDone.exitTime, asOf)} · ${outcomeLabel(lastDone)} ${fmtPct(lastDone.pct)}`
+                      : `No trade closed in the last ${stats?.days ?? 0} days`
+                  }
+                >
+                  <span>None closed</span>
+                  <small>{lastAgo ? `Last ${lastAgo}` : `None in ${stats?.days ?? 0}d`}</small>
+                </div>
               ) : (
                 <div className="st-week" aria-label="Result of each of the last five days">
                   {week.map((d) => (
@@ -582,6 +613,20 @@ function StrategyCard({
                   {options && <small className="st-prem">premium</small>}
                   {refreshing && <Loader2 className="w-3 h-3 st-spin st-muted" />}
                 </span>
+              )}
+              {!loading && !stats?.error && stats && !tradedToday && (
+                <small
+                  className="st-stat-note"
+                  title={
+                    openBefore
+                      ? `A trade opened ${fmtWhen(openBefore.entryTime, asOf)} is still open — Today counts only trades closed or opened today`
+                      : "No trade closed or opened today"
+                  }
+                >
+                  {openBefore
+                    ? `Open for ${Math.max(1, Math.floor((asOf - openBefore.entryTime) / 86_400_000))}d`
+                    : "No trade today"}
+                </small>
               )}
             </div>
           </div>

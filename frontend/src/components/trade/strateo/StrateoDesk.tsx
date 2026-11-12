@@ -11,6 +11,7 @@ import {
   Crosshair,
   Eye,
   HelpCircle,
+  History,
   Loader2,
   Lock,
   MousePointerClick,
@@ -54,6 +55,7 @@ import {
   fmtPct,
   fmtPrice,
   fmtUsd,
+  fmtClock,
   fmtWhen,
   isOptionsStrategy,
   lastSeenEntry,
@@ -85,6 +87,19 @@ import "./strateo.css";
 
 const CHART_BARS = 600;
 const TF_CHOICES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
+
+/** Chart lock ke peeche dhundhla nakli chart — sirf sajawat, koi asli price nahi. */
+const GHOST_CANDLES = Array.from({ length: 42 }, (_, i) => {
+  const mid = 100 + Math.sin(i / 4.2) * 34 + Math.sin(i / 1.7) * 9 - i * 0.9;
+  const body = 6 + Math.abs(Math.sin(i * 2.3)) * 14;
+  return {
+    x: i * 10 + 5,
+    mid,
+    body,
+    wick: body + 6 + Math.abs(Math.cos(i * 1.3)) * 10,
+    up: Math.sin(i * 1.9 + 0.6) > -0.15,
+  };
+});
 const SIGNALS_SEEN_KEY = "strateo.signalsSeen";
 const EMPTY_CANDLES: Candle[] = [];
 
@@ -231,6 +246,8 @@ export default function StrateoDesk() {
     failed: Boolean(acctLoaded && acctLoaded.rows == null),
   });
   const canTrade = gate.ok;
+  /** Chart bhi usi gate ke peeche — login aur kam se kam ek chalu exchange key ke baad hi dikhe. */
+  const chartLocked = !gate.ok;
   const oneClickOn = settings.oneClick && canTrade;
   const openGate = useCallback(() => setGateOpen(true), []);
 
@@ -702,29 +719,63 @@ export default function StrateoDesk() {
 
   /* ── Chart overlays ────────────────────────────────── */
 
+  /**
+   * Ek candle mein kai trades hon (jaise 1H strategy 4h chart par) to har ek ka alag label
+   * ek-doosre par chadh jaata tha. Ab ek candle ki saari entries ek dot, aur saare exits ek
+   * label — jaise "4× Target +0.6%" (un trades ka jod, jaise week/today mein).
+   */
   const markers = useMemo<ChartMarker[]>(() => {
     if (!focusStats || focusStats.error) return [];
-    const out: ChartMarker[] = [];
+    const barMs = (t: number) => (t > 1e12 ? t : t * 1000);
+    // Trade jis candle ke andar aaya, us candle ka time — CandleChart bhi isi tarah snap karta hai.
+    const barAt = (t: number): number => {
+      if (!candles.length || t < barMs(candles[0].time)) return t;
+      let lo = 0;
+      let hi = candles.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (barMs(candles[mid].time) <= t) lo = mid;
+        else hi = mid - 1;
+      }
+      return barMs(candles[lo].time);
+    };
+    const entries = new Map<string, { time: number; side: "long" | "short" }>();
+    const exits = new Map<
+      string,
+      { time: number; side: "long" | "short"; n: number; pct: number; labels: Set<string>; premium: boolean }
+    >();
     for (const t of focusStats.trades) {
-      out.push({
-        time: t.entryTime,
-        position: t.side === "long" ? "belowBar" : "aboveBar",
-        shape: "circle",
-        color: ENTRY_COLOR,
-      });
+      const eb = barAt(t.entryTime);
+      entries.set(`${eb}|${t.side}`, { time: eb, side: t.side });
       if (t.open) continue;
       const label =
         t.outcome === "stop" ? "SL Hit" : t.outcome === "target" ? "Target" : t.outcome === "trail" ? "Trail" : "Exit";
+      const xb = barAt(t.exitTime);
+      const key = `${xb}|${t.side}`;
+      const row = exits.get(key) ?? { time: xb, side: t.side, n: 0, pct: 0, labels: new Set<string>(), premium: false };
+      row.n += 1;
+      row.pct += t.pct;
+      row.labels.add(label);
+      row.premium ||= Boolean(t.premium);
+      exits.set(key, row);
+    }
+    const out: ChartMarker[] = [];
+    for (const e of entries.values()) {
+      out.push({ time: e.time, position: e.side === "long" ? "belowBar" : "aboveBar", shape: "circle", color: ENTRY_COLOR });
+    }
+    for (const x of exits.values()) {
+      const label = x.labels.size === 1 ? [...x.labels][0] : "exits";
+      const head = x.n > 1 ? (x.labels.size === 1 ? `${x.n}× ${label}` : `${x.n} exits`) : label;
       out.push({
-        time: t.exitTime,
-        position: t.side === "long" ? "aboveBar" : "belowBar",
+        time: x.time,
+        position: x.side === "long" ? "aboveBar" : "belowBar",
         shape: "square",
-        color: t.pct >= 0 ? UP : DOWN,
-        text: `${label} ${fmtPct(t.pct, 1)}${t.premium ? " prem" : ""}`,
+        color: x.pct >= 0 ? UP : DOWN,
+        text: `${head} ${fmtPct(x.pct, 1)}${x.premium ? " prem" : ""}`,
       });
     }
     return out;
-  }, [focusStats]);
+  }, [focusStats, candles]);
 
   /**
    * Chart par focus strategy ki haalat — user ki nazar se:
@@ -758,8 +809,9 @@ export default function StrateoDesk() {
     if (!focusDef) return null;
     const open = focusOpen;
     const prem = open?.premium ? " prem." : "";
+    // Grid basket ke kai legs hain — pehli buy se live price ka move basket ka P&L nahi; engine wala % lo.
     const move =
-      open && lastPrice && !open.premium
+      open && lastPrice && !open.premium && !open.basket
         ? (open.side === "long" ? 1 : -1) * ((lastPrice - open.entry) / open.entry) * 100
         : open?.pct;
     const side = open ? sideWord(open) : "Long";
@@ -828,6 +880,28 @@ export default function StrateoDesk() {
     () => (focusId && focusLast && !chartLoading ? { time: focusLast.entryTime, key: `${focusId}|${chartKey}` } : null),
     [focusId, focusLast, chartLoading, chartKey],
   );
+
+  /**
+   * Chart sirf CHART_BARS candles laata hai (5m par ~2 din). 4H strategy ke trades usse purane hon
+   * to chart khaali lagta hai — batao, aur strategy ki apni timeframe par jaane ka button do.
+   */
+  const [offHidden, setOffHidden] = useState<string | null>(null);
+  const offChart = useMemo(() => {
+    if (!focusId || !focusStats || focusStats.error || chartLoading || !candles.length) return null;
+    const lastMark = focusStats.trades.reduce((m, t) => Math.max(m, t.open ? t.entryTime : t.exitTime), 0);
+    const first = candles[0].time;
+    if (!lastMark || lastMark >= (first > 1e12 ? first : first * 1000)) return null;
+    const tf = focusStats.timeframe;
+    const clock = fmtClock(lastMark);
+    const day = dayKey(lastMark) === dayKey(now) ? "today" : fmtWhen(lastMark, now).replace(` ${clock}`, "");
+    return {
+      key: `${focusId}|${chartKey}`,
+      when: lastMark,
+      day,
+      clock,
+      tf: tf !== interval && intervals.includes(tf) ? tf : null,
+    };
+  }, [focusId, focusStats, chartLoading, candles, chartKey, interval, intervals, now]);
 
   /* ── Render ────────────────────────────────────────── */
 
@@ -1015,17 +1089,20 @@ export default function StrateoDesk() {
                 <dt>{dayStats?.label ?? "24h"} low</dt>
                 <dd>{dayStats ? fmtPrice(dayStats.low) : "—"}</dd>
               </div>
-              <div>
-                <dt>Feed</dt>
-                <dd>
-                  <span className="st-conn" data-state={feedState}>
-                    <span aria-hidden />
-                    {feedLabel}
-                  </span>
-                </dd>
-              </div>
+              {/* Chart band hai to live feed bhi nahi chalta — "Connecting" jhooth bolta. */}
+              {!chartLocked && (
+                <div>
+                  <dt>Feed</dt>
+                  <dd>
+                    <span className="st-conn" data-state={feedState}>
+                      <span aria-hidden />
+                      {feedLabel}
+                    </span>
+                  </dd>
+                </div>
+              )}
             </dl>
-            <div className="st-tfs" role="group" aria-label="Timeframe">
+            <div className="st-tfs" role="group" aria-label="Timeframe" hidden={chartLocked}>
               {intervals.map((tf) => (
                 <button
                   key={tf}
@@ -1041,7 +1118,63 @@ export default function StrateoDesk() {
           </div>
 
           <div className="st-chart">
-            {chartError ? (
+            {chartLocked ? (
+              <div className="st-chartlock" data-reason={gate.reason}>
+                <svg className="st-chartlock-art" viewBox="0 0 420 200" preserveAspectRatio="none" aria-hidden>
+                  {GHOST_CANDLES.map((c) => (
+                    <g key={c.x} className={c.up ? "up" : "down"}>
+                      <line x1={c.x} x2={c.x} y1={c.mid - c.wick / 2} y2={c.mid + c.wick / 2} />
+                      <rect x={c.x - 3} width={6} y={c.mid - c.body / 2} height={c.body} rx={1} />
+                    </g>
+                  ))}
+                </svg>
+                <div className="st-chartlock-card" role="status">
+                  <span className="st-chartlock-icon">
+                    {gate.reason === "checking" ? (
+                      <Loader2 className="w-5 h-5 st-spin" aria-hidden />
+                    ) : gate.reason === "error" ? (
+                      <AlertTriangle className="w-5 h-5" aria-hidden />
+                    ) : (
+                      <Lock className="w-5 h-5" aria-hidden />
+                    )}
+                  </span>
+                  <h3>
+                    {gate.reason === "login"
+                      ? "Log in to see the chart"
+                      : gate.reason === "exchange"
+                        ? "Connect an exchange to see the chart"
+                        : gate.title}
+                  </h3>
+                  <p>
+                    {gate.reason === "login"
+                      ? "The live chart and every strategy's trades open once you log in and connect your exchange."
+                      : gate.reason === "exchange"
+                        ? "Add your exchange API key once on Exchanges — the live chart and strategy trades open right after."
+                        : gate.body}
+                  </p>
+                  {(gate.reason === "login" || gate.reason === "exchange") && (
+                    <ol className="st-gate-steps">
+                      <li data-done={uid != null}>Log in to your account</li>
+                      <li data-done={false}>Connect your exchange API key</li>
+                      <li data-done={false}>The live chart unlocks here</li>
+                    </ol>
+                  )}
+                  {gate.reason === "login" ? (
+                    <Link href={LOGIN_HREF} className="st-btn st-btn-solid">
+                      Log in
+                    </Link>
+                  ) : gate.reason === "exchange" ? (
+                    <Link href={EXCHANGES_HREF} className="st-btn st-btn-solid">
+                      Connect exchange
+                    </Link>
+                  ) : gate.reason === "error" ? (
+                    <button type="button" className="st-btn st-btn-solid" onClick={() => setAcctNonce((n) => n + 1)}>
+                      Retry
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : chartError ? (
               <div className="st-chart-msg">
                 <AlertTriangle className="w-5 h-5" />
                 <b>{venueName(exchange)} chart unavailable for {symbolLabel(symbol)}</b>
@@ -1072,6 +1205,34 @@ export default function StrateoDesk() {
                 rightGap={34}
                 drawingsKey={`strateo:${exchange}:${symbol}`}
               />
+            )}
+            {!chartLocked && !chartError && offChart && offHidden !== offChart.key && (
+              <div className="st-offchart" role="status">
+                <History className="w-3.5 h-3.5" aria-hidden />
+                <span title={`Last trade ${fmtWhen(offChart.when, now)} — not on this ${interval.replace("d", "D")} chart`}>
+                  Last trade {offChart.day}
+                  <span className="st-offchart-time"> {offChart.clock}</span>
+                  <span className="st-offchart-why"> — not on this {interval.replace("d", "D")} chart</span>
+                </span>
+                {offChart.tf && (
+                  <button
+                    type="button"
+                    className="st-btn st-btn-solid st-btn-sm"
+                    onClick={() => writePrefs({ interval: offChart.tf ?? interval })}
+                  >
+                    Show on {offChart.tf.toUpperCase()}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="st-offchart-x"
+                  aria-label="Hide this hint"
+                  title="Hide"
+                  onClick={() => setOffHidden(offChart.key)}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             )}
             {toasts.length > 0 && (
               <div className="st-toasts" role="status" aria-live="polite">

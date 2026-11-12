@@ -504,6 +504,7 @@
 .st-conn[data-state="unsupported"] > span { background: var(--st-text-3); }
 
 .st-tfs { margin-left: auto; display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--st-field); flex: none; }
+.st-tfs[hidden] { display: none; }
 .st-tfs button {
   height: 28px;
   min-width: 36px;
@@ -518,7 +519,7 @@
 .st-tfs button:hover { color: var(--st-text); }
 .st-tfs button[data-active="true"] { background: var(--st-panel); color: var(--st-acc); font-weight: 700; box-shadow: inset 0 0 0 1px var(--st-line-2); }
 
-.st-chart { position: relative; flex: 1; min-height: 0; }
+.st-chart { position: relative; flex: 1; min-height: 0; container: stchart / inline-size; }
 .st-chart-msg {
   height: 100%;
   display: flex;
@@ -532,6 +533,73 @@
   color: var(--st-text-2);
 }
 .st-chart-msg b { color: var(--st-text); }
+
+/* Exchange jude bina chart band — peeche dhundhla nakli chart, beech mein aage ka raasta. */
+.st-chartlock {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: hidden;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--st-line) 60%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--st-line) 60%, transparent) 1px, transparent 1px);
+  background-size: 100% 48px, 64px 100%;
+}
+.st-chartlock-art {
+  position: absolute;
+  left: 3%;
+  top: 12%;
+  width: 94%;
+  height: 72%;
+  opacity: 0.32;
+  filter: blur(3px);
+  pointer-events: none;
+}
+.st-chartlock-art line { stroke-width: 1.2; }
+.st-chartlock-art .up { fill: var(--st-up); stroke: var(--st-up); }
+.st-chartlock-art .down { fill: var(--st-down); stroke: var(--st-down); }
+.st-chartlock-card {
+  position: relative;
+  width: min(380px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+  border: 1px solid var(--st-line-2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--st-panel) 88%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--st-shadow);
+  animation: st-in 0.2s ease-out;
+}
+.st-chartlock-icon {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--st-acc);
+  background: var(--st-acc-soft);
+}
+.st-chartlock[data-reason="error"] .st-chartlock-icon { color: var(--st-down); background: var(--st-down-soft, var(--st-field)); }
+.st-chartlock-card h3 { margin: 4px 0 0; font-size: 15px; font-weight: 700; line-height: 1.3; color: var(--st-text); }
+.st-chartlock-card p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--st-text-2); }
+.st-chartlock-card .st-gate-steps { width: 100%; margin-top: 6px; text-align: left; }
+.st-chartlock-card .st-btn { width: 100%; margin-top: 6px; }
+/* Phone par chart chhota — steps hata kar sirf baat aur button. */
+@container stchart (max-width: 520px) {
+  .st-chartlock { padding: 12px; }
+  .st-chartlock-card { padding: 16px 14px; gap: 6px; }
+  .st-chartlock-card .st-gate-steps { display: none; }
+}
 
 /* Chart par focus strategy ka tag — CandleChart ise aakhri price par rakhta hai,
    bayein dot + dashed leader line price tak. */
@@ -602,6 +670,55 @@
 .st-bubble-text > span { font-size: 12.5px; font-weight: 700; color: var(--st-text); }
 .st-bubble-text small { font-size: 11.5px; color: var(--st-text-2); }
 .st-bubble-text .st-bubble-last { font-size: 11px; color: var(--st-text-3); }
+
+/* Focus strategy ke trades loaded candles se purane — chart ke neeche beech mein chhota chip. */
+.st-offchart {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 40px;
+  z-index: 7;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 11px;
+  border: 1px solid var(--st-line-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--st-panel) 92%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--st-shadow);
+  font-size: 12px;
+  color: var(--st-text-2);
+  white-space: nowrap;
+  animation: st-in 0.18s ease-out;
+}
+.st-offchart > svg { flex: none; color: var(--st-text-3); }
+.st-offchart > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.st-offchart .st-btn-sm { flex: none; height: 28px; border-radius: 999px; }
+.st-offchart-x {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--st-text-3);
+  transition: background-color 0.15s, color 0.15s;
+}
+.st-offchart-x:hover { background: var(--st-panel-2); color: var(--st-text); }
+/* Patla chart (phone, ya chhoti window) — pehle reason, phir time aur icon hatao; date aur button bachein. */
+@container stchart (max-width: 520px) {
+  .st-offchart-why { display: none; }
+}
+@container stchart (max-width: 380px) {
+  .st-offchart { gap: 6px; }
+  .st-offchart > svg,
+  .st-offchart-time { display: none; }
+}
 
 .st-toasts {
   position: absolute;
@@ -772,13 +889,15 @@
 .st-ready[data-locked] { color: var(--st-acc); background: var(--st-acc-soft); }
 .st-ready[data-locked]:hover { box-shadow: inset 0 0 0 1px var(--st-acc-line); }
 
-.st-markets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 3px; border-radius: 9px; background: var(--st-field); }
+/* Sirf Crypto bacha hai — poori chaudai ki patti ki jagah chhota chip. */
+.st-markets { display: flex; width: fit-content; gap: 2px; padding: 3px; border-radius: 9px; background: var(--st-field); }
 .st-market {
   height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  padding: 0 12px;
   border-radius: 7px;
   font-size: 12.5px;
   font-weight: 650;
@@ -799,8 +918,6 @@
   color: #fff;
   background: #f7931a;
 }
-.st-market-flag[data-m="us"] { background: #2563eb; }
-.st-market-flag[data-m="in"] { background: #16a34a; }
 .st-market-count { font-family: var(--st-mono); font-size: 10.5px; color: var(--st-text-3); }
 .st-market[data-active="true"] .st-market-count { color: var(--st-acc); }
 
@@ -890,7 +1007,8 @@
 .st-chip { flex: none; font-size: 11.5px; color: var(--st-text-3); }
 .st-chip:first-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .st-chip-tf { padding: 1px 5px; border-radius: 4px; font-family: var(--st-mono); font-size: 10.5px; font-weight: 600; color: var(--st-text-2); background: var(--st-field); }
-.st-chip-opt { padding: 1px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700; color: var(--st-warn); background: var(--st-warn-soft); }
+.st-chip-opt,
+.st-chip-sim { padding: 1px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700; color: var(--st-warn); background: var(--st-warn-soft); }
 .st-chip-live { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px 1px 6px; border-radius: 999px; font-size: 10.5px; font-weight: 700; color: var(--st-up); background: var(--st-up-soft); }
 .st-chip-live::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: st-ping 1.8s ease-out infinite; }
 
@@ -937,6 +1055,13 @@
 .st-day[data-r="win"] .st-day-bar > span { background: var(--st-up); }
 .st-day[data-r="loss"] .st-day-bar > span { background: var(--st-down); }
 .st-day-letter { font-family: var(--st-mono); font-size: 9.5px; color: var(--st-text-3); }
+/* 5 din mein koi trade band nahi — bars jitni hi oonchai, taaki cards ek line mein rahein. */
+.st-week-empty { min-height: 37px; display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; }
+.st-week-empty > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-week-empty > span { font-size: 12.5px; font-weight: 600; color: var(--st-text-2); }
+.st-week-empty > small,
+.st-stat-note { font-size: 11px; color: var(--st-text-3); }
+.st-stat-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .st-card-foot { display: flex; align-items: center; gap: 6px; }
 .st-card-foot .st-icon-btn { width: 36px; height: 36px; border: 1px solid var(--st-line-2); }
@@ -1118,12 +1243,14 @@
   .st-tab > svg { display: none; }
   .st-tab[data-active="true"]::after { left: 8px; right: 8px; }
   .st-market { gap: 4px; font-size: 11.5px; }
-  .st-market-flag { display: none; }
   .st-card-top { grid-template-columns: 34px minmax(0, 1fr) 66px; }
   .st-spark { display: none; }
   .st-card-stats { grid-template-columns: 1fr 1fr; }
   .st-stat-week { grid-column: 1 / -1; order: 3; border-left: 0 !important; border-top: 1px solid var(--st-line); }
   .st-bubble { min-width: 0; }
+  .st-offchart .st-btn-sm,
+  .st-offchart-x { height: 34px; }
+  .st-offchart-x { width: 34px; }
   .st-icon-btn { width: 40px; height: 40px; }
   .st-topbar .st-icon-btn { width: 36px; height: 36px; }
 }

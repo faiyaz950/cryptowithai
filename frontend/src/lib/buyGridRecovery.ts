@@ -80,6 +80,13 @@ function basketPnl(positions: Pos[], px: number): number {
   return p;
 }
 
+/** Basket ke saare legs (buy + sell hedge) ki kul raqam — % P&L isi par, taaki contract size se farak na pade. */
+function grossNotional(positions: Pos[]): number {
+  let n = 0;
+  for (const x of positions) n += x.lots * BGRH_POINT_VALUE * x.price;
+  return n;
+}
+
 function candleMs(t: number): number {
   return t < 1e12 ? t * 1000 : t;
 }
@@ -134,6 +141,7 @@ interface SimResult {
     upside: boolean;
     seq: number;
     unrealized: number;
+    notional: number;
     mark: number;
   };
 }
@@ -215,6 +223,7 @@ function simulate(candles: Candle[], params: Partial<BgrhParams> = {}): SimResul
   const closeAll = (reason: "mini" | "basket" | "daily_dd", exitPrice: number, exitMs: number, barIndex: number) => {
     if (!positions.length) return;
     const pnl = basketPnl(positions, exitPrice);
+    const gross = grossNotional(positions);
     const buys = positions.filter((x) => x.side === "buy");
     const sells = positions.filter((x) => x.side === "sell");
     const buyLots = buys.reduce((a, x) => a + x.lots, 0);
@@ -240,6 +249,7 @@ function simulate(candles: Candle[], params: Partial<BgrhParams> = {}): SimResul
       exit_price: exitPrice,
       pnl,
       pnl_points: exitPrice - (initialBuy ?? exitPrice),
+      pnl_pct: gross > 0 ? (pnl / gross) * 100 : 0,
       status,
       quantity: buyLots,
       bars_held: Math.max(1, barIndex - cycleStartBar + 1),
@@ -351,6 +361,7 @@ function simulate(candles: Candle[], params: Partial<BgrhParams> = {}): SimResul
       upside,
       seq,
       unrealized,
+      notional: grossNotional(positions),
       mark: lastPx,
     },
   };
@@ -484,6 +495,7 @@ function toBacktestResult(
             initial_stop: sim.open.initialBuy - params.gridStep,
             quantity: BUY_LOT_SEQUENCE.slice(0, sim.open.seq).reduce((a, x) => a + x, 0) || params.initialLot,
             unrealized_pnl: Math.round(sim.open.unrealized * 100) / 100,
+            unrealized_pct: sim.open.notional > 0 ? (sim.open.unrealized / sim.open.notional) * 100 : 0,
             mark_price: sim.open.mark,
           }
         : null,

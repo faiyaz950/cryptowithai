@@ -233,6 +233,11 @@ export interface BacktestTrade {
   target?: number;
   pnl: number;
   pnl_points: number;
+  /**
+   * Grid basket (Buy Grid Recovery): saare legs ka P&L, un legs ki kul raqam ke % mein.
+   * Basket mein pehli buy se exit ka price move nateeja nahi batata — ye batata hai.
+   */
+  pnl_pct?: number;
   status: string;
   /** Trend Rider: coin quantity aur risk ke multiple mein nateeja. */
   quantity?: number;
@@ -394,6 +399,8 @@ export interface BacktestOpenPosition {
   initial_stop: number;
   quantity: number;
   unrealized_pnl: number;
+  /** Grid basket: khule legs ka P&L un legs ki kul raqam ke % mein (pnl_pct jaisa). */
+  unrealized_pct?: number;
   mark_price: number;
 }
 
