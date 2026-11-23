@@ -117,6 +117,58 @@ class NativeSignalTests(unittest.TestCase):
         blocked = eng.indicators(open2, high2, low2, close2, {"lookback": 20, "allow_shorts": False}, volume=volume)
         self.assertFalse(bool(blocked["short"][40]))
 
+    def test_btc_eth_rsi_pullback_needs_ema_and_reclaim(self):
+        n = 260
+        # Slow grind up so EMA 200 sits below price, then an RSI dip and reclaim.
+        close = np.linspace(90, 120, n)
+        close[230:238] = np.linspace(118, 108, 8)  # selloff → RSI oversold
+        close[238:245] = np.linspace(108.5, 114, 7)  # bounce → RSI crosses back above 30
+        open_ = np.r_[close[0], close[:-1]]
+        high = np.maximum(open_, close) + 0.3
+        low = np.minimum(open_, close) - 0.3
+        volume = np.full(n, 20.0)
+        times = np.arange(n, dtype=np.int64) * 3_600_000
+        eng = ns.ENGINES["btc-eth-rsi-pullback"]
+        ind = eng.indicators(
+            open_, high, low, close,
+            {"rsi_period": 14, "oversold": 30, "overbought": 70, "stop_atr": 1.5, "allow_shorts": True},
+            volume=volume,
+        )
+        self.assertTrue(bool(ind["long"].any()), "expected at least one long reclaim above EMA 200")
+        # Below EMA 200 path: force price under a flat EMA region with RSI reject.
+        close2 = np.linspace(120, 90, n)
+        close2[230:238] = np.linspace(92, 102, 8)
+        close2[238:245] = np.linspace(101.5, 95, 7)
+        open2 = np.r_[close2[0], close2[:-1]]
+        high2 = np.maximum(open2, close2) + 0.3
+        low2 = np.minimum(open2, close2) - 0.3
+        ind_s = eng.indicators(
+            open2, high2, low2, close2,
+            {"rsi_period": 14, "oversold": 30, "overbought": 70, "allow_shorts": True},
+            volume=volume,
+        )
+        self.assertTrue(bool(ind_s["short"].any()), "expected at least one short reject below EMA 200")
+        blocked = eng.indicators(
+            open2, high2, low2, close2,
+            {"rsi_period": 14, "allow_shorts": False},
+            volume=volume,
+        )
+        self.assertFalse(bool(blocked["short"].any()))
+
+        # Target is 2R off ATR stop.
+        long_i = int(np.flatnonzero(ind["long"])[0])
+        res = eng.simulate(
+            times, open_, high, low, close, volume=volume, capital=1000,
+            start_index=max(220, long_i - 5),
+            params={"rsi_period": 14, "oversold": 30, "stop_atr": 1.5, "target_r": 2, "allow_shorts": True},
+        )
+        self.assertTrue(res["trades"] or res["open_position"])
+        trade = res["trades"][0] if res["trades"] else None
+        if trade and trade["target"]:
+            dist = abs(trade["entry_price"] - trade["stop_loss"])
+            self.assertGreater(dist, 0)
+            self.assertAlmostEqual(abs(trade["target"] - trade["entry_price"]) / dist, 2.0, delta=0.2)
+
     def test_donchian_does_not_short(self):
         data = _series(400, seed=1)
         res = ns.ENGINES["donchian-breakout-20k"].simulate(

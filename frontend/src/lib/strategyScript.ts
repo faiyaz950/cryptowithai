@@ -97,6 +97,49 @@ export function buildScriptDoc(def: StrategyDef): StrategyScriptDoc {
 
 /** Hand-tuned docs for featured / complex engines. */
 const SCRIPT_OVERRIDES: Record<string, StrategyScriptDoc> = {
+  "btc-eth-rsi-pullback": {
+    overview:
+      "BTC/ETH RSI Pullback is a 1H mean-reversion system with a trend filter. It does not trade RSI alone: longs only above EMA 200 after RSI reclaims 30, shorts only below EMA 200 after RSI leaves 70. Stop is 1–1.5× ATR. Target is 1.5R–2R.",
+    howItWorks: [
+      {
+        title: "Trend filter",
+        body: "EMA 200 decides direction. Longs only when price is above it. Shorts only when price is below it.",
+      },
+      {
+        title: "Long",
+        body: "RSI 14 falls to or below 30, then crosses back above 30 while price stays above EMA 200. That reclaim close is the signal; the bot fills on the next open.",
+      },
+      {
+        title: "Short",
+        body: "RSI 14 rises to or above 70, then crosses back below 70 while price stays below EMA 200. Same fill: next candle open.",
+      },
+      {
+        title: "Stop and target",
+        body: "Stop is 1× or 1.5× ATR beyond the signal close. Target is 1.5R or 2R. No trailing stop.",
+      },
+    ],
+    keyFeatures: [
+      "EMA 200 + RSI 14",
+      "Long and short",
+      "1H only",
+      "ATR stop · 1.5R–2R target",
+      "Server bot · paper and live",
+    ],
+    applications: [
+      "Use on BTC or ETH when price is chopping or pulling back inside a larger trend.",
+      "Skip it on strong one-way breakout days — prefer BTC/ETH Breakout there.",
+      "Keep shorts on only if you want fades below EMA 200.",
+      "Backtest 1H before deploying a bot.",
+    ],
+    settings: [
+      { title: "RSI period", body: "Default 14." },
+      { title: "RSI oversold / overbought", body: "Default 30 / 70 — the reclaim levels." },
+      { title: "Stop · ATR ×", body: "1 or 1.5. Default 1.5." },
+      { title: "Target · R", body: "1.5 or 2. Default 2R." },
+    ],
+    conclusion:
+      "The trade is an RSI reclaim on the correct side of EMA 200, an ATR stop, and a 1.5R–2R target. Built for pullbacks, not for chasing breakouts.",
+  },
   "btc-eth-breakout": {
     overview:
       "BTC/ETH Breakout is a momentum system for 1H and 4H. It buys a close above the previous 20-candle high and sells a close below the previous 20-candle low. The stop is an ATR multiple beyond that breakout close. The target is 2R–3R.",

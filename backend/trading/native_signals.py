@@ -346,6 +346,27 @@ def _btc_eth_breakout(o, h, l, c, v, times, p):
     return _pack(long, short, a, p["stop_atr"])
 
 
+def _btc_eth_rsi_pullback(o, h, l, c, v, times, p):
+    """RSI reclaim with EMA 200 trend filter. Not RSI alone.
+
+    Long: price above EMA 200, RSI crosses back above oversold (default 30).
+    Short: price below EMA 200, RSI crosses back below overbought (default 70).
+    Stop ATR × (1–1.5). Target target_r (1.5R–2R).
+    """
+    period = max(2, int(p.get("rsi_period") or 14))
+    os_ = float(p.get("oversold") if p.get("oversold") is not None else 30)
+    ob = float(p.get("overbought") if p.get("overbought") is not None else 70)
+    series = rsi_rolling(c, period)
+    e200 = ema(c, 200)
+    a = atr(h, l, c, int(p["atr_period"]))
+    level_os = np.full(len(c), os_)
+    level_ob = np.full(len(c), ob)
+    long = _cross_up(series, level_os) & (c > e200) & np.isfinite(e200) & np.isfinite(a) & (a > 0)
+    short = _cross_down(series, level_ob) & (c < e200) & np.isfinite(e200) & np.isfinite(a) & (a > 0)
+    long[0] = short[0] = False
+    return _pack(long, short, a, p["stop_atr"])
+
+
 def _ema_adx(o, h, l, c, v, times, p):
     fast, slow = ema(c, int(p["fast"])), ema(c, int(p["slow"]))
     e200 = ema(c, 200)
@@ -634,6 +655,11 @@ ENGINES = {
         _base(lookback=20, stop_atr=1.5, target_r=2.0, trail_atr=0.0, allow_shorts=True,
               max_bars=0, min_bars=40),
         ("lookback", "stop_atr", "target_r", "allow_shorts")),
+    "btc-eth-rsi-pullback": _engine(
+        "btc-eth-rsi-pullback", "BTC/ETH RSI Pullback", _btc_eth_rsi_pullback,
+        _base(rsi_period=14, oversold=30, overbought=70, stop_atr=1.5, target_r=2.0,
+              trail_atr=0.0, allow_shorts=True, max_bars=0, min_bars=220),
+        ("rsi_period", "oversold", "overbought", "stop_atr", "target_r", "allow_shorts")),
     "donchian-breakout-20k": _engine(
         "donchian-breakout-20k", "Donchian Breakout", _donchian,
         _base(lookback=20, stop_atr=2.0, target_r=0.0, trail_atr=3.0, allow_shorts=False,

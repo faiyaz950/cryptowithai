@@ -3607,6 +3607,205 @@ const btcEthBreakout: StrategyDef = {
   },
 };
 
+/**
+ * BTC/ETH RSI pullback — RSI reclaim with EMA 200 trend filter.
+ * Not RSI alone: only take longs above EMA 200 and shorts below it.
+ */
+const btcEthRsiPullback: StrategyDef = {
+  id: "btc-eth-rsi-pullback",
+  name: "BTC/ETH RSI Pullback",
+  category: "Mean reversion · BTC/ETH · 1H",
+  blurb: "EMA 200 trend filter + RSI 14 reclaim for pullbacks.",
+  logic:
+    "Best on BTC or ETH in ranging or pullback conditions. Timeframe is 1H. Do not use RSI alone — EMA 200 is the trend filter. LONG when price is above EMA 200, RSI has been below 30, and RSI crosses back above 30. SHORT when price is below EMA 200, RSI has been above 70, and RSI crosses back below 70. Enter on that reclaim close; the bot fills on the next open. Stop is 1–1.5× ATR beyond the signal close. Target is 1.5R–2R, default 2R.",
+  accent: "#06b6d4",
+  icon: Waves,
+  featured: true,
+  autoTrade: true,
+  fixedTimeframe: "1h",
+  minHistoryBars: 220,
+  engineNote:
+    NATIVE_ENGINE_NOTE +
+    " Long and short. Entry is an RSI reclaim through 30 (long) or 70 (short) with price on the right side of EMA 200, filled on the next open. Stop is ATR × from that close. Target is 1.5R–2R. No trail.",
+  botParams: nativeBotParams(["rsi_period", "oversold", "overbought"]),
+  fields: [
+    { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 5, max: 50, onCard: true },
+    {
+      key: "oversold",
+      label: "RSI oversold",
+      kind: "number",
+      group: "signal",
+      min: 10,
+      max: 40,
+      onCard: true,
+      hint: "Long: RSI falls to/below this, then crosses back above it.",
+    },
+    {
+      key: "overbought",
+      label: "RSI overbought",
+      kind: "number",
+      group: "signal",
+      min: 60,
+      max: 90,
+      onCard: true,
+      hint: "Short: RSI rises to/above this, then crosses back below it.",
+    },
+    { key: "symbol", label: "Symbol", kind: "symbol", group: "signal", onCard: true },
+    {
+      key: "timeframe",
+      label: "Timeframe",
+      kind: "select",
+      group: "signal",
+      onCard: true,
+      options: [{ value: "1h", label: "1H" }],
+      hint: "Fixed at 1H for this pullback system.",
+    },
+    {
+      key: "stop_atr",
+      label: "Stop · ATR ×",
+      kind: "number",
+      group: "risk",
+      min: 1,
+      max: 1.5,
+      step: 0.5,
+      hint: "1× or 1.5× ATR beyond the signal close.",
+    },
+    {
+      key: "target_r",
+      label: "Target · R",
+      kind: "number",
+      group: "risk",
+      min: 1.5,
+      max: 2,
+      step: 0.5,
+      onCard: true,
+      hint: "1.5R or 2R. Reward is this many times the stop distance.",
+    },
+    { key: "risk_pct", label: "Risk % of capital", kind: "number", group: "risk", min: 0.1, max: 5, step: 0.1 },
+    { key: "allow_shorts", label: "Allow shorts", kind: "toggle", group: "risk" },
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    symbol: "BTCUSDT",
+    timeframe: "1h",
+    rsi_period: 14,
+    oversold: 30,
+    overbought: 70,
+    stop_atr: 1.5,
+    target_r: 2,
+    risk_pct: 1,
+    allow_shorts: true,
+    days: 60,
+  },
+  analyze(candles, values) {
+    const rsiPeriod = Math.max(2, Math.round(num(values, "rsi_period", 14)));
+    const oversold = num(values, "oversold", 30);
+    const overbought = num(values, "overbought", 70);
+    const stopAtr = num(values, "stop_atr", 1.5);
+    const targetR = num(values, "target_r", 2);
+    const emaPeriod = 200;
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(emaPeriod), label: `EMA ${emaPeriod}`, color: THIRD_COLOR },
+    ];
+    if (candles.length < Math.max(emaPeriod + 2, rsiPeriod + 2)) {
+      return emptyAnalysis(candles, overlays);
+    }
+
+    const decorated = attachEma(candles, [emaPeriod]);
+    const closes = candles.map((c) => c.close);
+    const rsiSeries = rsi(closes, rsiPeriod);
+    const atrSeries = atr(candles, 14);
+
+    const last = decorated[decorated.length - 1];
+    const prev = decorated[decorated.length - 2];
+    const rsiNow = rsiSeries[rsiSeries.length - 1];
+    const rsiPrev = rsiSeries[rsiSeries.length - 2];
+    const emaVal = (last as Candle)[emaKey(emaPeriod)] as number | null | undefined;
+    const lastAtr = atrSeries[atrSeries.length - 1];
+    const atrOk = lastAtr != null && lastAtr > 0 && emaVal != null && Number.isFinite(emaVal);
+    const rsiOk = rsiNow != null && rsiPrev != null && Number.isFinite(rsiNow) && Number.isFinite(rsiPrev);
+
+    const reclaimLong = Boolean(rsiOk && rsiPrev! <= oversold && rsiNow! > oversold);
+    const reclaimShort = Boolean(rsiOk && rsiPrev! >= overbought && rsiNow! < overbought);
+    const isLong = Boolean(atrOk && reclaimLong && last.close > (emaVal as number));
+    const isShort = Boolean(atrOk && reclaimShort && last.close < (emaVal as number) && !isLong);
+
+    let signal: LiveSignal;
+    if (isLong) {
+      signal = {
+        headline: `BUY — RSI reclaimed ${oversold} above EMA ${emaPeriod}`,
+        detail: `RSI ${rsiNow!.toFixed(1)} crossed back above ${oversold} with price ${price(last.close)} above EMA ${emaPeriod}. Bot fills on the next open.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (isShort) {
+      signal = {
+        headline: `SELL — RSI left ${overbought} below EMA ${emaPeriod}`,
+        detail: `RSI ${rsiNow!.toFixed(1)} crossed back below ${overbought} with price ${price(last.close)} below EMA ${emaPeriod}. Bot fills on the next open.`,
+        tone: "sell",
+        readouts: [],
+      };
+    } else if (atrOk && last.close > (emaVal as number)) {
+      signal = {
+        headline: "Uptrend filter on — waiting for RSI reclaim",
+        detail: `Price above EMA ${emaPeriod}. Need RSI to dip to/below ${oversold} then cross back above it.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else if (atrOk && last.close < (emaVal as number)) {
+      signal = {
+        headline: "Downtrend filter on — waiting for RSI reject",
+        detail: `Price below EMA ${emaPeriod}. Need RSI to rise to/above ${overbought} then cross back below it.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Waiting for EMA 200 + RSI setup",
+        detail: "Need a settled EMA 200 and RSI before entries arm.",
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    const sl = atrOk
+      ? isShort
+        ? last.close + stopAtr * (lastAtr as number)
+        : last.close - stopAtr * (lastAtr as number)
+      : null;
+    const risk = sl != null ? Math.abs(last.close - sl) : null;
+    const tp =
+      risk != null && (isLong || isShort)
+        ? last.close + (isLong ? 1 : -1) * targetR * risk
+        : null;
+
+    signal.readouts = [
+      { label: "Price", value: price(last.close) },
+      { label: `EMA ${emaPeriod}`, value: price(emaVal), color: THIRD_COLOR },
+      {
+        label: `RSI ${rsiPeriod}`,
+        value: rsiNow == null || !Number.isFinite(rsiNow) ? "—" : rsiNow.toFixed(1),
+        color: isLong ? "var(--green)" : isShort ? "var(--red)" : undefined,
+      },
+      { label: "ATR", value: price(lastAtr) },
+      { label: `SL ref (${stopAtr}× ATR)`, value: price(sl), color: "var(--red)" },
+      { label: `TP ref (${targetR}R)`, value: price(tp), color: "var(--green)" },
+    ];
+
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return nativeBacktest("btc-eth-rsi-pullback", values, {
+      rsi_period: num(values, "rsi_period", 14),
+      oversold: num(values, "oversold", 30),
+      overbought: num(values, "overbought", 70),
+      target_r: num(values, "target_r", 2),
+      allow_shorts: values.allow_shorts !== false,
+    });
+  },
+};
+
 const donchianBreakout20k: StrategyDef = {
   id: "donchian-breakout-20k",
   name: "Donchian Breakout (₹20,000)",
@@ -4340,6 +4539,7 @@ const buyGridRecoveryHedge: StrategyDef = {
 
 export const STRATEGIES: StrategyDef[] = [
   btcEthBreakout,
+  btcEthRsiPullback,
   buyGridRecoveryHedge,
   avptPullback,
   tridentMomentum,
