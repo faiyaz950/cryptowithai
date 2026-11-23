@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Boxes, Crosshair, Flame, Gauge, Layers, Shield, SignalHigh, Target, TrendingUp, Waves, Zap, type LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Boxes, Crosshair, Flame, Gauge, Gem, Layers, Shield, SignalHigh, Target, TrendingUp, Waves, Zap, type LucideIcon } from "lucide-react";
 import type { BacktestParams, Candle } from "./cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, intervalMinutes, symbolLabel } from "./cryptoApi";
 import {
@@ -282,7 +282,10 @@ const sharedDefaults: StrategyValues = {
   days: 30,
 };
 
-/** Har strategy ka backtest isi base par banta hai — backend do hi engines janta hai. */
+/**
+ * Point-based EMA / range engines still use this base.
+ * Native Strateo engines override `strategy` and send their own params via `extraParams`.
+ */
 function baseParams(values: StrategyValues): BacktestParams {
   return {
     strategy: "ema-crossover",
@@ -304,6 +307,52 @@ function baseParams(values: StrategyValues): BacktestParams {
     range_start: str(values, "range_start", "11:00"),
     range_end: str(values, "range_end", "13:00"),
     range_timezone: str(values, "range_timezone", "Asia/Kolkata"),
+  };
+}
+
+const NATIVE_ENGINE_NOTE =
+  "Native engine — backtest and the 24/7 server bot share this strategy’s closed-bar rules. The stop is a multiple of ATR (it scales with the coin, not a fixed point distance) and fees, slippage, and funding are included. The chart banner can still move before the candle closes.";
+
+const atrRiskFields: StrategyField[] = [
+  { key: "stop_atr", label: "Stop · ATR ×", kind: "number", group: "risk", min: 0.5, max: 6, step: 0.5, hint: "How many ATRs against the entry. Scales with the coin." },
+  { key: "target_r", label: "Target · R", kind: "number", group: "risk", min: 0, max: 8, step: 0.5, hint: "0 = no fixed target. 2 means the target is twice the stop distance." },
+  { key: "risk_pct", label: "Risk % of capital", kind: "number", group: "risk", min: 0.1, max: 5, step: 0.1 },
+  { key: "allow_shorts", label: "Allow shorts", kind: "toggle", group: "risk" },
+];
+
+const atrRiskLongOnly: StrategyField[] = atrRiskFields.filter((f) => f.key !== "allow_shorts" && f.key !== "target_r");
+
+function nativeBotParams(keys: string[], shorts = true) {
+  return (values: StrategyValues): Record<string, number | boolean | string> => {
+    const out: Record<string, number | boolean | string> = {};
+    for (const key of ["stop_atr", "target_r", "trail_atr", "risk_pct", ...keys]) {
+      const raw = values[key];
+      if (typeof raw === "number" || typeof raw === "boolean" || (typeof raw === "string" && raw)) out[key] = raw;
+    }
+    if (typeof values.risk_per_trade === "number") out.risk_pct = values.risk_per_trade;
+    out.allow_shorts = shorts ? values.allow_shorts !== false : false;
+    return out;
+  };
+}
+
+function nativeBacktest(
+  strategy: string,
+  values: StrategyValues,
+  fields: Record<string, string | number | boolean> = {},
+): BacktestParams {
+  return {
+    ...baseParams(values),
+    strategy,
+    capital: num(values, "capital", 1000),
+    risk_pct: num(values, "risk_pct", num(values, "risk_per_trade", 1)),
+    stop_atr: num(values, "stop_atr", 1.5),
+    allow_shorts: values.allow_shorts !== false,
+    extraParams: {
+      ...(typeof values.target_r === "number" ? { target_r: num(values, "target_r", 2) } : {}),
+      ...(typeof values.trail_atr === "number" ? { trail_atr: num(values, "trail_atr", 0) } : {}),
+      allow_shorts: values.allow_shorts === true,
+      ...fields,
+    },
   };
 }
 
@@ -372,16 +421,17 @@ const emaCrossover: StrategyDef = {
     "BUY when fast EMA crosses above slow EMA; SELL on a cross below. Simple trend-follow — expect whipsaws in ranges; keep SL/target discipline.",
   accent: FAST_COLOR,
   icon: TrendingUp,
-  engineNote:
-    "Backtest uses the EMA engine: entry on fast vs slow cross (engine sets both ema21 and ema50 to the slow period).",
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE,
+  botParams: nativeBotParams(["fast", "slow"]),
   fields: [
     { key: "fast", label: "Fast EMA", kind: "number", group: "signal", min: 1, max: 200, onCard: true },
     { key: "slow", label: "Slow EMA", kind: "number", group: "signal", min: 2, max: 400, onCard: true },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskFields,
     ...backtestFields,
   ],
-  defaults: { ...sharedDefaults, fast: 9, slow: 21 },
+  defaults: { ...sharedDefaults, fast: 9, slow: 21, stop_atr: 1.5, target_r: 2, risk_pct: 1, allow_shorts: true },
   analyze(candles, values) {
     const fast = num(values, "fast", 9);
     const slow = num(values, "slow", 21);
@@ -422,11 +472,10 @@ const emaCrossover: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    const fast = num(values, "fast", 9);
-    const slow = num(values, "slow", 21);
-    // Engine "ema9 > ema21 && ema9 > ema50" dekhta hai — dono slow rakhne se
-    // wahi do-EMA crossover ban jata hai jo card describe karta hai.
-    return { ...baseParams(values), ema9: fast, ema21: slow, ema50: slow };
+    return nativeBacktest("ema-crossover", values, {
+      fast: num(values, "fast", 9),
+      slow: num(values, "slow", 21),
+    });
   },
 };
 
@@ -439,18 +488,19 @@ const rsiDivergence: StrategyDef = {
     "Bearish divergence: price makes a new high, RSI does not. Bullish: new price low without RSI. Leaving overbought/oversold is also a mean-reversion signal.",
   accent: SLOW_COLOR,
   icon: Gauge,
-  engineNote:
-    "No standalone RSI backtest on the backend — backtest runs on the EMA crossover engine with these RSI levels as confirmation filters (BUY when RSI is below overbought, SELL when above oversold).",
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " A divergence entry is the bar the swing confirms, and an RSI entry is the bar it leaves overbought or oversold.",
+  botParams: nativeBotParams(["rsi_period", "overbought", "oversold", "pivot_span"]),
   fields: [
     { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
     { key: "overbought", label: "Overbought", kind: "number", group: "signal", min: 50, max: 95, onCard: true },
     { key: "oversold", label: "Oversold", kind: "number", group: "signal", min: 5, max: 50, onCard: true },
     { key: "pivot_span", label: "Swing span · bars", kind: "number", group: "signal", min: 1, max: 10, hint: "This many smaller bars on each side of the pivot." },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskFields,
     ...backtestFields,
   ],
-  defaults: { ...sharedDefaults, rsi_period: 14, overbought: 70, oversold: 30, pivot_span: 3 },
+  defaults: { ...sharedDefaults, rsi_period: 14, overbought: 70, oversold: 30, pivot_span: 3, stop_atr: 1.5, target_r: 2, risk_pct: 1, allow_shorts: true },
   analyze(candles, values) {
     const period = num(values, "rsi_period", 14);
     const overbought = num(values, "overbought", 70);
@@ -509,13 +559,12 @@ const rsiDivergence: StrategyDef = {
     return { candles: decorated, overlays: [], signal };
   },
   toBacktest(values) {
-    return {
-      ...baseParams(values),
-      use_rsi_filter: true,
+    return nativeBacktest("rsi-divergence", values, {
       rsi_period: num(values, "rsi_period", 14),
-      rsi_overbought: num(values, "overbought", 70),
-      rsi_oversold: num(values, "oversold", 30),
-    };
+      overbought: num(values, "overbought", 70),
+      oversold: num(values, "oversold", 30),
+      pivot_span: num(values, "pivot_span", 3),
+    });
   },
 };
 
@@ -528,17 +577,18 @@ const macdStrategy: StrategyDef = {
     "MACD line = EMA(fast) − EMA(slow). The signal line is an EMA of MACD. A cross above the signal is bullish momentum; below is bearish. The histogram is the difference — momentum weakens near zero.",
   accent: THIRD_COLOR,
   icon: BarChart3,
-  engineNote:
-    "The backend has no MACD engine — backtest uses the underlying EMA fast/slow crossover (zero-line cross). Signal period affects live signals only.",
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Entry is a MACD-line cross of the signal line, not the EMA zero-line cross.",
+  botParams: nativeBotParams(["fast", "slow", "signal"]),
   fields: [
     { key: "fast", label: "Fast period", kind: "number", group: "signal", min: 1, max: 100, onCard: true },
     { key: "slow", label: "Slow period", kind: "number", group: "signal", min: 2, max: 200, onCard: true },
     { key: "signal", label: "Signal period", kind: "number", group: "signal", min: 1, max: 50, onCard: true },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskFields,
     ...backtestFields,
   ],
-  defaults: { ...sharedDefaults, fast: 12, slow: 26, signal: 9 },
+  defaults: { ...sharedDefaults, fast: 12, slow: 26, signal: 9, stop_atr: 1.5, target_r: 2, risk_pct: 1, allow_shorts: true },
   analyze(candles, values) {
     const fast = num(values, "fast", 12);
     const slow = num(values, "slow", 26);
@@ -579,9 +629,11 @@ const macdStrategy: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    const fast = num(values, "fast", 12);
-    const slow = num(values, "slow", 26);
-    return { ...baseParams(values), ema9: fast, ema21: slow, ema50: slow };
+    return nativeBacktest("macd", values, {
+      fast: num(values, "fast", 12),
+      slow: num(values, "slow", 26),
+      signal: num(values, "signal", 9),
+    });
   },
 };
 
@@ -595,7 +647,9 @@ const customEma: StrategyDef = {
   accent: FAST_COLOR,
   icon: Zap,
   featured: true,
-  engineNote: "Native backend engine — live signal and backtest share the same rules.",
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " BUY when both the fast and mid EMAs cross above the slow EMA; SELL when both cross below.",
+  botParams: nativeBotParams(["ema9", "ema21", "ema50"]),
   fields: [
     { key: "ema9", label: "EMA 9", kind: "number", group: "signal", min: 1, max: 200, onCard: true },
     { key: "ema21", label: "EMA 21", kind: "number", group: "signal", min: 1, max: 200, onCard: true },
@@ -605,7 +659,7 @@ const customEma: StrategyDef = {
     { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 2, max: 50, showIf: (v) => bool(v, "use_rsi_filter") },
     { key: "rsi_overbought", label: "Overbought", kind: "number", group: "signal", min: 50, max: 100, showIf: (v) => bool(v, "use_rsi_filter") },
     { key: "rsi_oversold", label: "Oversold", kind: "number", group: "signal", min: 0, max: 50, showIf: (v) => bool(v, "use_rsi_filter") },
-    ...riskFields,
+    ...atrRiskFields,
     ...backtestFields,
   ],
   defaults: {
@@ -618,6 +672,10 @@ const customEma: StrategyDef = {
     rsi_period: 14,
     rsi_overbought: 60,
     rsi_oversold: 40,
+    stop_atr: 1.5,
+    target_r: 2,
+    risk_pct: 1,
+    allow_shorts: true,
   },
   analyze(candles, values) {
     const fast = num(values, "ema9", 9);
@@ -667,16 +725,11 @@ const customEma: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    return {
-      ...baseParams(values),
+    return nativeBacktest("custom-ema", values, {
       ema9: num(values, "ema9", 9),
       ema21: num(values, "ema21", 21),
       ema50: num(values, "ema50", 50),
-      use_rsi_filter: bool(values, "use_rsi_filter"),
-      rsi_period: num(values, "rsi_period", 14),
-      rsi_overbought: num(values, "rsi_overbought", 60),
-      rsi_oversold: num(values, "rsi_oversold", 40),
-    };
+    });
   },
 };
 
@@ -1454,8 +1507,9 @@ const atrChannelPro: StrategyDef = {
   accent: "#f97316",
   icon: Flame,
   featured: true,
-  engineNote:
-    "Live signal uses ATR channel + ADX. Backtest approximates on the backend EMA crossover engine (fast/slow = EMA period / 2×period) — not an exact ATR breakout replica.",
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Entry is a close through the ATR band with ADX and volume, not an EMA cross.",
+  botParams: nativeBotParams(["ema_period", "atr_period", "atr_mult", "adx_period", "adx_min", "volume_lookback"]),
   fields: [
     { key: "ema_period", label: "EMA period", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
     { key: "atr_period", label: "ATR period", kind: "number", group: "signal", min: 5, max: 50, onCard: true },
@@ -1464,7 +1518,7 @@ const atrChannelPro: StrategyDef = {
     { key: "adx_min", label: "ADX minimum", kind: "number", group: "signal", min: 10, max: 50, onCard: true },
     { key: "volume_lookback", label: "Volume avg · bars", kind: "number", group: "signal", min: 5, max: 100 },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskFields,
     ...backtestFields,
   ],
   defaults: {
@@ -1476,8 +1530,10 @@ const atrChannelPro: StrategyDef = {
     adx_period: 14,
     adx_min: 22,
     volume_lookback: 20,
-    sl_points: 500,
-    target_points: 1200,
+    stop_atr: 1.5,
+    target_r: 2,
+    risk_pct: 1,
+    allow_shorts: true,
   },
   analyze(candles, values) {
     const emaPeriod = num(values, "ema_period", 21);
@@ -1567,13 +1623,14 @@ const atrChannelPro: StrategyDef = {
     };
   },
   toBacktest(values) {
-    const period = num(values, "ema_period", 21);
-    return {
-      ...baseParams(values),
-      ema9: Math.max(2, Math.round(period / 2)),
-      ema21: period,
-      ema50: period * 2,
-    };
+    return nativeBacktest("atr-channel-pro", values, {
+      ema_period: num(values, "ema_period", 21),
+      atr_period: num(values, "atr_period", 14),
+      atr_mult: num(values, "atr_mult", 2),
+      adx_period: num(values, "adx_period", 14),
+      adx_min: num(values, "adx_min", 22),
+      volume_lookback: num(values, "volume_lookback", 20),
+    });
   },
 };
 
@@ -1590,8 +1647,9 @@ const vwapReclaimPro: StrategyDef = {
   accent: "#0891b2",
   icon: Crosshair,
   featured: true,
-  engineNote:
-    "Live signal uses VWAP reclaim + EMA alignment + volume. Backtest is EMA crossover approximation — VWAP session logic is not in the backend engine.",
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Entry is a UTC-day VWAP reclaim with EMA alignment and volume, not an EMA cross.",
+  botParams: nativeBotParams(["ema_fast", "ema_slow", "volume_lookback", "rsi_period", "require_rsi", "rsi_overbought", "rsi_oversold"]),
   fields: [
     { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
     { key: "ema_slow", label: "EMA slow", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
@@ -1601,7 +1659,7 @@ const vwapReclaimPro: StrategyDef = {
     { key: "rsi_overbought", label: "RSI overbought", kind: "number", group: "signal", min: 50, max: 90, showIf: (v) => bool(v, "require_rsi") },
     { key: "rsi_oversold", label: "RSI oversold", kind: "number", group: "signal", min: 10, max: 50, showIf: (v) => bool(v, "require_rsi") },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskFields,
     ...backtestFields,
   ],
   defaults: {
@@ -1614,8 +1672,10 @@ const vwapReclaimPro: StrategyDef = {
     require_rsi: true,
     rsi_overbought: 70,
     rsi_oversold: 30,
-    sl_points: 350,
-    target_points: 900,
+    stop_atr: 1.5,
+    target_r: 2,
+    risk_pct: 1,
+    allow_shorts: true,
   },
   analyze(candles, values) {
     const fast = num(values, "ema_fast", 9);
@@ -1692,16 +1752,15 @@ const vwapReclaimPro: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    return {
-      ...baseParams(values),
-      ema9: num(values, "ema_fast", 9),
-      ema21: num(values, "ema_slow", 21),
-      ema50: num(values, "ema_slow", 21),
-      use_rsi_filter: bool(values, "require_rsi"),
+    return nativeBacktest("vwap-reclaim-pro", values, {
+      ema_fast: num(values, "ema_fast", 9),
+      ema_slow: num(values, "ema_slow", 21),
+      volume_lookback: num(values, "volume_lookback", 20),
       rsi_period: num(values, "rsi_period", 14),
+      require_rsi: bool(values, "require_rsi"),
       rsi_overbought: num(values, "rsi_overbought", 70),
       rsi_oversold: num(values, "rsi_oversold", 30),
-    };
+    });
   },
 };
 
@@ -1718,8 +1777,9 @@ const emaPullbackPro: StrategyDef = {
   accent: FAST_COLOR,
   icon: Activity,
   featured: true,
-  engineNote:
-    "Live signal uses EMA stack + pullback band + ADX. Backtest approximates on EMA crossover engine — pullback timing will not match exactly.",
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Entry is a pullback to the mid EMA inside an ADX stack, not an EMA cross.",
+  botParams: nativeBotParams(["ema_fast", "ema_mid", "ema_slow", "pullback_pct", "adx_period", "adx_min", "rsi_period"]),
   fields: [
     { key: "ema_fast", label: "EMA fast", kind: "number", group: "signal", min: 2, max: 50, onCard: true },
     { key: "ema_mid", label: "EMA mid (pullback)", kind: "number", group: "signal", min: 5, max: 100, onCard: true },
@@ -1729,7 +1789,7 @@ const emaPullbackPro: StrategyDef = {
     { key: "adx_min", label: "ADX minimum", kind: "number", group: "signal", min: 15, max: 50, onCard: true },
     { key: "rsi_period", label: "RSI period", kind: "number", group: "signal", min: 2, max: 50 },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskFields,
     ...backtestFields,
   ],
   defaults: {
@@ -1742,8 +1802,10 @@ const emaPullbackPro: StrategyDef = {
     adx_period: 14,
     adx_min: 25,
     rsi_period: 14,
-    sl_points: 400,
-    target_points: 1000,
+    stop_atr: 1.5,
+    target_r: 2,
+    risk_pct: 1,
+    allow_shorts: true,
   },
   analyze(candles, values) {
     const fast = num(values, "ema_fast", 9);
@@ -1812,12 +1874,15 @@ const emaPullbackPro: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    return {
-      ...baseParams(values),
-      ema9: num(values, "ema_fast", 9),
-      ema21: num(values, "ema_mid", 21),
-      ema50: num(values, "ema_slow", 50),
-    };
+    return nativeBacktest("ema-pullback-pro", values, {
+      ema_fast: num(values, "ema_fast", 9),
+      ema_mid: num(values, "ema_mid", 21),
+      ema_slow: num(values, "ema_slow", 50),
+      pullback_pct: num(values, "pullback_pct", 0.25),
+      adx_period: num(values, "adx_period", 14),
+      adx_min: num(values, "adx_min", 25),
+      rsi_period: num(values, "rsi_period", 14),
+    });
   },
 };
 
@@ -2313,44 +2378,54 @@ export function matchPreset(def: StrategyDef, values: StrategyValues): StrategyP
 }
 
 /**
- * Trend Rider + Steady + Pro share one engine. Steady adds a first profit (tp1);
- * Pro adds weekend skip + BTC confirmation. Backtest, live signal, and server bot
- * all use `trend_rider.py`.
+ * Trend Rider + Steady + Pro + Metals share one engine. Steady adds a first profit (tp1);
+ * Pro adds weekend skip + BTC confirmation; Metals wahi base rules 12h candles par chalata hai
+ * (gold par 4h choppy saalon mein haara, 12h dono mein jeeta — `scripts/metals_trend_research.py`).
+ * Backtest, live signal, and server bot all use `trend_rider.py`.
  */
-function makeTrendRider(variant: "base" | "steady" | "pro"): StrategyDef {
-  const steady = variant !== "base";
+function makeTrendRider(variant: "base" | "steady" | "pro" | "metals"): StrategyDef {
+  const steady = variant === "steady" || variant === "pro";
   const pro = variant === "pro";
+  const metals = variant === "metals";
   const tp1R = (values: StrategyValues) => (steady ? num(values, "tp1_r", 1) : 0);
   const tp1Frac = (values: StrategyValues) => (steady ? num(values, "tp1_pct", 25) / 100 : 0);
   return {
-    id: pro ? "trend-rider-pro" : steady ? "trend-rider-steady" : "trend-rider",
-    name: pro ? "Rider Pro" : steady ? "Bank Steady" : "Channel Break",
-    category: pro ? "Trend following · weekday + BTC filter" : steady ? "Trend following · ~50% win rate" : "Trend following · Perp long/short",
-    blurb: pro
+    id: metals ? "metals-rider" : pro ? "trend-rider-pro" : steady ? "trend-rider-steady" : "trend-rider",
+    name: metals ? "Metals Rider" : pro ? "Rider Pro" : steady ? "Bank Steady" : "Channel Break",
+    category: metals
+      ? "Gold · silver trend · 12h"
+      : pro ? "Trend following · weekday + BTC filter" : steady ? "Trend following · ~50% win rate" : "Trend following · Perp long/short",
+    blurb: metals
+      ? "Channel Break rules on 12h candles, for gold."
+      : pro
       ? "Bank Steady + weekend filter + BTC confirm."
       : steady
       ? "Channel Break + 25% at +1R, stop to entry."
       : "30-bar breakout · EMA 200 · trailing stop.",
-    logic: pro
+    logic: metals
+      ? "Channel Break rules on 12h candles, tested on gold. LONG: a 12h close above the prior 30-bar high and above EMA 200. SHORT: a close below the 30-bar low, below EMA 200, with EMA 50 < EMA 200. Stop = 2× ATR, then trail on the 15-bar low/high (never worse). Size so a stop loses ~1% of capital. Research on Bybit PAXG, Jun 2022 → Nov 2026, with Delta fees + GST, slippage and long funding: +24% at 1% risk, max DD 12%, profitable in both the 2022–24 range and the 2024–26 trend. All 36 nearby settings were profitable in both periods. The same rules on 4h lost 13% in 2022–24. Buy & hold gold made more (+94%) but fell 37% from its Jan 2026 high. Silver is not listed on Delta, so run silver with the MT5 EA (mt5/MetalsTrendRider.mq5)."
+      : pro
       ? "Bank Steady rules (30-bar breakout, EMA 200, 2× ATR stop, 15-bar trail, 25% at +1R → stop to entry) plus: (1) no signals on Sat/Sun UTC candles; (2) alt LONG only if BTC is above EMA 200, SHORT only if BTC is in bear regime. Holdout 2023–26: PF ~1.71, max DD ~8.3%, ~52% win rate on BTC+ETH+SOL."
       : steady
       ? "LONG when a 4h close breaks the prior 30-bar high above EMA 200; SHORT on a 30-bar low break in a confirmed bear (EMA 50 < EMA 200). Stop 2× ATR, then trail on 15-bar low/high. At +1R book 25% and move stop to entry+fees. Win rate ~50%; runners keep 75% of the position."
       : "Trade only in trend. LONG: 4h close above prior 30-bar high and above EMA 200. SHORT: close below 30-bar low, below EMA 200, and EMA 50 < EMA 200. Enter next open. Stop = 2× ATR from signal close; trail to prior 15-bar low/high (never worse). Size so a stop loses ~1% of capital. Edge is low win rate with large winners.",
-    accent: pro ? "#a855f7" : steady ? "#0ea5e9" : TR_UP,
-    icon: pro ? Crosshair : steady ? Shield : Waves,
+    accent: metals ? "#eab308" : pro ? "#a855f7" : steady ? "#0ea5e9" : TR_UP,
+    icon: metals ? Gem : pro ? Crosshair : steady ? Shield : Waves,
     featured: true,
     autoTrade: true,
     minHistoryBars: 1000,
     backtestable: true,
-    engineNote: "Native `trend-rider` engine · 4h recommended · Delta fees + slippage + funding in backtests · evaluate over 6–12 months.",
+    engineNote: metals
+      ? "Native `trend-rider` engine on 12h candles (three Delta 4h candles joined) · Delta fees + GST + slippage + long funding in backtests · Delta lists PAXG from Feb 2026 and XAUT from Apr 2026, so in-app backtests cover months, not years."
+      : "Native `trend-rider` engine · 4h recommended · Delta fees + slippage + funding in backtests · evaluate over 6–12 months.",
     botParams: (values): Record<string, number | boolean> => ({
       ...(steady ? { tp1_r: tp1R(values), tp1_frac: tp1Frac(values) } : {}),
       ...(pro ? { skip_weekend: true, btc_confirm: true } : {}),
     }),
-    presets: pro ? undefined : TREND_PRESETS,
-    portfolio: TREND_RIDER_PORTFOLIO,
+    presets: pro || metals ? undefined : TREND_PRESETS,
+    portfolio: metals ? undefined : TREND_RIDER_PORTFOLIO,
     needsBtc: pro,
-    fixedTimeframe: "4h",
+    fixedTimeframe: metals ? "12h" : "4h",
     fields: [
       { key: "channel", label: "Entry channel", kind: "number", group: "signal", min: 5, max: 200, onCard: true, hint: "Entry when a closed candle breaks this channel high/low." },
       { key: "exit_channel", label: "Trail channel", kind: "number", group: "signal", min: 3, max: 200, hint: "Stop trails the prior N-bar low (long) / high (short)." },
@@ -2371,7 +2446,7 @@ function makeTrendRider(variant: "base" | "steady" | "pro"): StrategyDef {
         min: 10,
         step: 10,
         onCard: true,
-        hint: "Portfolio backtest splits this evenly across BTC, ETH, SOL.",
+        hint: metals ? "Account size used to size each trade." : "Portfolio backtest splits this evenly across BTC, ETH, SOL.",
       },
       {
         key: "risk_pct",
@@ -2384,35 +2459,39 @@ function makeTrendRider(variant: "base" | "steady" | "pro"): StrategyDef {
         onCard: true,
         hint: "% of capital lost if the stop hits. 1% is standard; 2% can push max DD near ~30%.",
       },
-      {
-        key: "backtest_scope",
-        label: "Backtest on",
-        kind: "select",
-        group: "backtest",
-        options: [
-          { value: "portfolio", label: "Portfolio · BTC + ETH + SOL" },
-          { value: "single", label: "Selected coin only" },
-        ],
-        hint: "A single coin can range for a year; the portfolio rides whichever trends.",
-      },
+      ...(metals
+        ? []
+        : ([
+            {
+              key: "backtest_scope",
+              label: "Backtest on",
+              kind: "select",
+              group: "backtest",
+              options: [
+                { value: "portfolio", label: "Portfolio · BTC + ETH + SOL" },
+                { value: "single", label: "Selected coin only" },
+              ],
+              hint: "A single coin can range for a year; the portfolio rides whichever trends.",
+            },
+          ] satisfies StrategyField[])),
       { key: "days", label: "History · days", kind: "number", group: "backtest", min: 30, max: 700, hint: "Use 365+ days — short windows show luck, not edge." },
     ],
     defaults: {
-      symbol: "BTCUSDT",
-      timeframe: "4h",
+      symbol: metals ? "PAXGUSDT" : "BTCUSDT",
+      timeframe: metals ? "12h" : "4h",
       channel: 30,
       exit_channel: 15,
       stop_atr: 2,
       allow_shorts: true,
       capital: 1000,
       risk_pct: 1,
-      backtest_scope: "portfolio",
+      backtest_scope: metals ? "single" : "portfolio",
       days: 365,
       ...(steady ? { tp1_r: 1, tp1_pct: 25 } : {}),
     },
     analyze(candles, values, ctx) {
       const symbol = str(values, "symbol", "BTCUSDT");
-      const timeframe = str(values, "timeframe", "4h");
+      const timeframe = str(values, "timeframe", metals ? "12h" : "4h");
       const intervalMs = intervalMinutes(timeframe) * 60_000;
       const params = {
         channel: Math.max(5, Math.round(num(values, "channel", 30))),
@@ -2501,14 +2580,14 @@ function makeTrendRider(variant: "base" | "steady" | "pro"): StrategyDef {
       } else if (r.regime === "bull") {
         signal = {
           headline: "Flat — waiting for breakout",
-          detail: `LONG when a 4h candle closes above ${price(r.upper)}. Sitting out ranges is part of the edge.`,
+          detail: `LONG when a ${timeframe} candle closes above ${price(r.upper)}. Sitting out ranges is part of the edge.`,
           tone: "neutral",
           readouts: [],
         };
       } else if (r.regime === "bear" && params.allowShorts) {
         signal = {
           headline: "Flat — bear regime, waiting for breakdown",
-          detail: `SHORT when a 4h candle closes below ${price(r.lower)}. No longs until price is above EMA ${params.emaSlow}.`,
+          detail: `SHORT when a ${timeframe} candle closes below ${price(r.lower)}. No longs until price is above EMA ${params.emaSlow}.`,
           tone: "neutral",
           readouts: [],
         };
@@ -2562,7 +2641,7 @@ function makeTrendRider(variant: "base" | "steady" | "pro"): StrategyDef {
       return {
         ...baseParams(values),
         strategy: "trend-rider",
-        timeframe: str(values, "timeframe", "4h"),
+        timeframe: str(values, "timeframe", metals ? "12h" : "4h"),
         days: num(values, "days", 365),
         capital: num(values, "capital", 1000),
         risk_pct: num(values, "risk_pct", 1),
@@ -2570,7 +2649,7 @@ function makeTrendRider(variant: "base" | "steady" | "pro"): StrategyDef {
         exit_channel: num(values, "exit_channel", 15),
         stop_atr: num(values, "stop_atr", 2),
         allow_shorts: bool(values, "allow_shorts"),
-        symbols: str(values, "backtest_scope", "portfolio") === "portfolio" ? TREND_RIDER_PORTFOLIO.join(",") : undefined,
+        symbols: !metals && str(values, "backtest_scope", "portfolio") === "portfolio" ? TREND_RIDER_PORTFOLIO.join(",") : undefined,
         ...(steady ? { tp1_r: tp1R(values), tp1_frac: tp1Frac(values) } : {}),
         ...(pro ? { skip_weekend: true, btc_confirm: true } : {}),
       };
@@ -2604,6 +2683,7 @@ function proReadouts(btc: Candle[] | undefined, params: { emaFast: number; emaSl
 const trendRider = makeTrendRider("base");
 const trendRiderSteady = makeTrendRider("steady");
 const trendRiderPro = makeTrendRider("pro");
+const metalsRider = makeTrendRider("metals");
 
 /* ── Trident Momentum — teen horizon ka momentum ek taraf ─ */
 
@@ -3357,18 +3437,175 @@ const avptPullback: StrategyDef = {
 
 /* ── Capital-Based Strategies (₹3k to ₹50k) ───────────── */
 
-/**
- * In strategies ka apna backend engine nahi hai — backtest EMA crossover engine par
- * chalta hai. Note mein wahi likho jo engine sach mein karta hai, taaki backtest ka
- * number is strategy ki logic ka saboot na samjha jaye.
- */
-function emaEngineNote(rule: string, missing: string): string {
-  return `Backtest does not run this strategy’s live logic — it uses the EMA crossover engine: ${rule}. Long + short, fixed SL/target only, 11:00–14:00 IST entries blocked (default ON), no fees/slippage. P&L = points × lots × 0.001 coin. ${missing} So backtest is not proof of the live rules above.`;
-}
-
-/** Paanchon ka live signal isi tarah chalta hai — Logic text ke aakhir mein yahi sach. */
+/** Chart banner abhi forming candle par hai — backtest aur bot band candle par chalte hain. */
 const CAPITAL_LIVE_CAVEAT =
   " Signal is evaluated on the forming candle and can change before it closes. BUY only (no shorts). No live exit rules — SL/target readouts are reference levels recomputed each refresh.";
+
+const BREAKOUT_TIMEFRAMES = [
+  { value: "1h", label: "1H" },
+  { value: "4h", label: "4H" },
+] as const;
+
+/**
+ * BTC/ETH breakout — close beyond the prior 20-candle high or low.
+ * Donchian (₹20k) is a different system: long only, with volume, body, and EMA 200.
+ */
+const btcEthBreakout: StrategyDef = {
+  id: "btc-eth-breakout",
+  name: "BTC/ETH Breakout",
+  category: "Momentum · BTC/ETH · 1H / 4H",
+  blurb: "20-candle high/low close breakout for strong momentum days.",
+  logic:
+    "Best on BTC or ETH when the day has real momentum. Timeframe is 1H or 4H. LONG when a candle closes above the previous 20-candle high. SHORT when a candle closes below the previous 20-candle low. The signal is that close; backtest and the server bot fill on the next candle open — the first price after the close. Stop is an ATR multiple beyond the breakout close (below it for a long, above it for a short). Target is 2R–3R, default 2R. No volume, body, or moving-average filter.",
+  accent: "#f59e0b",
+  icon: Target,
+  featured: true,
+  autoTrade: true,
+  minHistoryBars: 120,
+  engineNote:
+    NATIVE_ENGINE_NOTE +
+    " Long and short. Entry is a close through the prior 20-candle high or low, filled on the next open. Stop is ATR × from that close. Target is 2R–3R. No trail.",
+  botParams: nativeBotParams(["lookback"]),
+  fields: [
+    {
+      key: "lookback",
+      label: "Breakout candles",
+      kind: "number",
+      group: "signal",
+      min: 5,
+      max: 100,
+      onCard: true,
+      hint: "Previous candles. A close beyond their high or low is the breakout.",
+    },
+    { key: "symbol", label: "Symbol", kind: "symbol", group: "signal", onCard: true },
+    {
+      key: "timeframe",
+      label: "Timeframe",
+      kind: "select",
+      group: "signal",
+      onCard: true,
+      options: BREAKOUT_TIMEFRAMES,
+      hint: "1H or 4H. Built for strong momentum, not for scalping.",
+    },
+    {
+      key: "stop_atr",
+      label: "Stop · ATR ×",
+      kind: "number",
+      group: "risk",
+      min: 0.5,
+      max: 6,
+      step: 0.5,
+      hint: "Below the long breakout close, above the short breakout close. Scales with the coin.",
+    },
+    {
+      key: "target_r",
+      label: "Target · R",
+      kind: "number",
+      group: "risk",
+      min: 2,
+      max: 3,
+      step: 0.5,
+      onCard: true,
+      hint: "2R, 2.5R, or 3R. Reward is this many times the stop distance.",
+    },
+    { key: "risk_pct", label: "Risk % of capital", kind: "number", group: "risk", min: 0.1, max: 5, step: 0.1 },
+    { key: "allow_shorts", label: "Allow shorts", kind: "toggle", group: "risk" },
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    symbol: "BTCUSDT",
+    timeframe: "4h",
+    lookback: 20,
+    stop_atr: 1.5,
+    target_r: 2,
+    risk_pct: 1,
+    allow_shorts: true,
+    days: 120,
+  },
+  analyze(candles, values) {
+    const lookback = Math.max(2, Math.round(num(values, "lookback", 20)));
+    const stopAtr = num(values, "stop_atr", 1.5);
+    const targetR = num(values, "target_r", 2);
+    const overlays: ChartOverlay[] = [
+      { key: "breakout_high", label: `${lookback}-candle high`, color: "#10b981" },
+      { key: "breakout_low", label: `${lookback}-candle low`, color: "#e11d48" },
+    ];
+    if (candles.length < lookback + 2) return emptyAnalysis(candles, overlays);
+
+    const atrSeries = atr(candles, 14);
+    const decorated = candles.map((c, i) => {
+      if (i < lookback) return { ...c, breakout_high: null as number | null, breakout_low: null as number | null };
+      let high = -Infinity;
+      let low = Infinity;
+      for (let j = i - lookback; j < i; j++) {
+        if (candles[j].high > high) high = candles[j].high;
+        if (candles[j].low < low) low = candles[j].low;
+      }
+      return { ...c, breakout_high: high as number | null, breakout_low: low as number | null };
+    });
+
+    const last = decorated[decorated.length - 1];
+    const priorHigh = last.breakout_high;
+    const priorLow = last.breakout_low;
+    const lastAtr = atrSeries[atrSeries.length - 1];
+    const atrOk = lastAtr != null && lastAtr > 0 && priorHigh != null && priorLow != null;
+    const isLong = Boolean(atrOk && last.close > (priorHigh as number));
+    const isShort = Boolean(atrOk && !isLong && last.close < (priorLow as number));
+
+    let signal: LiveSignal;
+    if (isLong) {
+      signal = {
+        headline: `BUY — close above ${lookback}-candle high`,
+        detail: `Close ${price(last.close)} broke ${price(priorHigh)}. Entry is this close; the bot fills on the next open.`,
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (isShort) {
+      signal = {
+        headline: `SELL — close below ${lookback}-candle low`,
+        detail: `Close ${price(last.close)} broke ${price(priorLow)}. Entry is this close; the bot fills on the next open.`,
+        tone: "sell",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Inside the range — waiting for a breakout",
+        detail: `Need a close above ${price(priorHigh)} or below ${price(priorLow)}. Best when momentum is already strong.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    const sl = atrOk
+      ? isShort
+        ? (last.close + stopAtr * (lastAtr as number))
+        : (last.close - stopAtr * (lastAtr as number))
+      : null;
+    const risk = sl != null ? Math.abs(last.close - sl) : null;
+    const tp = risk != null && (isLong || isShort)
+      ? last.close + (isLong ? 1 : -1) * targetR * risk
+      : null;
+
+    signal.readouts = [
+      { label: "Price", value: price(last.close) },
+      { label: `${lookback}-high`, value: price(priorHigh), color: "#10b981" },
+      { label: `${lookback}-low`, value: price(priorLow), color: "#e11d48" },
+      { label: "ATR", value: price(lastAtr) },
+      { label: `SL ref (${stopAtr}× ATR)`, value: price(sl), color: "var(--red)" },
+      { label: `TP ref (${targetR}R)`, value: price(tp), color: "var(--green)" },
+    ];
+
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return nativeBacktest("btc-eth-breakout", values, {
+      lookback: num(values, "lookback", 20),
+      target_r: num(values, "target_r", 2),
+      allow_shorts: values.allow_shorts !== false,
+    });
+  },
+};
 
 const donchianBreakout20k: StrategyDef = {
   id: "donchian-breakout-20k",
@@ -3381,15 +3618,14 @@ const donchianBreakout20k: StrategyDef = {
   accent: "#10b981",
   icon: TrendingUp,
   featured: true,
-  engineNote: emaEngineNote(
-    "BUY when EMA 20 crosses above both EMA 50 and EMA 200; SELL when below both",
-    "Donchian channel, volume filter, 3× ATR trail, 1% risk sizing, and 3% daily loss limit are not in backtest.",
-  ),
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Long only. Stop starts at 2× ATR and trails by the trail multiple. No fixed point target.",
+  botParams: nativeBotParams(["lookback", "trail_atr"], false),
   fields: [
     { key: "lookback", label: "Channel lookback", kind: "number", group: "signal", min: 10, max: 100, onCard: true },
     { key: "trail_atr", label: "Trail ATR multiple", kind: "number", group: "signal", min: 1, max: 5, step: 0.5, onCard: true },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskLongOnly,
     ...backtestFields,
   ],
   defaults: {
@@ -3397,8 +3633,10 @@ const donchianBreakout20k: StrategyDef = {
     timeframe: "4h",
     lookback: 20,
     trail_atr: 3.0,
-    sl_points: 600,
-    target_points: 1800,
+    stop_atr: 2,
+    target_r: 0,
+    risk_pct: 1,
+    allow_shorts: false,
   },
   analyze(candles, values) {
     const lookback = num(values, "lookback", 20);
@@ -3480,7 +3718,10 @@ const donchianBreakout20k: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    return { ...baseParams(values), ema9: 20, ema21: 50, ema50: 200 };
+    return nativeBacktest("donchian-breakout-20k", values, {
+      lookback: num(values, "lookback", 20),
+      allow_shorts: false,
+    });
   },
 };
 
@@ -3494,16 +3735,15 @@ const emaAdx10k: StrategyDef = {
     CAPITAL_LIVE_CAVEAT,
   accent: "#3b82f6",
   icon: Zap,
-  engineNote: emaEngineNote(
-    "BUY when fast EMA crosses above slow EMA and EMA 200; SELL when below both",
-    "ADX filter, 2× ATR trail, 1% risk sizing, and 72-bar max hold are not in backtest.",
-  ),
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Long only, on the EMA cross, with ADX and price above EMA 200. Stop trails at 2× ATR.",
+  botParams: nativeBotParams(["fast", "slow", "adx_thresh", "trail_atr"], false),
   fields: [
     { key: "fast", label: "Fast EMA", kind: "number", group: "signal", min: 5, max: 50, onCard: true },
     { key: "slow", label: "Slow EMA", kind: "number", group: "signal", min: 20, max: 100, onCard: true },
     { key: "adx_thresh", label: "ADX Threshold", kind: "number", group: "signal", min: 15, max: 40, onCard: true },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskLongOnly,
     ...backtestFields,
   ],
   defaults: {
@@ -3512,6 +3752,11 @@ const emaAdx10k: StrategyDef = {
     fast: 20,
     slow: 50,
     adx_thresh: 25,
+    stop_atr: 2,
+    trail_atr: 2,
+    target_r: 0,
+    risk_pct: 1,
+    allow_shorts: false,
     sl_points: 500,
     target_points: 1500,
   },
@@ -3583,9 +3828,12 @@ const emaAdx10k: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    const fast = num(values, "fast", 20);
-    const slow = num(values, "slow", 50);
-    return { ...baseParams(values), ema9: fast, ema21: slow, ema50: 200 };
+    return nativeBacktest("ema-adx-10k", values, {
+      fast: num(values, "fast", 20),
+      slow: num(values, "slow", 50),
+      adx_thresh: num(values, "adx_thresh", 25),
+      allow_shorts: false,
+    });
   },
 };
 
@@ -3599,15 +3847,14 @@ const rsiReversion3k: StrategyDef = {
     CAPITAL_LIVE_CAVEAT,
   accent: "#f59e0b",
   icon: Gauge,
-  engineNote: emaEngineNote(
-    "BUY when EMA 9 crosses EMA 21 and EMA 50, and enter only when RSI(14) is below 25 or above 60",
-    "Dip-buy logic, volume spike, 20-SMA take-profit, 1.5× ATR stop, and 1% risk sizing are not in backtest.",
-  ),
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Long only. Target is the 20-bar average, stop is 1.5× ATR. Entry is the first bar the dip appears, not every bar it stays oversold.",
+  botParams: nativeBotParams(["rsi_thresh", "vol_mult"], false),
   fields: [
     { key: "rsi_thresh", label: "RSI Oversold Level", kind: "number", group: "signal", min: 15, max: 35, onCard: true },
     { key: "vol_mult", label: "Volume Multiplier", kind: "number", group: "signal", min: 1.0, max: 3.0, step: 0.1, onCard: true },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskLongOnly,
     ...backtestFields,
   ],
   defaults: {
@@ -3615,6 +3862,10 @@ const rsiReversion3k: StrategyDef = {
     timeframe: "15m",
     rsi_thresh: 25,
     vol_mult: 1.5,
+    stop_atr: 1.5,
+    target_r: 0,
+    risk_pct: 1,
+    allow_shorts: false,
     sl_points: 300,
     target_points: 600,
   },
@@ -3691,7 +3942,11 @@ const rsiReversion3k: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    return { ...baseParams(values), use_rsi_filter: true, rsi_period: 14, rsi_oversold: 25 };
+    return nativeBacktest("rsi-reversion-3k", values, {
+      rsi_thresh: num(values, "rsi_thresh", 25),
+      vol_mult: num(values, "vol_mult", 1.5),
+      allow_shorts: false,
+    });
   },
 };
 
@@ -3705,15 +3960,18 @@ const bollingerRsi5k: StrategyDef = {
     CAPITAL_LIVE_CAVEAT,
   accent: "#8b5cf6",
   icon: Target,
-  engineNote: emaEngineNote(
-    "BUY when EMA 9 crosses EMA 21 and EMA 50, and enter only when RSI(14) is below 30 or above 60",
-    "Bollinger band, middle-band target, and crash-candle filter are not in backtest (crash filter not in live signal either yet).",
-  ),
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " Long only. Target is the middle Bollinger band, stop is 1.5× ATR.",
+  botParams: (values) => ({
+    ...nativeBotParams(["period", "rsi_thresh"], false)(values),
+    bb_period: num(values, "period", 20),
+    oversold: num(values, "rsi_thresh", 30),
+  }),
   fields: [
     { key: "period", label: "Band Period", kind: "number", group: "signal", min: 10, max: 50, onCard: true },
     { key: "rsi_thresh", label: "RSI Oversold", kind: "number", group: "signal", min: 20, max: 40, onCard: true },
     ...marketFields,
-    ...riskFields,
+    ...atrRiskLongOnly,
     ...backtestFields,
   ],
   defaults: {
@@ -3721,6 +3979,10 @@ const bollingerRsi5k: StrategyDef = {
     timeframe: "15m",
     period: 20,
     rsi_thresh: 30,
+    stop_atr: 1.5,
+    target_r: 0,
+    risk_pct: 1,
+    allow_shorts: false,
     sl_points: 350,
     target_points: 700,
   },
@@ -3800,7 +4062,12 @@ const bollingerRsi5k: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    return { ...baseParams(values), use_rsi_filter: true, rsi_period: 14, rsi_oversold: 30 };
+    return nativeBacktest("bollinger-rsi-5k", values, {
+      bb_period: num(values, "period", 20),
+      oversold: num(values, "rsi_thresh", 30),
+      bb_std: 2,
+      allow_shorts: false,
+    });
   },
 };
 
@@ -3815,14 +4082,14 @@ const cryptoPortfolio50k: StrategyDef = {
   accent: "#06b6d4",
   icon: Boxes,
   featured: true,
-  engineNote: emaEngineNote(
-    "BUY when EMA 20 crosses above both EMA 50 and EMA 200; SELL when below both — sirf chune hue ek symbol par",
-    "BTC/ETH/SOL basket, BTC trend filter, and Capital / Risk % fields are not used in backtest.",
-  ),
+  autoTrade: true,
+  engineNote: NATIVE_ENGINE_NOTE + " One symbol. Long only when EMA 20 crosses above EMA 50 and price is above EMA 200. The BTC/ETH/SOL basket is still not part of this engine.",
+  botParams: nativeBotParams(["fast", "slow", "trail_atr"], false),
   fields: [
     ...marketFields,
     { key: "capital", label: "Capital Allocation", kind: "number", group: "risk", min: 10000, max: 500000, onCard: true },
     { key: "risk_per_trade", label: "Risk % per trade", kind: "number", group: "risk", min: 0.1, max: 2.0, step: 0.1, onCard: true },
+    ...atrRiskLongOnly,
     ...backtestFields,
   ],
   defaults: {
@@ -3831,6 +4098,12 @@ const cryptoPortfolio50k: StrategyDef = {
     timeframe: "1h",
     capital: 50000,
     risk_per_trade: 0.7,
+    fast: 20,
+    slow: 50,
+    stop_atr: 2,
+    trail_atr: 2,
+    target_r: 0,
+    allow_shorts: false,
     sl_points: 600,
     target_points: 1500,
   },
@@ -3894,7 +4167,11 @@ const cryptoPortfolio50k: StrategyDef = {
     return { candles: decorated, overlays, signal };
   },
   toBacktest(values) {
-    return { ...baseParams(values), ema9: 20, ema21: 50, ema50: 200 };
+    return nativeBacktest("crypto-portfolio-50k", values, {
+      fast: num(values, "fast", 20),
+      slow: num(values, "slow", 50),
+      allow_shorts: false,
+    });
   },
 };
 
@@ -4062,12 +4339,14 @@ const buyGridRecoveryHedge: StrategyDef = {
 };
 
 export const STRATEGIES: StrategyDef[] = [
+  btcEthBreakout,
   buyGridRecoveryHedge,
   avptPullback,
   tridentMomentum,
   trendRiderPro,
   trendRider,
   trendRiderSteady,
+  metalsRider,
   donchianBreakout20k,
   emaAdx10k,
   rsiReversion3k,

@@ -26,17 +26,19 @@ Order client ka interface (paper aur live dono yahi dete hain, quantity hamesha 
   cancel_stop(stop_id)
 Fail hone par `OrderError`.
 """
+import inspect
 import math
 from datetime import datetime, timezone
 
 import numpy as np
 
 import avpt
+import native_signals
 import trend_rider
 import trident
 
-# Bot ki strategy ka replay engine — Trident / AVPT apna, baaki sab (Steady / Pro bhi) Trend Rider.
-ENGINES = {trident.STRATEGY: trident, avpt.STRATEGY: avpt}
+# Bot ki strategy ka replay engine — Trident / AVPT / native Strateo apna, baaki Trend Rider.
+ENGINES = {trident.STRATEGY: trident, avpt.STRATEGY: avpt, **native_signals.ENGINES}
 
 STATE_KEYS = ("entry_time", "trade_state", "side", "quantity", "entry_price", "stop_loss", "stop_order_id",
               "tp1_price", "tp1_done")
@@ -74,7 +76,11 @@ def engine_for(strategy):
     return ENGINES.get(strategy, trend_rider)
 
 
-def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, btc=None, strategy=None):
+def _accepts(fn, name):
+    return name in inspect.signature(fn).parameters
+
+
+def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, btc=None, strategy=None, volume=None):
     """
     Strategy abhi kya chahti hai.
 
@@ -101,20 +107,22 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
     times = np.asarray(times, dtype=np.int64)
     o, h, l, c = (np.asarray(x, dtype=float) for x in (o, h, l, c))
     n = int(np.searchsorted(times, now_ms - bar_ms, side="right"))
-    steady = bool(p.get("tp1_r")) and 0 < float(p.get("tp1_frac") or 0) < 1
+    frac = float(p.get("tp1_frac") or 0)
+    r_mult = float(p.get("tp1_r") or 0)
+    # Steady books a slice (0 < frac < 1). Native engines book the whole target (frac >= 1).
+    takes_profit = (0 < frac < 1 and r_mult > 0) or frac >= 1
     out = {"position": None, "pending": None, "forming": None, "equity": float(capital),
            "trades": [], "last_closed": None, "stale": False, "error": None,
-           # Steady: pehla profit kitne R par aur kitna hissa (0 = Steady band).
-           "tp1_r": float(p["tp1_r"]) if steady else 0.0,
-           "tp1_frac": float(p["tp1_frac"]) if steady else 0.0}
+           "tp1_r": r_mult if takes_profit and r_mult > 0 else 0.0,
+           "tp1_frac": frac if takes_profit else 0.0}
 
     if n < len(times) and times[n] <= now_ms:
         out["forming"] = {"time": int(times[n]), "open": float(o[n]), "high": float(h[n]), "low": float(l[n])}
-    if eng is trident or eng is avpt:
-        min_bars = eng.min_bars(p)
+    if hasattr(eng, "min_bars"):
+        min_bars = int(eng.min_bars(p))
         need_label = f"warmup {min_bars}"
     else:
-        min_bars = p["ema_slow"] + 10
+        min_bars = int(p["ema_slow"]) + 10
         need_label = f"EMA {p['ema_slow']}"
     if n < min_bars + 1:
         out["error"] = f"Sirf {n} band candles mili — {need_label} ke liye kam se kam {min_bars + 1} chahiye."
@@ -128,14 +136,21 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
     start_index = max(int(np.searchsorted(tc, start_time_ms - bar_ms, side="right")), min_bars)
     confirm = (trend_rider.btc_confirm_arrays(tc, btc[0], btc[1], p)
                if p.get("btc_confirm") and btc is not None else None)
-    res = eng.simulate(tc, oc, hc, lc, cc, params=p, capital=capital,
-                       start_index=start_index, bar_hours=bar_ms / 3_600_000, confirm=confirm)
+    vol = None if volume is None else np.asarray(volume, dtype=float)[:n]
+    sim_kw = dict(params=p, capital=capital, start_index=start_index,
+                  bar_hours=bar_ms / 3_600_000, confirm=confirm)
+    if vol is not None and _accepts(eng.simulate, "volume"):
+        sim_kw["volume"] = vol
+    res = eng.simulate(tc, oc, hc, lc, cc, **sim_kw)
     out["trades"] = res["trades"]
     if res["equity"]:
         out["equity"] = float(res["equity"][-1][1])
 
     k = n - 1
-    ind = eng.indicators(oc, hc, lc, cc, p, times=tc, confirm=confirm)
+    ind_kw = dict(times=tc, confirm=confirm)
+    if vol is not None and _accepts(eng.indicators, "volume"):
+        ind_kw["volume"] = vol
+    ind = eng.indicators(oc, hc, lc, cc, p, **ind_kw)
     pos = res["open_position"]
     if pos and "exit_long" in ind and ind["exit_long" if pos["side"] == "buy" else "exit_short"][k]:
         # Trident: momentum is band candle par toota — simulate agli candle ke open par band karta
@@ -167,7 +182,17 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
             d = 1 if ind["long"][k] else -1
             entry_time = int(tc[k]) + bar_ms
             tp1 = None
-            if eng is avpt:
+            if getattr(eng, "level_targets", False):
+                atr_k = float(ind["atr"][k]) if ind.get("atr") is not None and math.isfinite(ind["atr"][k]) else 0.0
+                stop = float(cc[k] - d * float(p.get("stop_atr") or 1.5) * max(atr_k, 0.0))
+                tp_arr = ind.get("tp_long") if d > 0 else ind.get("tp_short")
+                if tp_arr is not None and math.isfinite(tp_arr[k]) and d * (float(tp_arr[k]) - cc[k]) > 0:
+                    tp1 = float(tp_arr[k])
+                elif out["tp1_r"]:
+                    forming = out["forming"]
+                    if forming and forming["time"] == entry_time:
+                        tp1 = _tp1_level(forming["open"] * (1 + d * trend_rider.SLIPPAGE), stop, out["tp1_r"])
+            elif eng is avpt:
                 # AVPT stop/TP1 reclaim plan se aate hain — ATR×stop_atr nahi.
                 stop_arr, tp1_arr = ind.get("stop"), ind.get("tp1")
                 atr_k = float(ind["atr"][k]) if ind.get("atr") is not None and math.isfinite(ind["atr"][k]) else 0.0
@@ -180,7 +205,7 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
             else:
                 stop = float(cc[k] - d * p["stop_atr"] * ind["atr"][k])
                 forming = out["forming"]
-                if steady and forming and forming["time"] == entry_time:
+                if out["tp1_r"] and 0 < out["tp1_frac"] < 1 and forming and forming["time"] == entry_time:
                     # simulate jaisa: entry candle ka open + slippage se tp1.
                     tp1 = _tp1_level(forming["open"] * (1 + d * trend_rider.SLIPPAGE), stop, out["tp1_r"])
             out["pending"] = {
@@ -424,6 +449,18 @@ def check_first_profit(state, client, *, tp1_frac, tag="bot"):
 
 def _take_first_profit(s, client, tp1_frac, events, tag):
     side = s["side"]
+    # Native engines set frac to 1 — the whole position exits at the target, not a slice.
+    if tp1_frac >= 0.999:
+        pos = client.position()
+        if pos and pos["side"] == side and pos["qty"] > 0:
+            qty = min(pos["qty"], s["quantity"]) if s["quantity"] else pos["qty"]
+            res = client.close(side, qty, s["stop_order_id"] or None, f"{tag}-t{int(s['entry_time'] or 0) // 60000}")
+            events.append(f"Target {_fmt_px(s['tp1_price'])} — {_fmt_qty(qty)} closed @ ~{_fmt_px(res.get('price'))}")
+        elif s["stop_order_id"]:
+            client.cancel_stop(s["stop_order_id"])
+            events.append(f"Target {_fmt_px(s['tp1_price'])} — position was already closed")
+        s.update(trade_state="closed", stop_order_id="", tp1_done=True)
+        return
     pos = client.position()
     if not pos or pos["side"] != side:
         if s["stop_order_id"]:

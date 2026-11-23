@@ -42,6 +42,9 @@ export const CRYPTO_SYMBOLS = [
   { value: "POLUSDT", label: "POL/USD" },
   { value: "1000PEPEUSDT", label: "1000PEPE/USD" },
   { value: "PENGUUSDT", label: "PENGU/USD" },
+  // Gold-backed tokens ke perps (Delta + Bybit) — Metals Rider inhi par chalta hai.
+  { value: "PAXGUSDT", label: "PAXG/USD · Gold" },
+  { value: "XAUTUSDT", label: "XAUT/USD · Gold" },
 ] as const;
 
 export const CRYPTO_INTERVALS = [
@@ -52,6 +55,7 @@ export const CRYPTO_INTERVALS = [
   { value: "30m", label: "30 Minutes" },
   { value: "1h", label: "1 Hour" },
   { value: "4h", label: "4 Hours" },
+  { value: "12h", label: "12 Hours" },
   { value: "1d", label: "1 Day" },
 ] as const;
 
@@ -405,7 +409,7 @@ export interface BacktestOpenPosition {
 }
 
 export interface BacktestParams {
-  strategy: "ema-crossover" | "range-breakout" | "trend-rider" | "trident-momentum" | "avpt-pullback";
+  strategy: string;
   /** Trend Rider: capital ($) aur har trade ka risk (%) — P&L inhi par banta hai. */
   capital?: number;
   risk_pct?: number;
@@ -452,6 +456,8 @@ export interface BacktestParams {
   range_start: string;
   range_end: string;
   range_timezone: string;
+  /** Native Strateo engines — forwarded as extra query params (ATR stop, signal periods). */
+  extraParams?: Record<string, string | number | boolean>;
 }
 
 async function cryptoFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -721,6 +727,40 @@ export async function fetchStrategyBots(token: string): Promise<StrategyBotsResp
   return cryptoFetch("/bots", { headers: { Authorization: `Bearer ${token}` } });
 }
 
+export interface AccountGuardState {
+  kill_switch: boolean;
+  flatten: boolean;
+  max_daily_loss_pct: number;
+  max_open_positions: number;
+  max_exposure_pct: number;
+  telegram_chat_id: string;
+  telegram_configured: boolean;
+  email_configured: boolean;
+  alerts: { at: string; text: string }[];
+}
+
+export interface WorkerHeartbeat {
+  running: boolean;
+  last_tick_at: string | null;
+  last_error: string;
+  bots: number;
+}
+
+export async function fetchAccountGuard(token: string): Promise<{ guard: AccountGuardState; worker: WorkerHeartbeat }> {
+  return cryptoFetch("/account/guard", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export async function saveAccountGuard(
+  token: string,
+  patch: Partial<Pick<AccountGuardState, "kill_switch" | "flatten" | "max_daily_loss_pct" | "max_open_positions" | "max_exposure_pct" | "telegram_chat_id">>,
+): Promise<{ guard: AccountGuardState; worker: WorkerHeartbeat }> {
+  return cryptoFetch("/account/guard", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function deployStrategyBot(
   token: string,
   payload: {
@@ -813,6 +853,7 @@ export async function runBacktest(params: BacktestParams): Promise<BacktestResul
     use_be_ratchet: params.use_be_ratchet,
     custom_min_er: params.custom_min_er,
     custom_band_sig: params.custom_band_sig,
+    ...params.extraParams,
   };
   for (const [key, value] of Object.entries(extra)) {
     if (value !== undefined) q.set(key, String(value));

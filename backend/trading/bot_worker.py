@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 from django.db import close_old_connections
 
+import account_guard
 import trend_rider
 import trend_rider_bot
 from django_orm import (
@@ -60,6 +61,7 @@ _locks_guard = threading.Lock()
 _retry_at = {}
 _candles = {}
 _candles_lock = threading.Lock()
+_heartbeat = {"at": None, "error": "", "bots": 0}
 
 
 def bot_lock(bot_id):
@@ -104,6 +106,15 @@ def _loop():
         _stop.wait(TICK_SECONDS)
 
 
+def heartbeat():
+    return {
+        "running": is_running(),
+        "last_tick_at": _heartbeat.get("at"),
+        "last_error": _heartbeat.get("error") or "",
+        "bots": _heartbeat.get("bots") or 0,
+    }
+
+
 def tick(now=None):
     api = _api
     if api is None or not api.DB_READY:
@@ -112,7 +123,22 @@ def tick(now=None):
     # Lambi chalne wali thread par Django khud purane connection nahi hatata (wo request ke
     # signals par hota hai) — Postgres connection toot jaaye to har tick fail hoti rehti.
     close_old_connections()
-    for row in list_active_strategy_bots():
+    account_guard.begin_tick()
+    rows = list_active_strategy_bots()
+    _heartbeat["at"] = datetime.now(timezone.utc).isoformat()
+    _heartbeat["bots"] = len(rows)
+    _heartbeat["error"] = ""
+    try:
+        _tick_rows(api, rows, now)
+    except Exception as exc:
+        _heartbeat["error"] = str(exc)[:400]
+        raise
+    finally:
+        account_guard.finish_tick()
+
+
+def _tick_rows(api, rows, now):
+    for row in rows:
         lock = bot_lock(row["id"])
         if not lock.acquire(blocking=False):
             continue
@@ -141,6 +167,9 @@ def run_bot(api, bot, now):
     watch_stop = bot["mode"] != "live" and state["trade_state"] == "open"
     # Steady: pehla profit candle ke andar bharna hai — paper aur live dono par tick se.
     watch_tp1 = state["trade_state"] == "open" and state["tp1_price"] is not None and not state["tp1_done"]
+    if account_guard.flatten_requested(bot["user_id"]):
+        _flatten_for_guard(api, bot, state, now)
+        return
     if not (bar_due or retry_due or watch_stop or watch_tp1):
         return
 
@@ -168,20 +197,23 @@ def run_bot(api, bot, now):
             update_strategy_bot(bot["id"], events=events, **s)
         return
 
-    candles = _candles_for(api, bot, now_ms, bar_ms, last_closed)
-    if candles is None:
+    packed = _candles_for(api, bot, now_ms, bar_ms, last_closed)
+    if packed is None:
         _fail(bot, now, "Delta se candles nahi mili — thodi der baad dobara")
         return
+    candles, volume = packed
     btc = None
     if bot["params"].get("btc_confirm") and not str(bot["symbol"]).upper().startswith("BTC"):
         # Pro: alt ka signal BTC ke regime se pakka hota hai — wahi window BTC ki bhi.
-        btc_candles = _candles_for(api, dict(bot, symbol="BTCUSDT"), now_ms, bar_ms, last_closed)
-        if btc_candles is None:
+        btc_packed = _candles_for(api, dict(bot, symbol="BTCUSDT"), now_ms, bar_ms, last_closed)
+        if btc_packed is None:
             _fail(bot, now, "BTC ki candles nahi mili (Pro confirmation) — thodi der baad dobara")
             return
+        btc_candles = btc_packed[0]
         btc = (btc_candles[0], btc_candles[4])
     plan = trend_rider_bot.plan(
         *candles,
+        volume=volume,
         btc=btc,
         # Trident / AVPT apna replay engine; Trend Rider / Steady / Pro ek hi engine par.
         strategy=bot["strategy"],
@@ -204,6 +236,13 @@ def run_bot(api, bot, now):
     risk_pause, risk_msg, params_out = _risk_entry_guard(bot, state)
     if risk_pause:
         allow_entries = False
+    try:
+        acct_pause, acct_msg = account_guard.decide_entries(bot["user_id"])
+    except Exception:
+        acct_pause, acct_msg = False, ""
+    if acct_pause:
+        allow_entries = False
+        risk_msg = acct_msg or risk_msg
 
     prev_trade = state.get("trade_state")
     prev_snap = {
@@ -335,6 +374,21 @@ def close_bot_trade(api, bot, why):
     return s, events
 
 
+def _flatten_for_guard(api, bot, state, now):
+    """Kill-switch flatten: close this bot's position, then let finish_tick clear the flag."""
+    if state.get("trade_state") not in ("open", "entering"):
+        account_guard.note_flatten(bot["user_id"], True)
+        return
+    try:
+        s, events = close_bot_trade(api, bot, "Account flatten")
+    except OrderError as exc:
+        account_guard.note_flatten(bot["user_id"], False)
+        _fail(bot, now, f"Flatten failed: {exc}")
+        return
+    account_guard.note_flatten(bot["user_id"], True)
+    update_strategy_bot(bot["id"], events=events, last_error="", **s)
+
+
 def _fail(bot, now, message, retry_in=RETRY_SECONDS):
     _retry_at[bot["id"]] = now + retry_in
     update_strategy_bot(bot["id"], last_error=message[:400])
@@ -364,11 +418,13 @@ def _candles_for(api, bot, now_ms, bar_ms, last_closed):
     times = np.array([int(pd.Timestamp(t).timestamp() * 1000) for t in df["Open Time"]], dtype=np.int64)
     data = (times, df["Open"].to_numpy(float), df["High"].to_numpy(float), df["Low"].to_numpy(float),
             df["Close"].to_numpy(float))
+    volume = df["Volume"].to_numpy(float) if "Volume" in df.columns else None
+    packed = (data, volume)
     with _candles_lock:
         for k in [k for k in _candles if k[2] < last_closed]:
             _candles.pop(k, None)
-        _candles[key] = (time.time(), days, data)
-    return data
+        _candles[key] = (time.time(), days, packed)
+    return packed
 
 
 def make_client(api, bot):

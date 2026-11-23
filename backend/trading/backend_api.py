@@ -24,7 +24,9 @@ from exchanges.market import (
     split_spot_key,
 )
 from options_backtest import create_options_backtest_blueprint
+import account_guard
 import avpt
+import native_signals
 import trend_rider
 import trident
 import os
@@ -4153,7 +4155,10 @@ def paper_cancel_order():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-_TF_MINUTES = {'15m': 15, '30m': 30, '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440}
+_TF_MINUTES = {
+    '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+    '1h': 60, '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440,
+}
 
 
 def _trend_rider_settings(source):
@@ -4281,23 +4286,15 @@ def _trend_rider_sleeve(symbol, history, tf_min, days, capital, params, btc_hist
         confirm = trend_rider.btc_confirm_arrays(times, btc_history[1], btc_history[0]['Close'].to_numpy(), params)
 
     window_bars = int(days * 1440 / tf_min)
-    if engine is trident:
-        min_warmup = trident.min_bars({**trident.DEFAULTS, **params})
-    elif engine is avpt:
-        min_warmup = avpt.min_bars({**avpt.DEFAULTS, **params})
-    else:
-        min_warmup = trend_rider.DEFAULTS['ema_slow'] + 10
+    min_warmup = _engine_min_bars(engine, params)
     if len(df) < min_warmup + 10:
         raise ValueError(f"{symbol}: not enough history ({len(df)} candles) — indicators ke liye kam se kam {min_warmup + 10} chahiye.")
     start_index = max(len(df) - window_bars, min_warmup)
 
     ohlc = (times, df['Open'].to_numpy(), df['High'].to_numpy(), df['Low'].to_numpy(), df['Close'].to_numpy())
     common = dict(params=params, capital=capital, start_index=start_index, bar_hours=tf_min / 60)
-    if engine is avpt:
-        vol = df['Volume'].to_numpy() if 'Volume' in df.columns else None
-        res = engine.simulate(*ohlc, volume=vol, **common)
-    else:
-        res = engine.simulate(*ohlc, confirm=confirm, **common)
+    vol = df['Volume'].to_numpy() if 'Volume' in df.columns else None
+    res = _call_engine(engine, *ohlc, volume=vol, confirm=confirm, **common)
     res['symbol'] = symbol
     res['capital'] = capital
     res['candles'] = len(df) - start_index
@@ -4306,7 +4303,9 @@ def _trend_rider_sleeve(symbol, history, tf_min, days, capital, params, btc_hist
 
 
 def _trend_rider_meta(params, engine=trend_rider):
-    if engine is trident:
+    if hasattr(engine, 'META_KEYS'):
+        keys = engine.META_KEYS
+    elif engine is trident:
         keys = ('h1', 'h2', 'h3', 'stop_atr', 'ema_fast', 'ema_slow', 'allow_shorts')
     elif engine is avpt:
         keys = ('swing_len', 'max_pb_per_anchor', 'min_impulse_atr', 'filter_mode',
@@ -4334,7 +4333,7 @@ def _trend_rider_counts(trades):
         'losing_trades': len(trades) - wins,
         'sl_hits': sum(1 for t in trades if t['status'] == 'SL_HIT'),
         # Trend Rider: trailing stop; Trident: momentum toota (dono "plan ke hisaab se" exit).
-        'target_hits': sum(1 for t in trades if t['status'] in ('TRAILING_STOP', 'MOMENTUM_EXIT')),
+        'target_hits': sum(1 for t in trades if t['status'] in ('TRAILING_STOP', 'MOMENTUM_EXIT', 'TARGET_HIT', 'MID_EXIT')),
         'win_rate': round(100 * wins / len(trades), 2) if trades else 0,
     }
 
@@ -4400,11 +4399,32 @@ def _trend_rider_portfolio(sleeves, capital):
 
 
 def _native_engine(strategy):
+    if strategy in native_signals.ENGINES:
+        eng = native_signals.ENGINES[strategy]
+        return eng, eng.name, lambda source, sid=strategy: native_signals.settings(sid, source)
     if strategy == trident.STRATEGY:
         return trident, 'Trident', _trident_settings
     if strategy == avpt.STRATEGY:
         return avpt, 'AVPT', _avpt_settings
     return trend_rider, 'Trend Rider', _trend_rider_settings
+
+
+def _engine_min_bars(engine, params):
+    merged = {**getattr(engine, 'DEFAULTS', {}), **(params or {})}
+    if hasattr(engine, 'min_bars'):
+        return int(engine.min_bars(merged))
+    return int(merged.get('ema_slow') or trend_rider.DEFAULTS['ema_slow']) + 10
+
+
+def _call_engine(engine, times, o, h, l, c, *, volume, confirm, **common):
+    import inspect
+    sig = inspect.signature(engine.simulate)
+    kwargs = dict(common)
+    if 'volume' in sig.parameters:
+        kwargs['volume'] = volume
+    if 'confirm' in sig.parameters:
+        kwargs['confirm'] = confirm
+    return engine.simulate(times, o, h, l, c, **kwargs)
 
 
 def _env_block_from_result(label, res, capital, status='verified'):
@@ -4440,12 +4460,7 @@ def _trend_rider_oos_and_wfa(symbol, history, tf_min, days, capital, params, btc
     Params are NOT re-optimized — label as fixed-param WFA only.
     """
     df, times = history
-    if engine is trident:
-        min_warmup = trident.min_bars({**trident.DEFAULTS, **params})
-    elif engine is avpt:
-        min_warmup = avpt.min_bars({**avpt.DEFAULTS, **params})
-    else:
-        min_warmup = trend_rider.DEFAULTS['ema_slow'] + 10
+    min_warmup = _engine_min_bars(engine, params)
     window_bars = int(days * 1440 / tf_min)
     start_index = max(len(df) - window_bars, min_warmup)
     trade_len = len(df) - start_index
@@ -4467,14 +4482,11 @@ def _trend_rider_oos_and_wfa(symbol, history, tf_min, days, capital, params, btc
         l = df['Low'].to_numpy()[:end]
         c = df['Close'].to_numpy()[:end]
         common = dict(params=params, capital=capital, start_index=si, bar_hours=tf_min / 60)
-        if engine is avpt:
-            vol = df['Volume'].to_numpy()[:end] if 'Volume' in df.columns else None
-            res = engine.simulate(t, o, h, l, c, volume=vol, **common)
-        else:
-            conf = None
-            if confirm is not None:
-                conf = confirm[:end] if hasattr(confirm, '__getitem__') else confirm
-            res = engine.simulate(t, o, h, l, c, confirm=conf, **common)
+        vol = df['Volume'].to_numpy()[:end] if 'Volume' in df.columns else None
+        conf = None
+        if isinstance(confirm, dict):
+            conf = {k: np.asarray(v)[:end] for k, v in confirm.items()}
+        res = _call_engine(engine, t, o, h, l, c, volume=vol, confirm=conf, **common)
         res['candles'] = max(0, end - si)
         return res
 
@@ -4676,6 +4688,33 @@ def _bots_payload(user_id):
     }
 
 
+@app.route('/api/account/guard', methods=['GET'])
+@require_auth
+def get_account_guard():
+    """Kill switch, account limits, recent alerts, and whether the bot thread is alive."""
+    try:
+        return jsonify({
+            'success': True,
+            'guard': account_guard.view(g.user['id']),
+            'worker': bot_worker.heartbeat(),
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/account/guard', methods=['PUT', 'POST'])
+@require_auth
+def put_account_guard():
+    try:
+        data = request.get_json(silent=True) or {}
+        guard = account_guard.update(g.user['id'], data)
+        return jsonify({'success': True, 'guard': guard, 'worker': bot_worker.heartbeat()})
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/bots', methods=['GET'])
 @require_auth
 def list_bots():
@@ -4697,8 +4736,11 @@ def deploy_bot():
         data = request.get_json(silent=True) or {}
         user_id = g.user['id']
         strategy = str(data.get('strategy') or 'trend-rider').strip().lower()
-        if strategy not in ('trend-rider', 'trend-rider-steady', 'trend-rider-pro', trident.STRATEGY, avpt.STRATEGY):
-            return jsonify({'success': False, 'error': 'Server bots currently support Channel Break / Bank Steady / Rider Pro, Trident and AVPT only.'}), 400
+        native_ids = tuple(native_signals.ENGINES)
+        # metals-rider = Trend Rider engine, 12h candles par gold ke liye (engine_for default trend_rider).
+        if strategy not in ('trend-rider', 'trend-rider-steady', 'trend-rider-pro', 'metals-rider',
+                            trident.STRATEGY, avpt.STRATEGY, *native_ids):
+            return jsonify({'success': False, 'error': 'This strategy does not have a server bot yet.'}), 400
         if strategy in ('trend-rider-steady', 'trend-rider-pro') and not data.get('tp1_r'):
             # Steady/Pro ka matlab hi pehla profit hai — research wala default.
             data = {**data, 'tp1_r': 1.0, 'tp1_frac': data.get('tp1_frac', trend_rider.DEFAULTS['tp1_frac'])}
@@ -4712,9 +4754,13 @@ def deploy_bot():
             return jsonify({'success': False, 'error': 'This strategy runs on perps (long/short) — not spot pairs.'}), 400
         timeframe = str(data.get('timeframe') or '4h').strip()
         if timeframe not in _TF_MINUTES:
+            return jsonify({'success': False, 'error': f"This strategy does not support {timeframe}."}), 400
+        if strategy not in native_signals.ENGINES and _TF_MINUTES[timeframe] < 15:
             return jsonify({'success': False, 'error': f"This strategy does not support {timeframe} — choose 15m to 1d (4h recommended)."}), 400
         try:
-            if strategy == avpt.STRATEGY:
+            if strategy in native_signals.ENGINES:
+                settings = lambda source, sid=strategy: native_signals.settings(sid, source)
+            elif strategy == avpt.STRATEGY:
                 settings = _avpt_settings
             elif strategy == trident.STRATEGY:
                 settings = _trident_settings
@@ -4763,7 +4809,16 @@ def deploy_bot():
             account_id = account['id']
 
         existing = find_active_strategy_bot(user_id, symbol)
-        if existing:
+        if existing and data.get('replace_existing') is True:
+            # Same symbol par naya bot — purana band, khuli position bhi band.
+            try:
+                _replace_active_bot(existing)
+            except BotOrderError as exc:
+                return jsonify({
+                    'success': False,
+                    'error': f"Could not close the running bot's position: {exc}. It is still running.",
+                }), 502
+        elif existing:
             return jsonify({
                 'success': False,
                 'error': f'{symbol} already has a running bot — one position per symbol. Stop it first.',
@@ -4817,6 +4872,20 @@ def pause_bot(bot_id):
 @require_auth
 def resume_bot(bot_id):
     return _set_bot_status(bot_id, 'running', 'Resume — agle signal se entry phir chalu (pause ke dauraan wale signal chhoot gaye)')
+
+
+def _replace_active_bot(bot):
+    """Stop the bot already on this symbol so another strategy can take the coin. Open trades are closed."""
+    bot_id = bot['id']
+    with bot_worker.bot_lock(bot_id):
+        fresh = get_strategy_bot(bot_id)
+        if not fresh or fresh['status'] == 'stopped':
+            return
+        fields, events = {}, []
+        if fresh['trade_state'] in ('open', 'entering'):
+            fields, events = bot_worker.close_bot_trade(sys.modules[__name__], fresh, 'Replaced by a new bot')
+        events.append('Bot stopped — replaced by a new bot on this symbol')
+        update_strategy_bot(bot_id, status='stopped', events=events, **fields)
 
 
 @app.route('/api/bots/<int:bot_id>/stop', methods=['POST'])
@@ -4905,6 +4974,8 @@ def backtest_strategy():
             return _trend_rider_backtest(request.args, symbol, timeframe, days, exchange, strategy=trident.STRATEGY)
         if strategy_name == avpt.STRATEGY:
             return _trend_rider_backtest(request.args, symbol, timeframe, days, exchange, strategy=avpt.STRATEGY)
+        if strategy_name in native_signals.ENGINES:
+            return _trend_rider_backtest(request.args, symbol, timeframe, days, exchange, strategy=strategy_name)
 
         print(f"📊 Starting professional backtest for {symbol}")
         print(f"   Strategy: {strategy_name}")

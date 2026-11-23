@@ -97,6 +97,49 @@ export function buildScriptDoc(def: StrategyDef): StrategyScriptDoc {
 
 /** Hand-tuned docs for featured / complex engines. */
 const SCRIPT_OVERRIDES: Record<string, StrategyScriptDoc> = {
+  "btc-eth-breakout": {
+    overview:
+      "BTC/ETH Breakout is a momentum system for 1H and 4H. It buys a close above the previous 20-candle high and sells a close below the previous 20-candle low. The stop is an ATR multiple beyond that breakout close. The target is 2R–3R.",
+    howItWorks: [
+      {
+        title: "Long",
+        body: "A candle closes above the highest high of the previous 20 candles. That close is the signal. The bot fills on the next candle open.",
+      },
+      {
+        title: "Short",
+        body: "A candle closes below the lowest low of the previous 20 candles. Same fill: next candle open. Turn shorts off in Setup to take longs only.",
+      },
+      {
+        title: "Stop",
+        body: "ATR × (default 1.5) beyond the breakout close — below it on a long, above it on a short. The distance scales with the coin.",
+      },
+      {
+        title: "Target",
+        body: "2R, 2.5R, or 3R. 2R means the target is twice the stop distance from the fill. There is no trailing stop.",
+      },
+    ],
+    keyFeatures: [
+      "20-candle high/low breakout",
+      "Long and short",
+      "1H or 4H",
+      "ATR stop · 2R–3R target",
+      "Server bot · paper and live",
+    ],
+    applications: [
+      "Use it on BTC or ETH when the session already has direction.",
+      "Leave it off on flat, choppy days — a 20-candle break there is often a fake.",
+      "Pick 2R for more frequent targets, or 3R when you want the runner.",
+      "Backtest 1H and 4H separately before deploying a bot.",
+    ],
+    settings: [
+      { title: "Breakout candles", body: "How many prior candles form the high and low. Default 20." },
+      { title: "Timeframe", body: "1H or 4H only." },
+      { title: "Stop · ATR ×", body: "How many ATRs beyond the breakout close. Default 1.5." },
+      { title: "Target · R", body: "2, 2.5, or 3. Default 2R." },
+    ],
+    conclusion:
+      "The trade is the close through the 20-candle level, an ATR stop on the other side of that candle, and a 2R–3R target. It is built for momentum, not for ranges.",
+  },
   "avpt-pullback": {
     overview:
       "AVPT (Anchored VWAP Pullback & Target Zones) is a PhenLabs Pine Script port. It auto-anchors a volume-weighted VWAP to structural swing pivots, waits for a value-band pullback, then enters on a reclaim with Kaufman efficiency and quality filters. Each setup draws ENTRY, stop, and TP1–TP3.",
@@ -293,6 +336,43 @@ const SCRIPT_OVERRIDES: Record<string, StrategyScriptDoc> = {
     ],
     conclusion:
       "Rider Pro trades fewer bars and asks BTC for permission — use it when you care more about drawdown than raw trade count.",
+  },
+  "metals-rider": {
+    overview:
+      "Metals Rider runs the Channel Break rules on 12h candles for gold perps (PAXG, XAUT). On gold, 4h breakouts got chopped up in the 2022–24 range. The same rules on 12h made money in both that range and the 2024–26 trend, after Delta fees, GST, slippage and long funding.",
+    howItWorks: [
+      {
+        title: "Breakout entry",
+        body: "LONG when a closed 12h bar breaks the prior 30-bar high and price is above EMA 200. SHORT on a 30-bar low break when EMA 50 < EMA 200.",
+      },
+      {
+        title: "Stops",
+        body: "Initial stop = 2× ATR from entry. Each close, the stop trails to the 15-bar low (long) or high (short), never backwards.",
+      },
+      {
+        title: "Why 12h",
+        body: "On Bybit PAXG (Jun 2022 → Nov 2026) the share of settings that were profitable in both periods rose with the timeframe: 4h 3%, 8h 0%, 12h 100%, 1d 89%, with exchange costs.",
+      },
+    ],
+    keyFeatures: [
+      "Same engine as Channel Break",
+      "12h candles (three Delta 4h joined)",
+      "Long and short gold perps",
+      "Server bot · paper & live",
+    ],
+    applications: [
+      "Trade gold trends on PAXG or XAUT perps without 4h noise.",
+      "Silver isn't listed on Delta yet; run XAGUSD with the MT5 EA (mt5/MetalsTrendRider.mq5).",
+      "Expect ~4–7% a year at 1% risk. Gold itself rose faster, so this is about a smaller drawdown, not beating buy & hold.",
+    ],
+    settings: [
+      { title: "Channel / exit channel", body: "Entry lookback (30) and trail lookback (15)." },
+      { title: "Stop · ATR ×", body: "Initial stop width (default 2; 2 beat 3 on 12h)." },
+      { title: "Allow shorts", body: "Bear-regime shorts. Most of the profit comes from longs; shorts were mixed (helped in 2022–23 and on silver, lost in 2026 on PAXG)." },
+      { title: "Risk %", body: "Fraction of capital risked to the stop." },
+    ],
+    conclusion:
+      "Metals Rider is a slow trend follower: about one trade a month, ~45% win rate, and gains from a few long trends. Delta only has gold from Feb 2026, so in-app backtests are short. The research script covers 2022–2026.",
   },
   "buy-grid-recovery-hedge": {
     overview:

@@ -213,6 +213,24 @@ class ByokOrder(models.Model):
         ordering = ["-created_at"]
 
 
+class AccountGuard(models.Model):
+    """Account-wide kill switch and risk limits for every server bot of this user."""
+
+    user = models.OneToOneField(UserAccount, on_delete=models.CASCADE, related_name="guard")
+    kill_switch = models.BooleanField(default=False)
+    # One-shot: worker closes open bot positions, then clears this flag.
+    flatten = models.BooleanField(default=False)
+    max_daily_loss_pct = models.DecimalField(max_digits=6, decimal_places=2, default=5)
+    max_open_positions = models.PositiveSmallIntegerField(default=5)
+    max_exposure_pct = models.DecimalField(max_digits=7, decimal_places=2, default=200)
+    telegram_chat_id = models.CharField(max_length=32, blank=True, default="")
+    alerts = models.JSONField(default=list)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "account_guards"
+
+
 class EmailChangeOtp(models.Model):
     user = models.ForeignKey(UserAccount, on_delete=models.CASCADE, related_name="email_otps")
     new_email = models.CharField(max_length=180, db_index=True)
