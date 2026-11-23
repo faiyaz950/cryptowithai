@@ -4833,6 +4833,7 @@ def deploy_bot():
             symbol=symbol,
             timeframe=timeframe,
             capital=capital,
+            equity=capital,
             risk_pct=risk_pct,
             params=params,
             mode=mode,
@@ -4840,7 +4841,7 @@ def deploy_bot():
             status='running',
             events=[{
                 'at': datetime.now(timezone.utc).isoformat(),
-                'text': f'{label} bot deploy — {symbol} {timeframe}, ${capital:,.0f} par {risk_pct:g}% risk. Waiting for the next signal.',
+                'text': f'{label} bot deploy — {symbol} {timeframe}, demo ${capital:,.0f} (wallet starts here), {risk_pct:g}% risk. Waiting for the next signal.',
             }],
         )
         return jsonify({'success': True, 'message': f'{label} bot chalu — browser band ho tab bhi chalega', 'data': _bot_view(bot)}), 201
@@ -4883,7 +4884,12 @@ def _replace_active_bot(bot):
             return
         fields, events = {}, []
         if fresh['trade_state'] in ('open', 'entering'):
+            prev = bot_worker.trade_snap(fresh)
             fields, events = bot_worker.close_bot_trade(sys.modules[__name__], fresh, 'Replaced by a new bot')
+            _, events, wallet = bot_worker.settle_demo_wallet(
+                fresh, 'open' if fresh['trade_state'] == 'open' else fresh['trade_state'],
+                prev, {**fresh, **fields}, events, dict(fresh.get('params') or {}))
+            fields.update(wallet)
         events.append('Bot stopped — replaced by a new bot on this symbol')
         update_strategy_bot(bot_id, status='stopped', events=events, **fields)
 
@@ -4907,7 +4913,13 @@ def stop_bot(bot_id):
             fields, events = {}, []
             if flatten and bot['trade_state'] in ('open', 'entering'):
                 try:
+                    prev = bot_worker.trade_snap(bot)
+                    prev_trade = bot['trade_state']
                     fields, events = bot_worker.close_bot_trade(sys.modules[__name__], bot, 'Bot stop')
+                    _, events, wallet = bot_worker.settle_demo_wallet(
+                        bot, 'open' if prev_trade == 'open' else prev_trade,
+                        prev, {**bot, **fields}, events, dict(bot.get('params') or {}))
+                    fields.update(wallet)
                 except BotOrderError as exc:
                     return jsonify({'success': False, 'error': f'Could not close position: {exc}. Bot is still running.'}), 502
             elif bot['trade_state'] == 'open':

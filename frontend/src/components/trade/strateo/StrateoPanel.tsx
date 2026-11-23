@@ -16,26 +16,33 @@ import {
   X,
 } from "lucide-react";
 import type { ExchangeAccount } from "@/lib/accountApi";
-import { isBgrhStrategy } from "@/lib/buyGridRecovery";
 import { symbolLabel } from "@/lib/cryptoApi";
-import type { StrategyDef } from "@/lib/strategies";
+import { strategyHref, type StrategyDef } from "@/lib/strategies";
 import {
   EXCHANGES_HREF,
   LOGIN_HREF,
+  RESEARCH_ONLY_NOTE,
+  ROUND_TRIP_COST_PCT,
   authorOf,
+  botDemoBalance,
   dayKey,
+  exitRule,
   fmtClock,
+  fmtDemoWallet,
   fmtPct,
   fmtPrice,
   fmtSince,
   fmtWhen,
   isOptionsStrategy,
+  isResearchOnly,
+  levelMove,
   marketOf,
   outcomeLabel,
   runsOnServer,
   sideTag,
   signalKey,
   strategyTimeframe,
+  strateoValues,
   writeSettings,
   type AppliedStrategy,
   type Execution,
@@ -46,7 +53,7 @@ import {
   type TradeGate,
 } from "@/lib/strateo";
 import type { StrateoPosition } from "@/lib/strateoPositions";
-import PositionsView from "./StrateoPositions";
+import PositionsView, { LevelDist } from "./StrateoPositions";
 
 export type PanelTab = "strategies" | "positions" | "signals" | "settings";
 
@@ -165,6 +172,8 @@ export default function StrateoPanel(props: Props) {
     const today = dayKey(now);
     const out: StrateoSignal[] = [];
     for (const def of defs) {
+      // Research-only (grid EA) ke signal trade nahi hote — list unse bhar jaati thi. Card / chart par dikhte hain.
+      if (isResearchOnly(def)) continue;
       const s = stats[def.id];
       if (!s) continue;
       for (const trade of s.trades) if (dayKey(trade.entryTime) === today) out.push({ def, symbol: s.symbol, trade });
@@ -181,39 +190,35 @@ export default function StrateoPanel(props: Props) {
   const marketDefs = useMemo(() => defs.filter((d) => marketOf(d) === market), [defs, market]);
 
   /**
-   * Trending = aaj sabse zyada return; aaj kuch na ho to pichhle 5 din.
-   * Options ka % premium par hai (coin move par nahi), isliye unhe alag
-   * rank karte hain — coin strategies na milein tabhi option dikhega.
+   * Top performers = poore backtest ka return, fees + slippage ke baad, sabse upar 10.
+   * Pehle "aaj ka return" se ek hi strategy chunte the — 4H strategies aaj trade hi nahi
+   * karti, to list mein sirf options bachte the. Options ka % premium par hai (coin move par
+   * nahi), isliye wo coin strategies ke baad alag group mein aate hain.
    */
-  const trending = useMemo(() => {
-    const pick = (pool: StrategyDef[]) => {
-      let best: { def: StrategyDef; score: number; since: number } | null = null;
-      for (const def of pool) {
-        // BGRH gold ka MT5 grid EA hai — candle-path simulation par uska ~100% win har baar top par
-        // aata, jabki Strateo exchange par grid chala hi nahi sakta. Isliye top performer nahi.
-        if (isBgrhStrategy(def.id)) continue;
-        const s = stats[def.id];
-        if (!s || s.error) continue;
-        // Aaj ghaate mein chal rahi strategy "top performer" nahi — pehle +1000 ke bonus se wo bhi jeet jaati thi.
-        if (s.todayPct < 0) continue;
-        const week = s.week.reduce((sum, d) => sum + d.pct, 0);
-        const score = s.todayPct > 0 ? s.todayPct + 1000 : week;
-        if (score <= 0) continue;
-        const lastToday = [...s.trades].reverse().find((t) => dayKey(t.entryTime) === dayKey(now));
-        if (!best || score > best.score) best = { def, score, since: lastToday?.entryTime ?? s.computedAt };
-      }
-      return best;
-    };
-    return (
-      pick(marketDefs.filter((d) => !isOptionsStrategy(d))) ??
-      pick(marketDefs.filter((d) => isOptionsStrategy(d)))
-    );
-  }, [marketDefs, stats, now]);
+  const top = useMemo(() => {
+    const rank = (pool: StrategyDef[]) =>
+      pool
+        .flatMap((def) => {
+          // Research-only (BGRH grid EA) Strateo chala hi nahi sakta — uska ~100% win top par aata tha.
+          if (isResearchOnly(def)) return [];
+          const s = stats[def.id];
+          // Target fees jitne chhote (feeRisk) ya fees ke baad ghaata — "top performer" kehna dhoka hai.
+          if (!s || s.error || s.feeRisk || s.closed === 0 || s.totalPct <= 0) return [];
+          return [{ def, s }];
+        })
+        .sort((a, b) => b.s.totalPct - a.s.totalPct || (b.s.winRate ?? 0) - (a.s.winRate ?? 0));
+    const coin = rank(marketDefs.filter((d) => !isOptionsStrategy(d)));
+    const rows = [...coin, ...rank(marketDefs.filter((d) => isOptionsStrategy(d)))].slice(0, TOP_N);
+    const last = Math.max(0, ...rows.flatMap(({ s }) => s.trades.map((t) => t.entryTime)));
+    return { rows, coinCount: coin.length, last, ids: new Set(rows.map((r) => r.def.id)) };
+  }, [marketDefs, stats]);
 
   const ordered = useMemo(() => {
     const fav = new Set(favorites);
     return [...marketDefs].sort((a, b) => {
-      const rank = (d: StrategyDef) => (appliedIds.has(d.id) ? 0 : fav.has(d.id) ? 1 : 2);
+      // Research-only sabse neeche — upar wahi jo Strateo sach mein chala sakta hai.
+      const rank = (d: StrategyDef) =>
+        appliedIds.has(d.id) ? 0 : fav.has(d.id) ? 1 : isResearchOnly(d) ? 3 : 2;
       return rank(a) - rank(b);
     });
   }, [marketDefs, favorites, appliedIds]);
@@ -221,28 +226,40 @@ export default function StrateoPanel(props: Props) {
   /** Naam ya banane wale se dhoondo — 25 strategies mein scroll karna lamba hai. */
   const q = query.trim().toLowerCase();
   const matches = (d: StrategyDef) => !q || d.name.toLowerCase().includes(q) || authorOf(d).toLowerCase().includes(q);
-  const listed = ordered.filter((d) => d.id !== (q ? null : trending?.def.id) && matches(d));
+  const showTop = !q && top.rows.length > 0;
+  // Top list wale cards neeche dobara nahi — warna focus par dono jagah ek saath khulte.
+  const listed = ordered.filter((d) => !(showTop && top.ids.has(d.id)) && matches(d));
 
-  const card = (def: StrategyDef) => (
-    <StrategyCard
-      key={def.id}
-      def={def}
-      stats={stats[def.id]}
-      loading={pending.has(def.id) && !stats[def.id]}
-      refreshing={pending.has(def.id) && Boolean(stats[def.id])}
-      applied={appliedIds.has(def.id)}
-      fav={favorites.includes(def.id)}
-      bell={bells.includes(def.id)}
-      focused={focusId === def.id}
-      busy={busyId === def.id}
-      lockHint={!gate.ok && gate.reason !== "checking" ? gate.title : null}
-      onApply={() => onApply(def)}
-      onRemove={() => onRemove(def)}
-      onFocus={() => onFocus(def)}
-      onFav={() => onToggleFav(def.id)}
-      onBell={() => onToggleBell(def.id)}
-    />
-  );
+  const card = (def: StrategyDef, rank?: number) => {
+    const pos = positions.find((p) => p.def.id === def.id);
+    const wallet =
+      pos?.bot != null
+        ? botDemoBalance(pos.bot, pos.mark ?? stats[def.id]?.lastPrice ?? null)
+        : null;
+    return (
+      <StrategyCard
+        key={def.id}
+        def={def}
+        rank={rank}
+        stats={stats[def.id]}
+        loading={pending.has(def.id) && !stats[def.id]}
+        refreshing={pending.has(def.id) && Boolean(stats[def.id])}
+        applied={appliedIds.has(def.id)}
+        wallet={wallet}
+        fav={favorites.includes(def.id)}
+        bell={bells.includes(def.id)}
+        focused={focusId === def.id}
+        busy={busyId === def.id}
+        lockHint={!gate.ok && gate.reason !== "checking" ? gate.title : null}
+        symbol={symbol}
+        onApply={() => onApply(def)}
+        onRemove={() => onRemove(def)}
+        onFocus={() => onFocus(def)}
+        onFav={() => onToggleFav(def.id)}
+        onBell={() => onToggleBell(def.id)}
+      />
+    );
+  };
 
   const accountForLive = accounts.find((a) => a.id === settings.accountId) ?? null;
   const openCount = positions.filter((p) => p.state === "open" || p.state === "entering").length;
@@ -356,28 +373,44 @@ export default function StrateoPanel(props: Props) {
 
                 {!gate.ok && gate.reason !== "checking" && <LockBar gate={gate} onGate={onGate} />}
 
-                {trending && !q && (
-                  <section className="st-trending" aria-label="Trending strategy">
+                {showTop && (
+                  <section className="st-trending" aria-label="Top performers">
                     <div className="st-trending-head">
                       <Trophy className="w-3.5 h-3.5" aria-hidden />
-                      <span>Top performer</span>
-                      <span className="st-trending-timer">
-                        last signal <b>{fmtSince(trending.since, now)}</b> ago
-                      </span>
+                      <span>{top.rows.length === 1 ? "Top performer" : `Top ${top.rows.length} performers`}</span>
+                      {top.last > 0 && (
+                        <span className="st-trending-timer">
+                          last signal <b>{fmtAgo(top.last, now)}</b> ago
+                        </span>
+                      )}
                       <span
                         className="st-info"
-                        title="Highest return today on this coin (or over the last 5 days when nothing traded today). Timer = time since its latest signal."
+                        title={`Ranked by the whole backtest on this coin, after fees and slippage. Only strategies that end in profit after those costs are listed, up to ${TOP_N}. Options come after coin strategies because their % is on the option premium, not the coin price. Timer = time since the newest entry among them.`}
                       >
                         <Info className="w-3.5 h-3.5" />
                       </span>
                     </div>
-                    {card(trending.def)}
+                    <p className="st-top-note">Full backtest return after fees · last 5 days in bars</p>
+                    <ol className="st-top-list">
+                      {top.rows.map(({ def }, i) => (
+                        <li key={def.id}>
+                          {i === top.coinCount && i > 0 && (
+                            <span className="st-top-sep">Options · return on premium</span>
+                          )}
+                          {card(def, i + 1)}
+                        </li>
+                      ))}
+                    </ol>
                   </section>
                 )}
 
                 <div className="st-list-head">
                   <h2>
-                    {q ? `Results (${listed.length})` : `All strategies (${marketDefs.length})`}
+                    {q
+                      ? `Results (${listed.length})`
+                      : showTop
+                        ? `More strategies (${listed.length})`
+                        : `All strategies (${marketDefs.length})`}
                   </h2>
                   <button type="button" className="st-text-btn" onClick={onRefresh} title="Run every backtest again">
                     <RefreshCw className={`w-3.5 h-3.5${pending.size ? " st-spin" : ""}`} />
@@ -386,7 +419,7 @@ export default function StrateoPanel(props: Props) {
                 </div>
 
                 {listed.length ? (
-                  listed.map(card)
+                  listed.map((d) => card(d))
                 ) : (
                   <div className="st-empty">
                     <b>No strategy matches “{query.trim()}”</b>
@@ -403,6 +436,7 @@ export default function StrateoPanel(props: Props) {
                   executions={executions}
                   busyId={busyId}
                   symbol={symbol}
+                  stats={stats}
                   onTrade={onTradeSignal}
                   onFocus={onFocus}
                 />
@@ -433,17 +467,35 @@ export default function StrateoPanel(props: Props) {
 
 /* ── Strategy card ─────────────────────────────────────── */
 
+/** Top performers list kitni lambi. */
+const TOP_N = 10;
+
+/** Strategies wale full backtest page par, isi coin aur window ke saath, khulte hi chalao. */
+function cardBacktestHref(def: StrategyDef, symbol: string): string {
+  const base = strategyHref(def, strateoValues(def, symbol));
+  return `${base}${base.includes("?") ? "&" : "?"}backtest=1`;
+}
+
+/** "05:58" ek din tak; usse purana ho to "3d" — 4H strategies din bhar chup rehti hain. */
+function fmtAgo(ms: number, now: number): string {
+  const days = Math.floor((now - ms) / 86_400_000);
+  return days >= 1 ? `${days}d` : fmtSince(ms, now);
+}
+
 function StrategyCard({
   def,
+  rank,
   stats,
   loading,
   refreshing,
   applied,
+  wallet,
   fav,
   bell,
   focused,
   busy,
   lockHint,
+  symbol,
   onApply,
   onRemove,
   onFocus,
@@ -451,16 +503,22 @@ function StrategyCard({
   onBell,
 }: {
   def: StrategyDef;
+  /** Top performers mein jagah — tab card poore backtest ka return dikhata hai, aaj ka nahi. */
+  rank?: number;
   stats: StrateoStats | undefined;
   loading: boolean;
   refreshing: boolean;
   applied: boolean;
+  /** Live demo wallet for an applied server bot. */
+  wallet: { started: number; now: number; pnl: number } | null;
   fav: boolean;
   bell: boolean;
   focused: boolean;
   busy: boolean;
   /** Login / exchange baaki — Apply dabane par raasta dikhega. */
   lockHint: string | null;
+  /** Chart wala coin — backtest isi par chale. */
+  symbol: string;
   onApply: () => void;
   onRemove: () => void;
   onFocus: () => void;
@@ -477,7 +535,25 @@ function StrategyCard({
   const week = stats?.week ?? [];
   const weekMax = Math.max(0.01, ...week.map((d) => Math.abs(d.pct)));
   const win = stats?.winRate ?? null;
-  const tone = today > 0 ? "st-up" : today < 0 ? "st-down" : "st-flat";
+  const research = isResearchOnly(def);
+  const costTxt = `~${ROUND_TRIP_COST_PCT.toFixed(2)}% fees + slippage`;
+  const feeTitle =
+    stats?.feeRisk && stats.avgWinGross != null
+      ? `Average win is ${fmtPct(stats.avgWinGross)} of price before costs; ${costTxt} per trade ${
+          stats.feeRisk === "below" ? "is more than that — an average win ends as a loss." : "takes more than half of it."
+        }`
+      : null;
+  // Ranked card wahi number dikhaye jis par rank hua — warna #1 par "+0.00%" (aaj trade nahi) dikhta.
+  const ranked = rank != null;
+  const shown = ranked ? (stats?.totalPct ?? 0) : today;
+  const tone = shown > 0 ? "st-up" : shown < 0 ? "st-down" : "st-flat";
+  const shownTitle = ranked
+    ? options
+      ? `Whole ${stats?.days ?? 0}-day backtest, as % of the option premium (not the coin price)`
+      : `Whole ${stats?.days ?? 0}-day backtest, % price move after ${costTxt} (no leverage)`
+    : options
+      ? "Today: trades closed today plus a trade opened today, as % of the option premium (not the coin price)"
+      : `Today: trades closed today plus a trade opened today, as % price move after ${costTxt} (no leverage)`;
   const coin = stats ? symbolLabel(stats.symbol).split("/")[0] : "";
   const barHeight = (pct: number, result: string) =>
     `${result === "none" ? 0 : Math.max(14, (Math.abs(pct) / weekMax) * 100)}%`;
@@ -516,6 +592,11 @@ function StrategyCard({
       >
         <span className="st-card-icon">
           <Icon className="w-4 h-4" aria-hidden />
+          {ranked && (
+            <span className="st-rank" data-podium={rank <= 3} aria-label={`Rank ${rank}`}>
+              {rank}
+            </span>
+          )}
         </span>
         <div className="st-card-id">
           <h3 className="st-card-name">
@@ -524,7 +605,9 @@ function StrategyCard({
             {bell && <BellRing className="w-3 h-3 st-card-flag" aria-label="Alerts on" />}
           </h3>
           <div className="st-chips">
-            <span className="st-chip">by {authorOf(def)}</span>
+            <span className="st-chip st-chip-by" title={`by ${authorOf(def)}`}>
+              by {authorOf(def)}
+            </span>
             <span className="st-chip st-chip-tf" title={server ? "Runs as a server bot, 24×7" : "Monitored while Strateo is open"}>
               {tf}
               {server ? " · 24×7" : ""}
@@ -534,15 +617,26 @@ function StrategyCard({
                 Options
               </span>
             )}
-            {isBgrhStrategy(def.id) && (
-              <span
-                className="st-chip st-chip-sim"
-                title="Candle-path simulation of an XAUUSD MT5 grid EA — not tick-accurate. Strateo places single orders on its signals, not the grid and hedge basket."
-              >
-                Simulated
+            {research && (
+              <span className="st-chip st-chip-sim" title={RESEARCH_ONLY_NOTE}>
+                Research only
+              </span>
+            )}
+            {stats?.feeRisk && !research && (
+              <span className="st-chip st-chip-fee" data-risk={stats.feeRisk} title={feeTitle ?? undefined}>
+                {stats.feeRisk === "below" ? "Below fees" : "Tiny targets"}
               </span>
             )}
             {applied && <span className="st-chip st-chip-live">Running</span>}
+            {wallet && (
+              <span
+                className="st-chip st-chip-wallet"
+                data-pnl={wallet.pnl > 0 ? "up" : wallet.pnl < 0 ? "down" : "flat"}
+                title={fmtDemoWallet(wallet)}
+              >
+                {fmtDemoWallet(wallet)}
+              </span>
+            )}
           </div>
         </div>
         <span className="st-spark" aria-hidden>
@@ -558,22 +652,33 @@ function StrategyCard({
               —
             </span>
           ) : (
-            <span
-              className={`st-return ${tone}`}
-              title={
-                options
-                  ? "Today: trades closed today plus a trade opened today, as % of the option premium (not the coin price)"
-                  : "Today: trades closed today plus a trade opened today, as % price move (no leverage)"
-              }
-            >
+            <span className={`st-return ${tone}`} title={shownTitle}>
               {refreshing && <Loader2 className="w-3 h-3 st-spin st-muted" />}
-              {fmtPct(today)}
+              {fmtPct(shown)}
               {options && <small className="st-prem">prem</small>}
             </span>
           )}
-          <small>
-            {loading ? "Backtesting…" : stats?.error ? `Not on ${coin}` : win != null ? `${Math.round(win)}% win` : "Today"}
-          </small>
+          {ranked && !loading && !stats?.error ? (
+            // Phone par 66px column mein ek line nahi aati — CSS do line mein tod deti hai.
+            <small className="st-quote-sub">
+              <span>{stats?.days ?? 0}d</span>
+              {win != null && <span>{Math.round(win)}% win</span>}
+            </small>
+          ) : (
+            <small>
+              {loading ? "Backtesting…" : stats?.error ? `Not on ${coin}` : win != null ? `${Math.round(win)}% win` : "Today"}
+            </small>
+          )}
+          {!focused && def.backtestable !== false && (
+            <Link
+              href={cardBacktestHref(def, symbol)}
+              className="st-card-bt"
+              title="Open the full backtest — the same page as Strategies"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Backtest
+            </Link>
+          )}
         </div>
       </div>
 
@@ -581,7 +686,9 @@ function StrategyCard({
         <div className="st-card-detail" id={detailId}>
           <div className="st-card-stats">
             <div className="st-stat">
-              <span className="st-label">Win rate</span>
+              <span className="st-label" title={options ? undefined : `A win = profit left after ${costTxt}`}>
+                Win rate
+              </span>
               {loading ? (
                 <span className="st-shimmer st-shimmer-xs" />
               ) : (
@@ -643,7 +750,7 @@ function StrategyCard({
                   title={
                     options
                       ? "Trades closed today plus a trade opened today, as % of the option premium (not the coin price)"
-                      : "Trades closed today plus a trade opened today, as % price move (no leverage)"
+                      : `Trades closed today plus a trade opened today, as % price move after ${costTxt} (no leverage)`
                   }
                 >
                   {fmtPct(today)}
@@ -668,7 +775,41 @@ function StrategyCard({
             </div>
           </div>
 
+          {research ? (
+            <p className="st-card-warn" data-tone="info">
+              <Info className="w-3.5 h-3.5" aria-hidden />
+              <span>{RESEARCH_ONLY_NOTE}</span>
+            </p>
+          ) : feeTitle ? (
+            <p className="st-card-warn" data-tone={stats?.feeRisk === "below" ? "bad" : "warn"}>
+              <Info className="w-3.5 h-3.5" aria-hidden />
+              <span>
+                <b>{stats?.feeRisk === "below" ? "Targets are below fees." : "Targets are tiny."}</b> {feeTitle}
+              </span>
+            </p>
+          ) : (
+            !options &&
+            !loading &&
+            stats?.avgWinGross != null && (
+              // Target ka asli size aur fees — "brokerage nikalegi ya nahi" ek line mein.
+              <p className="st-card-costs">
+                Average win <b>{fmtPct(stats.avgWinGross)}</b> of price · each trade pays {costTxt} · % shown are after
+                fees
+              </p>
+            )
+          )}
+
           <div className="st-card-foot">
+            {def.backtestable !== false && (
+              <Link
+                href={cardBacktestHref(def, symbol)}
+                className="st-btn st-btn-outline"
+                title="Open the full backtest — the same page as Strategies"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Backtest
+              </Link>
+            )}
             <button
               type="button"
               className="st-icon-btn st-toggle"
@@ -694,6 +835,10 @@ function StrategyCard({
             {applied ? (
               <button type="button" className="st-btn st-btn-outline" onClick={onRemove} disabled={busy}>
                 {busy ? <Loader2 className="w-4 h-4 st-spin" /> : "Remove"}
+              </button>
+            ) : research ? (
+              <button type="button" className="st-btn st-btn-outline" disabled title={RESEARCH_ONLY_NOTE}>
+                Research only
               </button>
             ) : (
               <button
@@ -760,6 +905,7 @@ function SignalsList({
   executions,
   busyId,
   symbol,
+  stats,
   onTrade,
   onFocus,
 }: {
@@ -768,6 +914,7 @@ function SignalsList({
   executions: Execution[];
   busyId: string | null;
   symbol: string;
+  stats: Record<string, StrateoStats | undefined>;
   onTrade: (signal: StrateoSignal) => void;
   onFocus: (def: StrategyDef) => void;
 }) {
@@ -804,7 +951,10 @@ function SignalsList({
           const exec = execByKey.get(key);
           // Options ke legs perp order se nahi bante — unke liye sirf signal.
           const options = isOptionsStrategy(def);
-          const canPlace = trade.open && appliedIds.has(def.id) && !runsOnServer(def) && !options && !exec;
+          const research = isResearchOnly(def);
+          const canPlace = trade.open && appliedIds.has(def.id) && !runsOnServer(def) && !options && !research && !exec;
+          // Entry se pehle hi pata ho: target / SL kitna door, fees ke baad kitna bachega.
+          const coinMove = !trade.premium && !trade.basket;
           const Icon = def.icon;
           return (
             <article key={key} className="st-signal" data-open={trade.open} data-side={trade.side}>
@@ -829,16 +979,35 @@ function SignalsList({
                   <dd>{fmtPrice(trade.entry)}</dd>
                 </div>
                 <div>
-                  <dt>Target</dt>
-                  <dd className="st-up">{fmtPrice(trade.target)}</dd>
+                  <dt>{trade.target != null ? "Target" : "Exit"}</dt>
+                  {trade.target != null ? (
+                    <dd className="st-up">
+                      {fmtPrice(trade.target)}
+                      <LevelDist move={coinMove ? levelMove(trade.side, trade.entry, trade.target) : null} />
+                    </dd>
+                  ) : (
+                    <dd className="st-lvl-rule">{exitRule(trade, stats[def.id]?.trades)}</dd>
+                  )}
                 </div>
                 <div>
                   <dt>Stop-loss</dt>
-                  <dd className="st-down">{fmtPrice(trade.stop)}</dd>
+                  {trade.stop != null ? (
+                    <dd className="st-down">
+                      {fmtPrice(trade.stop)}
+                      <LevelDist move={coinMove ? levelMove(trade.side, trade.entry, trade.stop) : null} />
+                    </dd>
+                  ) : (
+                    // Options ka risk premium mein hai — "None" padh kar lagega bina SL ka trade hai.
+                    <dd className="st-lvl-rule">{trade.premium ? "—" : "None"}</dd>
+                  )}
                 </div>
               </dl>
               <div className="st-signal-foot">
-                <span className={`st-status ${trade.pct > 0 ? "st-up" : trade.pct < 0 ? "st-down" : ""}`} data-o={trade.outcome}>
+                <span
+                  className={`st-status ${trade.pct > 0 ? "st-up" : trade.pct < 0 ? "st-down" : ""}`}
+                  data-o={trade.outcome}
+                  title={coinMove ? `After ~${ROUND_TRIP_COST_PCT.toFixed(2)}% fees + slippage · ${fmtPct(trade.gross)} before` : undefined}
+                >
                   {outcomeLabel(trade)} {fmtPct(trade.pct)}
                   {trade.premium ? " of premium" : ""}
                 </span>
@@ -856,6 +1025,10 @@ function SignalsList({
                   >
                     {busyId === key ? <Loader2 className="w-3.5 h-3.5 st-spin" /> : "Place order"}
                   </button>
+                ) : trade.open && research ? (
+                  <span className="st-muted-sm" title={RESEARCH_ONLY_NOTE}>
+                    Research only
+                  </span>
                 ) : trade.open && appliedIds.has(def.id) && options ? (
                   <span className="st-muted-sm" title="Trade the option legs on your exchange">
                     Signal only
@@ -998,13 +1171,16 @@ function SettingsView({
 
         <div className="st-row">
           <div>
-            <b>1-Click Trade</b>
-            <small>Place the order the moment an applied strategy signals — no confirm step.</small>
+            <b>Auto-trade</b>
+            <small>
+              Master switch. On: strategies applied with Auto-trade place their own entries and exits while Strateo is
+              open. Off: they only signal. Server bots (24×7) are not affected.
+            </small>
           </div>
           <Switch
             on={settings.oneClick && gate.ok}
             onChange={(v) => (gate.ok ? writeSettings({ oneClick: v }) : onGate())}
-            label="1-Click Trade"
+            label="Auto-trade"
           />
         </div>
 
@@ -1036,8 +1212,8 @@ function SettingsView({
         </p>
         <div className="st-row">
           <div>
-            <b>Capital</b>
-            <small>Bot sizes each trade from this.</small>
+            <b>Demo amount</b>
+            <small>Virtual wallet for each new bot. Starts here; updates as trades fill.</small>
           </div>
           <label className="st-money">
             $
@@ -1047,15 +1223,15 @@ function SettingsView({
               min={10}
               step={10}
               value={settings.botCapital}
-              onChange={(e) => writeSettings({ botCapital: Math.max(0, Number(e.target.value) || 0) })}
-              aria-label="Bot capital in USD"
+              onChange={(e) => writeSettings({ botCapital: Math.max(10, Number(e.target.value) || 0) })}
+              aria-label="Demo amount in USD"
             />
           </label>
         </div>
         <div className="st-row">
           <div>
             <b>Risk per trade</b>
-            <small>A stop-out loses about this much of capital.</small>
+            <small>A stop-out loses about this much of the demo wallet.</small>
           </div>
           <label className="st-money">
             <input

@@ -144,6 +144,35 @@ class NativeSignalTests(unittest.TestCase):
             self.assertLess(abs(held["target"] - held["entry_price"]), 15)
 
 
+class DemoWalletTests(unittest.TestCase):
+    def test_fill_pnl_respects_long_and_short(self):
+        import bot_worker as bw
+        self.assertAlmostEqual(bw._fill_pnl("long", 100, 2, 110), 20)
+        self.assertAlmostEqual(bw._fill_pnl("short", 100, 2, 90), 20)
+        self.assertAlmostEqual(bw._fill_pnl("buy", 100, 1, None, stop=95), -5)
+
+    def test_settle_demo_wallet_credits_on_full_close(self):
+        import bot_worker as bw
+        bot = {"capital": 2000, "equity": 2000, "params": {}}
+        prev = {"entry_price": 100, "quantity": 1, "side": "long", "stop_loss": 95}
+        state = {"trade_state": "closed", "entry_price": 100, "quantity": 1, "side": "long", "stop_loss": 95}
+        events = ["Stop hit — 1 band kiya @ ~108"]
+        params, out_events, patch = bw.settle_demo_wallet(bot, "open", prev, state, events, {})
+        self.assertIn("equity", patch)
+        self.assertAlmostEqual(patch["equity"], 2008)
+        self.assertTrue(any("Demo wallet" in str(e) for e in out_events))
+        self.assertAlmostEqual(params["_risk"]["day_pnl"], 8)
+
+    def test_settle_demo_wallet_partial_tp1(self):
+        import bot_worker as bw
+        bot = {"capital": 1000, "equity": 1000, "params": {}}
+        prev = {"entry_price": 50, "quantity": 4, "side": "long", "stop_loss": 45}
+        state = {"trade_state": "open", "entry_price": 50, "quantity": 2, "side": "long", "stop_loss": 45}
+        events = ["Pehla profit: 2 @ ~55 book"]
+        _, _, patch = bw.settle_demo_wallet(bot, "open", prev, state, events, {})
+        self.assertAlmostEqual(patch["equity"], 1010)
+
+
 class AccountGuardTests(unittest.TestCase):
     def test_kill_switch_blocks_entries(self):
         blocked, msg = account_guard.entry_block({"kill_switch": True}, [], "2026-11-12")

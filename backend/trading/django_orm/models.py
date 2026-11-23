@@ -87,6 +87,8 @@ class StrategyBot(models.Model):
     symbol = models.CharField(max_length=32)
     timeframe = models.CharField(max_length=8, default="4h")
     capital = models.DecimalField(max_digits=18, decimal_places=2)
+    # Virtual wallet after closed trades (starts = capital). Open MTM is added in the API/UI.
+    equity = models.DecimalField(max_digits=18, decimal_places=2, default=0)
     risk_pct = models.DecimalField(max_digits=6, decimal_places=3)
     # channel, exit_channel, stop_atr, allow_shorts — backtest wale hi naam.
     params = models.JSONField(default=dict)

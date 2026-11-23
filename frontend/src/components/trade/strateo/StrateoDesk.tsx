@@ -23,8 +23,17 @@ import {
   X,
 } from "lucide-react";
 import CandleChart, { type ChartLevel, type ChartMarker } from "@/components/trade/CandleChart";
+import {
+  DOWN,
+  ENTRY_COLOR,
+  UP,
+  buildChartMarkers,
+  candleMs,
+  type ChartMarkRow,
+} from "@/lib/strateoChartMarks";
 import StrateoPanel, { Switch, type PanelTab, type StrateoSignal } from "./StrateoPanel";
 import StrateoMark from "./StrateoMark";
+import StrateoGuard from "./StrateoGuard";
 import { useAuth } from "@/context/AuthContext";
 import { listExchangeAccounts, type ExchangeAccount } from "@/lib/accountApi";
 import {
@@ -48,18 +57,27 @@ import { STRATEGIES, bool, getStrategy, num, type StrategyDef } from "@/lib/stra
 import {
   EXCHANGES_HREF,
   LOGIN_HREF,
+  RESEARCH_ONLY_NOTE,
+  ROUND_TRIP_COST_PCT,
+  autoOrders,
+  exitRule,
+  levelMove,
   closeExecution,
   dayKey,
   executeSignal,
   executionPnl,
   fmtPct,
+  botDemoBalance,
+  fmtDemoWallet,
   fmtPrice,
   fmtUsd,
   fmtClock,
   fmtWhen,
   isOptionsStrategy,
+  isResearchOnly,
   lastSeenEntry,
   markSeen,
+  netOfCosts,
   outcomeLabel,
   peekStats,
   removeApplied,
@@ -83,7 +101,7 @@ import {
   type StrateoStats,
   type StrateoTrade,
 } from "@/lib/strateo";
-import { buildPosition, sideShort, type StrateoPosition } from "@/lib/strateoPositions";
+import { buildPosition, historyResultLabel, positionHistory, sideShort, type StrateoPosition } from "@/lib/strateoPositions";
 import "./strateo.css";
 
 const CHART_BARS = 600;
@@ -103,11 +121,6 @@ const GHOST_CANDLES = Array.from({ length: 42 }, (_, i) => {
 });
 const SIGNALS_SEEN_KEY = "strateo.signalsSeen";
 const EMPTY_CANDLES: Candle[] = [];
-
-// strateo.css ke --st-up / --st-down / entry amber se match.
-const ENTRY_COLOR = "#f5a524";
-const UP = "#1ed68c";
-const DOWN = "#ff5a5f";
 
 interface Toast {
   id: number;
@@ -225,6 +238,10 @@ export default function StrateoDesk() {
   const [modalBusy, setModalBusy] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [liveAck, setLiveAck] = useState(false);
+  /** Apply modal: true = Auto-trade (signal par order khud), false = sirf signal. */
+  const [applyAuto, setApplyAuto] = useState(true);
+  /** Same coin par chalu bot ho to use band karke yeh naya deploy karein. */
+  const [replaceExisting, setReplaceExisting] = useState(false);
   const [flatten, setFlatten] = useState(true);
   const [exchMenu, setExchMenu] = useState(false);
   const [scrollToken, setScrollToken] = useState(0);
@@ -269,7 +286,7 @@ export default function StrateoDesk() {
   }, [token, acctNonce]);
   const acctLoaded = token && acct?.token === token ? acct : null;
   const accounts = useMemo(() => acctLoaded?.rows ?? [], [acctLoaded]);
-  /** Login + kam se kam ek chalu exchange key — tabhi apply, order aur 1-Click. */
+  /** Login + kam se kam ek chalu exchange key — tabhi apply, order aur Auto-trade. */
   const gate = tradeGate({
     signedIn: uid != null,
     accounts: acctLoaded ? acctLoaded.rows ?? [] : null,
@@ -295,12 +312,14 @@ export default function StrateoDesk() {
 
   useEffect(() => {
     const first = window.setTimeout(() => void loadBots(), 0);
-    const id = window.setInterval(() => void loadBots(), 30_000);
+    // Faster refresh while server bots are applied so demo wallets move with fills.
+    const ms = applied.some((a) => a.runner === "server" && a.botId) ? 10_000 : 30_000;
+    const id = window.setInterval(() => void loadBots(), ms);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(id);
     };
-  }, [loadBots]);
+  }, [loadBots, applied]);
 
   // Exchange ka chart. Delta par WebSocket aakhri candle chalata hai; baaki par poll hi live hai.
   useEffect(() => {
@@ -421,6 +440,7 @@ export default function StrateoDesk() {
     const today = dayKey(now);
     let n = 0;
     for (const def of STRATEGIES) {
+      if (isResearchOnly(def)) continue;
       for (const t of stats[def.id]?.trades ?? []) {
         if (dayKey(t.entryTime) === today && t.entryTime > signalsSeen) n += 1;
       }
@@ -466,11 +486,12 @@ export default function StrateoDesk() {
           executions,
           bots,
           livePrice: onChart ? lastPrice : null,
+          autoMaster: oneClickOn,
         }),
       );
     }
     return out;
-  }, [applied, stats, symbol, executions, bots, lastPrice]);
+  }, [applied, stats, symbol, executions, bots, lastPrice, oneClickOn]);
   const positionById = useMemo(() => new Map(positions.map((p) => [p.row.id, p])), [positions]);
 
   /* ── Signal monitor ────────────────────────────────── */
@@ -510,7 +531,9 @@ export default function StrateoDesk() {
       if (open && open.entryTime > lastSeenEntry(def.id, s.symbol)) {
         markSeen(def.id, s.symbol, open.entryTime);
         // Sirf taaza entry par action — page kai ghante baad khula to purane trade par order nahi.
-        if (Date.now() - open.entryTime <= 2 * barMs + 5 * 60_000) {
+        // Apply se pehle khula trade bhi nahi (stale cache se apply par markSeen chook sakta tha).
+        const beforeApply = row ? open.entryTime + barMs <= row.appliedAt : false;
+        if (!beforeApply && Date.now() - open.entryTime <= 2 * barMs + 5 * 60_000) {
           const options = isOptionsStrategy(def);
           const text = options
             ? `${def.name}: ${sideWord(open)} on ${symbolLabel(s.symbol)} · premium ${fmtPrice(open.entry)}`
@@ -523,7 +546,9 @@ export default function StrateoDesk() {
                 label: "View",
                 run: () => openTab("signals"),
               });
-            } else if (ctx.settings.oneClick && ctx.canTrade && ctx.token && ctx.uid != null) {
+            } else if (isResearchOnly(def)) {
+              toast(`Signal (research only, not traded) — ${text}`, "info");
+            } else if (autoOrders(row, def, ctx.settings.oneClick) && ctx.canTrade && ctx.token && ctx.uid != null) {
               try {
                 const price = s.symbol === ctx.symbol && ctx.livePrice ? ctx.livePrice : open.exit;
                 const exec = await executeSignal({
@@ -541,7 +566,11 @@ export default function StrateoDesk() {
                 toast(`Order failed — ${errText(err)}`, "bad");
               }
             } else {
-              toast(`New signal — ${text}`, "info", { label: "Place order", run: () => openTab("signals") });
+              toast(
+                `New signal — ${text}${row.auto === false ? " (signals only)" : " · Auto-trade is off"}`,
+                "info",
+                { label: "Place order", run: () => openTab("positions") },
+              );
             }
           } else if (row?.runner === "server") {
             toast(`${text} — server bot is taking the trade`, "info");
@@ -560,6 +589,7 @@ export default function StrateoDesk() {
         if (!trade && exec.entryTime > firstEntry) {
           // Trade backtest se gayab — signal wapas ho gaya. Strategy ab position nahi chahti.
           const exit = s.lastPrice ?? exec.entry;
+          const gross = (exec.side === "long" ? 1 : -1) * ((exit - exec.entry) / exec.entry) * 100;
           trade = {
             side: exec.side,
             entryTime: exec.entryTime,
@@ -568,7 +598,8 @@ export default function StrateoDesk() {
             exit,
             stop: exec.stop,
             target: exec.target,
-            pct: (exec.side === "long" ? 1 : -1) * ((exit - exec.entry) / exec.entry) * 100,
+            pct: netOfCosts(gross),
+            gross,
             outcome: "exit",
             open: false,
           };
@@ -637,25 +668,33 @@ export default function StrateoDesk() {
     accountId: settings.mode === "live" ? settings.accountId : null,
   });
 
-  const applyBrowser = async (def: StrategyDef) => {
+  const applyBrowser = async (def: StrategyDef, auto: boolean) => {
     if (uid == null || !canTrade) throw new Error("Log in and connect an exchange to apply.");
+    if (isResearchOnly(def)) throw new Error(RESEARCH_ONLY_NOTE);
     // Jo trade abhi khula hai wo "pichhla" hai — order sirf agli entry par.
     const s = stats[def.id] ?? (await requestStats(def, symbol, { priority: true }));
     if (s?.open) markSeen(def.id, symbol, s.open.entryTime);
-    saveApplied({ ...appliedRow(def, uid), runner: "browser", botId: null });
+    const options = isOptionsStrategy(def);
+    const wantsAuto = auto && !options;
+    saveApplied({ ...appliedRow(def, uid), runner: "browser", botId: null, auto: wantsAuto });
+    // Auto chuna to master switch bhi on — warna "Auto" likha hota aur order kabhi na jaata.
+    if (wantsAuto && !settings.oneClick) writeSettings({ oneClick: true });
     writePrefs({ focus: def.id });
     // Apply ke turant baad dikhe ki abhi kya chal raha hai — position, order, history.
     openTab("positions");
     toast(
-      isOptionsStrategy(def)
+      options
         ? `${def.name} applied on ${symbolLabel(symbol)} — options strategy, so you get signals only. Trade the legs on ${exchangeName}.`
-        : `${def.name} applied on ${symbolLabel(symbol)} · ${exchangeName} — ${oneClickOn ? "orders go out on the next entry" : "you'll get the next entry to confirm"}.`,
+        : wantsAuto
+          ? `${def.name}: Auto-trade on ${symbolLabel(symbol)} · ${settings.mode === "live" ? `LIVE on ${exchangeName}` : "paper"} — the next entry is placed automatically while Strateo is open.`
+          : `${def.name}: signals only on ${symbolLabel(symbol)} — you place each order yourself.`,
       "good",
     );
   };
 
-  const applyServer = async (def: StrategyDef) => {
+  const applyServer = async (def: StrategyDef, replace: boolean) => {
     if (!token || uid == null || !canTrade) throw new Error("Log in and connect an exchange to deploy a bot.");
+    const prior = bots.find((b) => b.symbol === symbol && (b.status === "running" || b.status === "paused"));
     const d = def.defaults;
     const res = await deployStrategyBot(token, {
       strategy: def.id,
@@ -669,15 +708,23 @@ export default function StrateoDesk() {
       allow_shorts: bool(d, "allow_shorts"),
       ...def.botParams?.(d),
       mode: settings.mode,
+      ...(replace ? { replace_existing: true } : {}),
       ...(settings.mode === "live" ? { confirm_live: true, exchange_account_id: settings.accountId ?? undefined } : {}),
     });
+    if (replace && prior) removeApplied(prior.strategy, uid);
     const s = stats[def.id];
     if (s?.open) markSeen(def.id, symbol, s.open.entryTime);
     saveApplied({ ...appliedRow(def, uid), runner: "server", botId: res.data.id });
     writePrefs({ focus: def.id });
     openTab("positions");
     void loadBots();
-    toast(`${def.name}: ${settings.mode === "live" ? "LIVE" : "paper"} bot #${res.data.id} running on ${symbolLabel(symbol)} — 24×7.`, "good");
+    const priorName = prior ? getStrategy(prior.strategy)?.name ?? prior.strategy : "";
+    toast(
+      prior && replace
+        ? `${def.name} is running on ${symbolLabel(symbol)}. ${priorName} was stopped.`
+        : `${def.name}: ${settings.mode === "live" ? "LIVE" : "paper"} bot #${res.data.id} running on ${symbolLabel(symbol)} — 24×7.`,
+      "good",
+    );
   };
 
   const startApply = (def: StrategyDef) => {
@@ -690,16 +737,25 @@ export default function StrateoDesk() {
       openGate();
       return;
     }
-    if (!isOptionsStrategy(def) && (runsOnServer(def) || settings.mode === "live")) {
-      setModalError(null);
-      setLiveAck(false);
-      setModal({ kind: "apply", def });
+    if (isResearchOnly(def)) {
+      writePrefs({ focus: def.id });
+      toast(RESEARCH_ONLY_NOTE, "info");
       return;
     }
-    setBusyId(def.id);
-    void applyBrowser(def)
-      .catch((err) => toast(errText(err), "bad"))
-      .finally(() => setBusyId(null));
+    // Options sirf signal dete hain — poochne ko kuch nahi.
+    if (isOptionsStrategy(def)) {
+      setBusyId(def.id);
+      void applyBrowser(def, false)
+        .catch((err) => toast(errText(err), "bad"))
+        .finally(() => setBusyId(null));
+      return;
+    }
+    // Baaki sab par saaf chunaav: Auto-trade ya sirf signal.
+    setModalError(null);
+    setLiveAck(false);
+    setApplyAuto(true);
+    setReplaceExisting(false);
+    setModal({ kind: "apply", def });
   };
 
   const startRemove = (def: StrategyDef) => {
@@ -727,8 +783,14 @@ export default function StrateoDesk() {
     setModalError(null);
     try {
       if (modal.kind === "apply") {
-        if (runsOnServer(modal.def)) await applyServer(modal.def);
-        else await applyBrowser(modal.def);
+        // Server strategy + Auto = 24×7 bot. "Signals only" = browser monitor, koi order nahi.
+        if (runsOnServer(modal.def) && applyAuto) {
+          if (blockingBot && !replaceExisting) {
+            setModalError(`${blockingName} is already running on ${symbolLabel(symbol)}. Tick “Stop ${blockingName} and run this” to replace it.`);
+            return;
+          }
+          await applyServer(modal.def, replaceExisting);
+        } else await applyBrowser(modal.def, applyAuto);
       } else {
         const { row, def } = modal;
         if (token && row.botId) await stopStrategyBot(token, row.botId, flatten);
@@ -751,6 +813,10 @@ export default function StrateoDesk() {
     }
     if (isOptionsStrategy(sig.def)) {
       toast("Options signals are not placed by Strateo — trade the legs on your exchange.", "info");
+      return;
+    }
+    if (isResearchOnly(sig.def)) {
+      toast(RESEARCH_ONLY_NOTE, "info");
       return;
     }
     if (settings.mode === "live" && !window.confirm(`Send a LIVE ${sideTag(sig.trade)} order for ${symbolLabel(sig.symbol)}?`)) return;
@@ -781,63 +847,57 @@ export default function StrateoDesk() {
 
   /* ── Chart overlays ────────────────────────────────── */
 
-  /**
-   * Ek candle mein kai trades hon (jaise 1H strategy 4h chart par) to har ek ka alag label
-   * ek-doosre par chadh jaata tha. Ab ek candle ki saari entries ek dot, aur saare exits ek
-   * label — jaise "4× Target +0.6%" (un trades ka jod, jaise week/today mein).
-   */
+  // Applied strategy isi coin par ho to chart wahi rows dikhaye jo Trade history — order ka
+  // fill time, close reason, aur woh trades bhi jo backtest window se nikal chuke.
+  const focusPos = focusId ? positionById.get(focusId) : undefined;
+  const focusOnChart = focusPos?.row.symbol === symbol;
+  const focusHistory = useMemo(
+    () => (focusOnChart && focusPos?.stats && !focusPos.stats.error ? positionHistory(focusPos, executions) : []),
+    [focusOnChart, focusPos, executions],
+  );
+  // Open trade ka % har tick badalta hai. Mark sirf tab naya ho jab koi trade khule, bande, ya result badle.
+  const markerKey = focusOnChart
+    ? focusHistory
+        .map((r) => `${r.key}|${r.entryTime}|${r.exitTime ?? ""}|${r.open}|${r.outcome}|${r.closedReason ?? ""}|${r.partial}|${r.side}|${r.open ? "" : r.pct}`)
+        .join(";")
+    : "";
+  const historyRef = useRef(focusHistory);
+  historyRef.current = focusHistory;
+
+  const focusAppliedAt = focusOnChart ? focusPos?.row.appliedAt : undefined;
   const markers = useMemo<ChartMarker[]>(() => {
+    if (focusOnChart) {
+      const rows: ChartMarkRow[] = historyRef.current.map((r) => ({
+        entryTime: r.entryTime,
+        exitTime: r.open ? null : r.exitTime,
+        side: r.side,
+        open: r.open,
+        label: historyResultLabel(r),
+        pct: r.pct,
+        premium: r.premium,
+        before: r.status === "before",
+      }));
+      return buildChartMarkers(rows, candles, focusAppliedAt);
+    }
     if (!focusStats || focusStats.error) return [];
-    const barMs = (t: number) => (t > 1e12 ? t : t * 1000);
-    // Trade jis candle ke andar aaya, us candle ka time — CandleChart bhi isi tarah snap karta hai.
-    const barAt = (t: number): number => {
-      if (!candles.length || t < barMs(candles[0].time)) return t;
-      let lo = 0;
-      let hi = candles.length - 1;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (barMs(candles[mid].time) <= t) lo = mid;
-        else hi = mid - 1;
-      }
-      return barMs(candles[lo].time);
-    };
-    const entries = new Map<string, { time: number; side: "long" | "short" }>();
-    const exits = new Map<
-      string,
-      { time: number; side: "long" | "short"; n: number; pct: number; labels: Set<string>; premium: boolean }
-    >();
-    for (const t of focusStats.trades) {
-      const eb = barAt(t.entryTime);
-      entries.set(`${eb}|${t.side}`, { time: eb, side: t.side });
-      if (t.open) continue;
-      const label =
-        t.outcome === "stop" ? "SL Hit" : t.outcome === "target" ? "Target" : t.outcome === "trail" ? "Trail" : "Exit";
-      const xb = barAt(t.exitTime);
-      const key = `${xb}|${t.side}`;
-      const row = exits.get(key) ?? { time: xb, side: t.side, n: 0, pct: 0, labels: new Set<string>(), premium: false };
-      row.n += 1;
-      row.pct += t.pct;
-      row.labels.add(label);
-      row.premium ||= Boolean(t.premium);
-      exits.set(key, row);
-    }
-    const out: ChartMarker[] = [];
-    for (const e of entries.values()) {
-      out.push({ time: e.time, position: e.side === "long" ? "belowBar" : "aboveBar", shape: "circle", color: ENTRY_COLOR });
-    }
-    for (const x of exits.values()) {
-      const label = x.labels.size === 1 ? [...x.labels][0] : "exits";
-      const head = x.n > 1 ? (x.labels.size === 1 ? `${x.n}× ${label}` : `${x.n} exits`) : label;
-      out.push({
-        time: x.time,
-        position: x.side === "long" ? "aboveBar" : "belowBar",
-        shape: "square",
-        color: x.pct >= 0 ? UP : DOWN,
-        text: `${head} ${fmtPct(x.pct, 1)}${x.premium ? " prem" : ""}`,
-      });
-    }
-    return out;
-  }, [focusStats, candles]);
+    const rows: ChartMarkRow[] = focusStats.trades.map((t) => ({
+      entryTime: t.entryTime,
+      exitTime: t.open ? null : t.exitTime,
+      side: t.side,
+      open: Boolean(t.open),
+      label: historyResultLabel({
+        open: Boolean(t.open),
+        closedReason: null,
+        partial: Boolean(t.partial),
+        outcome: t.outcome,
+      }),
+      pct: t.pct,
+      premium: Boolean(t.premium),
+    }));
+    return buildChartMarkers(rows, candles);
+    // markerKey history ka sach pakadta hai; live % se chart har second hilna nahi chahiye.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusOnChart, markerKey, focusStats, candles, focusAppliedAt]);
 
   /**
    * Chart par focus strategy ki haalat — user ki nazar se:
@@ -854,8 +914,8 @@ export default function StrateoDesk() {
     const key = signalKey(focusRow.id, focusRow.symbol, focusOpen.entryTime);
     const bot = focusRow.botId ? bots.find((b) => b.id === focusRow.botId) : undefined;
     if (executions.some((e) => e.key === key && !e.closed) || bot?.trade_state === "open") return "taken";
-    const barMs = intervalMinutes(focusRow.timeframe) * 60_000;
-    return focusOpen.entryTime + barMs > focusRow.appliedAt ? "signal" : "scan";
+    // Apply se pehle khula trade bhi signal hi hai — Positions use "signal" dikhata hai, chart bhi wahi kahe.
+    return "signal";
   })();
 
   const levels = useMemo<ChartLevel[]>(() => {
@@ -872,9 +932,10 @@ export default function StrateoDesk() {
     const open = focusOpen;
     const prem = open?.premium ? " prem." : "";
     // Grid basket ke kai legs hain — pehli buy se live price ka move basket ka P&L nahi; engine wala % lo.
+    // Fees + slippage ke baad — card, Positions aur chart ek hi number bolein.
     const move =
       open && lastPrice && !open.premium && !open.basket
-        ? (open.side === "long" ? 1 : -1) * ((lastPrice - open.entry) / open.entry) * 100
+        ? netOfCosts((open.side === "long" ? 1 : -1) * ((lastPrice - open.entry) / open.entry) * 100)
         : open?.pct;
     // User "buy / sell" mein sochta hai — long / short nahi.
     const side = open ? (open.structure ?? (open.side === "short" ? "Sell" : "Buy")) : "Buy";
@@ -904,8 +965,20 @@ export default function StrateoDesk() {
         : `Entry ${fmtPrice(entry)}${stop ? ` · SL ${fmtPrice(stop)}` : ""}`;
       last = null;
     } else if (focusState === "signal" && open) {
-      title = open.premium ? `${side} signal` : `${side} signal · ${fmtPrice(open.entry)}`;
-      sub = options ? "Signal only — trade the legs on your exchange" : oneClickOn ? "Placing order…" : "Place it from Signals";
+      // Positions card jaisa hi: options par premium ka %, coin par entry price.
+      title = open.premium ? `${side} signal · ${fmtPct(open.pct)}${prem}` : `${side} signal · ${fmtPrice(open.entry)}`;
+      const beforeApply = focusRow
+        ? open.entryTime + intervalMinutes(focusRow.timeframe) * 60_000 <= focusRow.appliedAt
+        : false;
+      sub = options
+        ? "Signal only — trade the legs on your exchange"
+        : isResearchOnly(focusDef)
+          ? "Research only — not traded"
+          : beforeApply
+            ? "Opened before you applied · see Positions"
+            : focusRow && autoOrders(focusRow, focusDef, oneClickOn)
+              ? "Placing order…"
+              : "Place it from Positions";
       last = null;
     } else if (focusState === "scan") {
       title = "Scanning";
@@ -940,44 +1013,92 @@ export default function StrateoDesk() {
         </span>
       </div>
     );
-  }, [focusDef, focusId, focusOpen, focusStats, focusState, lastPrice, oneClickOn, now, positionById]);
+  }, [focusDef, focusId, focusRow, focusOpen, focusStats, focusState, lastPrice, oneClickOn, now, positionById]);
 
-  /** Strategy chunte hi uska aakhri trade screen par — warna lagta hai chart par kuch hai hi nahi. */
+  /**
+   * Naya trade history mein aaye aur screen par na ho to chart us candle tak khisko.
+   * Key mein close time hai — trade band hote hi wahi exit dikhe, purana SL Hit nahi.
+   */
+  const newest = focusHistory[0] ?? null;
   const focusLast = focusStats && !focusStats.error ? focusStats.trades[focusStats.trades.length - 1] ?? null : null;
+  const pinTime = newest
+    ? newest.open
+      ? newest.entryTime
+      : (newest.exitTime ?? newest.entryTime)
+    : focusLast
+      ? focusLast.open
+        ? focusLast.entryTime
+        : focusLast.exitTime
+      : 0;
+  const pinKey = newest
+    ? `${newest.key}|${newest.open ? "open" : (newest.exitTime ?? "")}`
+    : focusLast
+      ? `${focusLast.entryTime}|${focusLast.open ? "open" : focusLast.exitTime}`
+      : "";
   const reveal = useMemo(
-    () => (focusId && focusLast && !chartLoading ? { time: focusLast.entryTime, key: `${focusId}|${chartKey}` } : null),
-    [focusId, focusLast, chartLoading, chartKey],
+    () => (focusId && pinTime && !chartLoading ? { time: pinTime, key: `${focusId}|${chartKey}|${pinKey}` } : null),
+    [focusId, pinTime, pinKey, chartLoading, chartKey],
   );
 
   /**
-   * Chart sirf CHART_BARS candles laata hai (5m par ~2 din). 4H strategy ke trades usse purane hon
-   * to chart khaali lagta hai — batao, aur strategy ki apni timeframe par jaane ka button do.
+   * Chart sirf CHART_BARS candles laata hai (5m par ~2 din). Jo trade pehli candle se purana hai
+   * wo history mein rehta hai aur chart par nahi — batao, strategy ki timeframe par jaane ka button do.
    */
   const [offHidden, setOffHidden] = useState<string | null>(null);
   const offChart = useMemo(() => {
-    if (!focusId || !focusStats || focusStats.error || chartLoading || !candles.length) return null;
-    const lastMark = focusStats.trades.reduce((m, t) => Math.max(m, t.open ? t.entryTime : t.exitTime), 0);
-    const first = candles[0].time;
-    if (!lastMark || lastMark >= (first > 1e12 ? first : first * 1000)) return null;
-    const tf = focusStats.timeframe;
+    if (!focusId || chartLoading || !candles.length) return null;
+    const first = candleMs(candles[0].time);
+    const times = focusOnChart
+      ? focusHistory.map((r) => (r.open ? r.entryTime : (r.exitTime ?? r.entryTime)))
+      : (focusStats && !focusStats.error ? focusStats.trades : []).map((t) => (t.open ? t.entryTime : t.exitTime));
+    if (!times.length) return null;
+    const lastMark = Math.max(...times);
+    const hidden = times.filter((t) => t < first).length;
+    if (!lastMark || (lastMark >= first && hidden === 0)) return null;
+    const tf = focusStats?.timeframe;
     const clock = fmtClock(lastMark);
     const day = dayKey(lastMark) === dayKey(now) ? "today" : fmtWhen(lastMark, now).replace(` ${clock}`, "");
+    const olderOnly = lastMark >= first && hidden > 0;
     return {
-      key: `${focusId}|${chartKey}`,
+      key: `${focusId}|${chartKey}|${olderOnly ? `older-${hidden}` : "last"}`,
       when: lastMark,
       day,
       clock,
-      tf: tf !== interval && intervals.includes(tf) ? tf : null,
+      hidden,
+      olderOnly,
+      tf: tf && tf !== interval && intervals.includes(tf) ? tf : null,
     };
-  }, [focusId, focusStats, chartLoading, candles, chartKey, interval, intervals, now]);
+  }, [focusId, focusOnChart, focusHistory, focusStats, chartLoading, candles, chartKey, interval, intervals, now]);
 
   /* ── Render ────────────────────────────────────────── */
 
   const panelOpen = prefs.panelOpen;
   const modalDef = modal?.def ?? null;
   const modalServer = modalDef ? runsOnServer(modalDef) : false;
+  /** Auto chun rahe hain aur target fees ke barabar — pehle hi bata do. */
+  const modalStats = modalDef ? stats[modalDef.id] : undefined;
+  const modalFeeRisk =
+    modal?.kind === "apply" && modalStats?.feeRisk && modalStats.avgWinGross != null
+      ? `Small targets: the average win is ${fmtPct(modalStats.avgWinGross)} before costs, and fees + slippage take about ${fmtPct(ROUND_TRIP_COST_PCT, 2).replace("+", "")} per trade. ${modalStats.feeRisk === "below" ? "After costs, an average win is a loss." : "Costs take more than half of an average win."}`
+      : null;
+  /** Apply se pehle hi: is strategy ka target / SL aam taur par entry se kitna door hota hai. */
+  const modalLevels = (() => {
+    if (modal?.kind !== "apply" || !modalStats || modalStats.error) return null;
+    const coin = modalStats.trades.filter((t) => !t.premium && !t.basket);
+    if (!coin.length) return null;
+    const avg = (pick: (t: (typeof coin)[number]) => number | null) => {
+      const v = coin.map((t) => levelMove(t.side, t.entry, pick(t))).filter((x): x is number => x != null);
+      return v.length ? v.reduce((a, b) => a + Math.abs(b), 0) / v.length : null;
+    };
+    const target = avg((t) => t.target);
+    const stop = avg((t) => t.stop);
+    if (target == null && stop == null) return null;
+    return { target, stop, rule: exitRule(null, modalStats.trades) };
+  })();
+  // Live ki shartein sirf tab jab order lagenge (Auto). "Signals only" kuch nahi bhejta.
+  const modalLive = modal?.kind === "apply" && settings.mode === "live" && applyAuto;
   const liveBlock =
-    modal?.kind === "apply" && settings.mode === "live"
+    modalLive
       ? !token
         ? "Log in first."
         : !liveAccount
@@ -989,6 +1110,12 @@ export default function StrateoDesk() {
               : null
       : null;
   const modalBot = modal?.kind === "remove" ? bots.find((b) => b.id === modal.row.botId) : undefined;
+  const blockingBot =
+    modal?.kind === "apply" && modalServer && applyAuto
+      ? bots.find((b) => b.symbol === symbol && (b.status === "running" || b.status === "paused"))
+      : undefined;
+  const blockingName = blockingBot ? getStrategy(blockingBot.strategy)?.name ?? blockingBot.strategy : "";
+  const blockingOpen = blockingBot?.trade_state === "open" || blockingBot?.trade_state === "entering";
   const coin = symbolLabel(symbol).split("/")[0];
   const feedState = exchange === "delta" ? liveStatus ?? "connecting" : "poll";
   const feedLabel =
@@ -1080,19 +1207,20 @@ export default function StrateoDesk() {
           </div>
 
           <div className="st-topbar-end">
+            <StrateoGuard token={token} />
             <div className="st-oneclick" data-on={oneClickOn}>
               <MousePointerClick className="w-3.5 h-3.5" aria-hidden />
-              <span>1-Click Trade</span>
+              <span>Auto-trade</span>
               <span
                 className="st-info"
-                title="When on, an applied in-browser strategy places its order the moment it signals — no confirm step. Mode and size are in Settings."
+                title="Master switch. On: strategies applied with Auto-trade place their own entries and exits while Strateo is open (server bots run 24×7 on their own). Off: every strategy only signals. Mode and size are in Settings."
               >
                 <HelpCircle className="w-3.5 h-3.5" />
               </span>
               <Switch
                 on={oneClickOn}
                 onChange={(v) => (canTrade ? writeSettings({ oneClick: v }) : openGate())}
-                label="1-Click Trade"
+                label="Auto-trade"
               />
             </div>
             <button
@@ -1277,10 +1405,25 @@ export default function StrateoDesk() {
             {!chartLocked && !chartError && offChart && offHidden !== offChart.key && (
               <div className="st-offchart" role="status">
                 <History className="w-3.5 h-3.5" aria-hidden />
-                <span title={`Last trade ${fmtWhen(offChart.when, now)} — not on this ${interval.replace("d", "D")} chart`}>
-                  Last trade {offChart.day}
-                  <span className="st-offchart-time"> {offChart.clock}</span>
-                  <span className="st-offchart-why"> — not on this {interval.replace("d", "D")} chart</span>
+                <span
+                  title={
+                    offChart.olderOnly
+                      ? `${offChart.hidden} older trades are in history but this ${interval.replace("d", "D")} chart does not go back that far`
+                      : `Last trade ${fmtWhen(offChart.when, now)} — not on this ${interval.replace("d", "D")} chart`
+                  }
+                >
+                  {offChart.olderOnly ? (
+                    <>
+                      {offChart.hidden} older {offChart.hidden === 1 ? "trade is" : "trades are"} in history
+                      <span className="st-offchart-why"> — before this {interval.replace("d", "D")} chart</span>
+                    </>
+                  ) : (
+                    <>
+                      Last trade {offChart.day}
+                      <span className="st-offchart-time"> {offChart.clock}</span>
+                      <span className="st-offchart-why"> — not on this {interval.replace("d", "D")} chart</span>
+                    </>
+                  )}
                 </span>
                 {offChart.tf && (
                   <button
@@ -1346,6 +1489,8 @@ export default function StrateoDesk() {
               const bot = a.botId ? bots.find((b) => b.id === a.botId) : undefined;
               const pos = positionById.get(a.id);
               const chip = pos ? dockChip(pos) : null;
+              const mark = a.symbol === symbol ? lastPrice : pos?.mark ?? null;
+              const wallet = bot ? botDemoBalance(bot, mark) : null;
               return (
                 <span key={a.id} className="st-atab" data-active={focusId === a.id} data-stopped={bot?.status === "stopped"}>
                   <button
@@ -1354,7 +1499,7 @@ export default function StrateoDesk() {
                       writePrefs({ focus: a.id });
                       openTab("positions");
                     }}
-                    title={`${def.name} · ${symbolLabel(a.symbol)} · ${a.mode}${chip ? ` — ${chip.title}` : ""}`}
+                    title={`${def.name} · ${symbolLabel(a.symbol)} · ${a.mode}${wallet ? ` — ${fmtDemoWallet(wallet)}` : ""}${chip ? ` — ${chip.title}` : ""}`}
                   >
                     <span className="st-atab-icon">
                       <Icon className="w-3 h-3" aria-hidden />
@@ -1362,6 +1507,14 @@ export default function StrateoDesk() {
                     <span className="st-atab-name">{def.name}</span>
                     <span className="st-atab-tf">{a.timeframe.toUpperCase()}</span>
                     {a.runner === "server" && <Server className="w-3 h-3 st-muted" aria-label="Server bot" />}
+                    {wallet && (
+                      <span
+                        className="st-atab-wallet"
+                        data-pnl={wallet.pnl > 0 ? "up" : wallet.pnl < 0 ? "down" : "flat"}
+                      >
+                        {fmtUsd(wallet.now).replace(/\.00$/, "")}
+                      </span>
+                    )}
                     {chip && (
                       <span className="st-atab-pos" data-state={pos?.state} data-side={chip.side}>
                         {chip.text}
@@ -1389,7 +1542,7 @@ export default function StrateoDesk() {
             <span className="st-mode" data-mode={settings.mode}>
               {settings.mode === "live" ? "Live" : "Paper"}
             </span>
-            <span className="st-dock-info">1-Click {oneClickOn ? "on" : "off"}</span>
+            <span className="st-dock-info">Auto-trade {oneClickOn ? "on" : "off"}</span>
           </span>
         </footer>
       </div>
@@ -1512,6 +1665,34 @@ export default function StrateoDesk() {
 
             {modal.kind === "apply" ? (
               <>
+                <div className="st-choice" role="radiogroup" aria-label="How should this strategy trade?">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={applyAuto}
+                    className="st-choice-opt"
+                    data-on={applyAuto}
+                    onClick={() => setApplyAuto(true)}
+                  >
+                    <b>Auto-trade</b>
+                    <small>
+                      {modalServer
+                        ? "Server bot places entries, stop and exits — 24×7, even with this page closed."
+                        : "Strateo places each entry and exit itself — while Strateo is open in a browser tab."}
+                    </small>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!applyAuto}
+                    className="st-choice-opt"
+                    data-on={!applyAuto}
+                    onClick={() => setApplyAuto(false)}
+                  >
+                    <b>Signals only</b>
+                    <small>You get each entry with its target and stop-loss, and place the order yourself.</small>
+                  </button>
+                </div>
                 <dl className="st-modal-grid">
                   <div>
                     <dt>Coin</dt>
@@ -1527,13 +1708,38 @@ export default function StrateoDesk() {
                   </div>
                   <div>
                     <dt>Mode</dt>
-                    <dd className={settings.mode === "live" ? "st-down" : ""}>{settings.mode === "live" ? "LIVE" : "Paper"}</dd>
+                    <dd className={settings.mode === "live" ? "st-down" : ""}>
+                      {settings.mode === "live" ? "LIVE" : "Paper (virtual)"}
+                    </dd>
                   </div>
-                  {modalServer ? (
+                  {!applyAuto ? (
+                    <div className="st-modal-wide">
+                      <dt>Orders</dt>
+                      <dd>None — signals only</dd>
+                    </div>
+                  ) : modalServer ? (
                     <>
-                      <div>
-                        <dt>Capital</dt>
-                        <dd>${settings.botCapital.toLocaleString("en-US")}</dd>
+                      <div className="st-modal-wide">
+                        <dt>Demo amount</dt>
+                        <dd>
+                          <label className="st-money st-money-inline">
+                            $
+                            <input
+                              className="st-input"
+                              type="number"
+                              min={10}
+                              step={10}
+                              value={settings.botCapital}
+                              onChange={(e) =>
+                                writeSettings({ botCapital: Math.max(10, Number(e.target.value) || 0) })
+                              }
+                              aria-label="Demo amount in USD"
+                            />
+                          </label>
+                          <small className="st-modal-sub">
+                            Virtual wallet for this bot. Starts here; moves with each fill.
+                          </small>
+                        </dd>
                       </div>
                       <div>
                         <dt>Risk / trade</dt>
@@ -1547,12 +1753,30 @@ export default function StrateoDesk() {
                         <dd>${settings.orderUsd.toLocaleString("en-US")}</dd>
                       </div>
                       <div>
-                        <dt>1-Click</dt>
-                        <dd>{settings.oneClick ? "On" : "Off — confirm each"}</dd>
+                        <dt>Runs</dt>
+                        <dd>While Strateo is open</dd>
                       </div>
                     </>
                   )}
-                  {settings.mode === "live" && (
+                  {modalLevels && (
+                    <div className="st-modal-wide">
+                      <dt>Typical exit (last {modalStats?.days ?? 0} days)</dt>
+                      <dd>
+                        {modalLevels.target != null ? (
+                          <span className="st-up">Target {fmtPct(modalLevels.target)}</span>
+                        ) : (
+                          <span>{modalLevels.rule}</span>
+                        )}
+                        {modalLevels.stop != null && <span className="st-down"> · SL {fmtPct(-modalLevels.stop)}</span>}
+                        <small className="st-modal-sub">
+                          price move from entry · after ~{ROUND_TRIP_COST_PCT.toFixed(2)}% fees:{" "}
+                          {modalLevels.target != null ? `${fmtPct(netOfCosts(modalLevels.target))} / ` : ""}
+                          {modalLevels.stop != null ? fmtPct(netOfCosts(-modalLevels.stop)) : ""}
+                        </small>
+                      </dd>
+                    </div>
+                  )}
+                  {modalLive && (
                     <div className="st-modal-wide">
                       <dt>Account</dt>
                       <dd>{liveAccount ? `${liveAccount.label || liveAccount.exchange} · ${liveAccount.key_hint}` : "None selected"}</dd>
@@ -1560,13 +1784,39 @@ export default function StrateoDesk() {
                   )}
                 </dl>
                 <p className="st-note">
-                  {modalServer
-                    ? "Runs as a bot on the server, 24×7, even with this page closed. No order now — the bot enters on the next signal and keeps a stop order on the exchange."
-                    : "Runs while Strateo is open: every candle close the strategy re-checks. No order now — the next entry " +
-                      (settings.oneClick ? "is sent to the exchange automatically." : "shows in Signals for you to place.") +
-                      " Exits (SL / target / strategy exit) are sent the same way."}
+                  {!applyAuto
+                    ? "No order now or later — every new entry shows in Positions and Signals with its target and stop-loss, and you decide."
+                    : modalServer
+                      ? "No order now — the bot enters on the next signal and keeps a stop order on the exchange."
+                      : `No order now — the next entry is placed automatically, and its exit too. Closing every Strateo tab pauses it.${settings.oneClick ? "" : " This turns on the Auto-trade switch."}`}
+                  {applyAuto && settings.mode !== "live" ? " Paper mode uses virtual money — nothing is sent to your exchange." : ""}
                 </p>
-                {settings.mode === "live" && (
+                {applyAuto && modalFeeRisk && (
+                  <p className="st-warn">
+                    {modalFeeRisk}
+                  </p>
+                )}
+                {blockingBot && (
+                  <label className="st-replace">
+                    <input
+                      type="checkbox"
+                      checked={replaceExisting}
+                      onChange={(e) => {
+                        setReplaceExisting(e.target.checked);
+                        setModalError(null);
+                      }}
+                    />
+                    <span>
+                      <b>Stop {blockingName} and run this</b>
+                      {symbolLabel(symbol)} · {blockingBot.timeframe.toUpperCase()} · {blockingBot.mode === "live" ? "live" : "paper"}
+                      {blockingBot.status === "paused" ? " · paused" : ""}.{" "}
+                      {blockingOpen
+                        ? `Its open ${blockingBot.side || "position"} will be closed first.`
+                        : "It has no open trade."}
+                    </span>
+                  </label>
+                )}
+                {modalLive && (
                   <>
                     {liveOrdersEnabled === false && (
                       <p className="st-warn">Live orders are disabled on this server — orders will be recorded as paper.</p>
@@ -1608,18 +1858,24 @@ export default function StrateoDesk() {
               <button
                 type="button"
                 className="st-btn st-btn-solid"
-                data-tone={modal.kind === "apply" && settings.mode === "live" ? "live" : undefined}
+                data-tone={modalLive ? "live" : undefined}
                 disabled={
                   modalBusy ||
-                  (modal.kind === "apply" && settings.mode === "live" && (Boolean(liveBlock) || !liveAck)) ||
-                  (modal.kind === "apply" && modalServer && !token)
+                  (modalLive && (Boolean(liveBlock) || !liveAck)) ||
+                  (modal.kind === "apply" && modalServer && applyAuto && !token)
                 }
                 onClick={() => void confirmModal()}
               >
-                {modalBusy ? <Loader2 className="w-4 h-4 st-spin" /> : modal.kind === "apply" ? (modalServer ? "Deploy bot" : "Apply") : "Stop & remove"}
+                {modalBusy ? (
+                  <Loader2 className="w-4 h-4 st-spin" />
+                ) : modal.kind === "apply" ? (
+                  !applyAuto ? "Apply · signals only" : modalServer ? (replaceExisting && blockingBot ? "Stop & deploy" : "Deploy bot") : "Apply · auto-trade"
+                ) : (
+                  "Stop & remove"
+                )}
               </button>
             </footer>
-            {modal.kind === "apply" && modalServer && !token && <p className="st-warn">Log in to deploy a server bot.</p>}
+            {modal.kind === "apply" && modalServer && applyAuto && !token && <p className="st-warn">Log in to deploy a server bot.</p>}
           </div>
         </div>
       )}

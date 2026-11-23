@@ -686,7 +686,10 @@ export interface StrategyBot {
   strategy: string;
   symbol: string;
   timeframe: string;
+  /** Starting demo amount when the bot was deployed. */
   capital: number;
+  /** Persisted virtual wallet after closed fills (open MTM is added in the UI). */
+  equity?: number;
   risk_pct: number;
   params: Record<string, number | boolean>;
   mode: "paper" | "live";

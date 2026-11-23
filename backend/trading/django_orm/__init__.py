@@ -398,7 +398,7 @@ BOT_ACTIVE_STATUSES = ("running", "paused")
 # Bot ka event log row par hi rehta hai — bas itne aakhri.
 BOT_EVENTS_KEEP = 60
 
-_BOT_DECIMALS = ("capital", "risk_pct", "quantity", "entry_price", "stop_loss", "tp1_price")
+_BOT_DECIMALS = ("capital", "equity", "risk_pct", "quantity", "entry_price", "stop_loss", "tp1_price")
 
 
 def _fl(v: Any) -> Optional[float]:
@@ -406,13 +406,17 @@ def _fl(v: Any) -> Optional[float]:
 
 
 def _bot_dict(b: Any) -> Dict[str, Any]:
+    capital = float(b.capital)
+    equity_raw = getattr(b, "equity", None)
+    equity = float(equity_raw) if equity_raw is not None else capital
     return {
         "id": b.id,
         "user_id": b.user_id,
         "strategy": b.strategy,
         "symbol": b.symbol,
         "timeframe": b.timeframe,
-        "capital": float(b.capital),
+        "capital": capital,
+        "equity": equity,
         "risk_pct": float(b.risk_pct),
         "params": dict(b.params or {}),
         "mode": b.mode,
@@ -451,6 +455,9 @@ def create_strategy_bot(user_id: int, **fields: Any) -> Dict[str, Any]:
     from django_orm.models import StrategyBot
 
     fields.setdefault("started_at", timezone.now())
+    # Demo wallet starts at the amount the user entered as capital.
+    if "equity" not in fields and "capital" in fields:
+        fields["equity"] = fields["capital"]
     b = StrategyBot.objects.create(user_id=user_id, **_bot_fields(fields))
     return _bot_dict(b)
 

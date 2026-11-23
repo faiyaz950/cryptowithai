@@ -9,8 +9,11 @@
  *   - server bot wali strategies (`autoTrade`) backend worker par deploy hoti hain
  *     (browser band ho tab bhi chalti hain);
  *   - baaki strategies yahin monitor hoti hain: har band candle par dobara
- *     backtest, naya trade khula to signal, aur 1-Click Trade on ho to order
- *     seedha connected exchange (ya paper account) par.
+ *     backtest, naya trade khula to signal, aur strategy "Auto" par ho (aur
+ *     Auto-trade master switch on) to order seedha exchange (ya paper account) par.
+ *
+ * Har % fees ke baad ka hai (coin trades) — gross % par chhote target jeet lagte
+ * the jabki brokerage ke baad ghaata tha.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -22,6 +25,7 @@ import {
   runBacktest,
   type BacktestResult,
   type BacktestTrade,
+  type StrategyBot,
 } from "./cryptoApi";
 import { placeByokOrder, type ExchangeAccount } from "./accountApi";
 import { optionsKind, runOptionsBacktest } from "./optionsBacktest";
@@ -35,6 +39,65 @@ export const STATS_TTL_MS = 20 * 60_000;
 const CONCURRENCY = 2;
 /** Chart par itne pichhle trades ke markers kaafi hain. */
 const KEEP_TRADES = 80;
+
+/* ── Trading costs ─────────────────────────────────────── */
+
+/** Delta India taker 0.05% + 18% GST, har side — backend `trend_rider.py` ka FEE_RATE. */
+export const FEE_PCT_PER_SIDE = 0.05 * 1.18;
+/** Market order ki slippage, har side — backend SLIPPAGE. */
+export const SLIPPAGE_PCT_PER_SIDE = 0.02;
+/** Ek poora trade (andar + bahar) ~0.158% kha jaata hai. */
+export const ROUND_TRIP_COST_PCT = 2 * (FEE_PCT_PER_SIDE + SLIPPAGE_PCT_PER_SIDE);
+
+/** Gross price move se fees + slippage ke baad ka %. */
+export function netOfCosts(grossPct: number): number {
+  return grossPct - ROUND_TRIP_COST_PCT;
+}
+
+/** Entry se kisi level (target / SL) tak ka move, side ke hisaab se — target par +, SL par −. */
+export function levelMove(side: "long" | "short" | null, entry: number | null, level: number | null): number | null {
+  if (!side || !entry || !level || !(entry > 0) || !(level > 0)) return null;
+  return ((side === "long" ? 1 : -1) * (level - entry) * 100) / entry;
+}
+
+/**
+ * Per-bot demo wallet: `capital` is the starting amount, `equity` is cash after closed fills.
+ * When a position is open, optional `mark` adds unrealized P&L so the chip can move live.
+ */
+export function botDemoBalance(
+  bot: Pick<StrategyBot, "capital" | "equity" | "trade_state" | "side" | "quantity" | "entry_price">,
+  mark?: number | null,
+): { started: number; now: number; pnl: number } {
+  const started = Number(bot.capital) || 0;
+  let now = Number(bot.equity ?? bot.capital) || 0;
+  const open = bot.trade_state === "open" || bot.trade_state === "entering";
+  const entry = bot.entry_price;
+  const qty = bot.quantity;
+  if (open && entry != null && qty != null && mark != null && entry > 0 && qty !== 0 && mark > 0) {
+    const sign = bot.side === "long" ? 1 : bot.side === "short" ? -1 : 0;
+    now += sign * (mark - entry) * qty;
+  }
+  return { started, now, pnl: now - started };
+}
+
+/** "started $2,000 · now $2,150" — compact label for applied chips. */
+export function fmtDemoWallet(bal: { started: number; now: number }): string {
+  const started = fmtUsd(bal.started).replace(/\.00$/, "");
+  const current = fmtUsd(bal.now).replace(/\.00$/, "");
+  if (Math.abs(bal.now - bal.started) < 0.005) return `Demo ${current}`;
+  return `started ${started} · now ${current}`;
+}
+
+/**
+ * Fixed target na ho to trade kaise band hota hai — "—" dikhane se behtar asli niyam.
+ * Pichhle trades se padhte hain: trailing stop se band hue to "Trailing stop", warna strategy ka exit.
+ */
+export function exitRule(trade: Pick<StrateoTrade, "basket" | "premium"> | null | undefined, history?: StrateoTrade[]): string {
+  if (trade?.basket) return "Basket $ target";
+  if (trade?.premium) return "Strategy exit / expiry";
+  if (history?.some((t) => t.outcome === "trail")) return "Trailing stop";
+  return "Strategy exit signal";
+}
 
 /* ── Strategy meta ─────────────────────────────────────── */
 
@@ -53,6 +116,18 @@ export function isOptionsStrategy(def: StrategyDef): boolean {
 export function runsOnServer(def: StrategyDef): boolean {
   return def.autoTrade === true;
 }
+
+/**
+ * Sirf dekhne ke liye — Strateo inhe exchange par chala hi nahi sakta. Buy Grid Recovery
+ * gold (XAU) ka MT5 grid + hedge EA hai: dollar wale basket target, kai legs. Strateo ek
+ * signal par ek order lagata hai, grid nahi — isliye Apply band.
+ */
+export function isResearchOnly(def: StrategyDef): boolean {
+  return isBgrhStrategy(def.id);
+}
+
+export const RESEARCH_ONLY_NOTE =
+  "Research only — an XAU (gold) MT5 grid + hedge EA, simulated on candles. Strateo cannot run its grid basket on the exchange, so it cannot be applied.";
 
 export function authorOf(def: StrategyDef): string {
   const c = def.category.toLowerCase();
@@ -95,8 +170,13 @@ export interface StrateoTrade {
   exit: number;
   stop: number | null;
   target: number | null;
-  /** Entry se exit tak price ka move, side ke hisaab se (bina leverage). Options par premium ka. */
+  /**
+   * Entry se exit tak, side ke hisaab se (bina leverage) — fees + slippage ke BAAD.
+   * Options par premium ka % (fees nahi ghataye — options ki fee alag hoti hai).
+   */
   pct: number;
+  /** Fees se pehle ka move — "target kitna chhota tha" dikhane ke liye. */
+  gross: number;
   outcome: "target" | "stop" | "trail" | "exit" | "open";
   open: boolean;
   /** Options trade: entry/exit/pct premium ke hain, coin price ke nahi. */
@@ -107,6 +187,11 @@ export interface StrateoTrade {
   instrument?: string;
   /** Grid basket (kai legs): pct basket ka asli P&L hai — pehli buy se live price ka move nahi. */
   basket?: boolean;
+  /**
+   * Options: aadha TP1 par book hua, baaki baad mein (SL / time) band. pct poore trade ka hai,
+   * isliye exit premium entry se neeche ho kar bhi pct + ho sakta hai.
+   */
+  partial?: boolean;
 }
 
 export interface WeekDay {
@@ -133,6 +218,13 @@ export interface StrateoStats {
   todayClosed: number;
   /** Aaj kitni nayi entries aayi. */
   todaySignals: number;
+  /** Jeete trades ka average move, fees se PEHLE — target ka asli size. */
+  avgWinGross: number | null;
+  /**
+   * Target fees ke mukable bahut chhote: "below" = average jeet bhi fees se kam (har jeet
+   * asal mein ghaata), "thin" = fees aadhe se zyada kha jaati hain. Options par null.
+   */
+  feeRisk: "below" | "thin" | null;
   open: StrateoTrade | null;
   trades: StrateoTrade[];
   lastPrice: number | null;
@@ -177,12 +269,20 @@ function toTrade(t: BacktestTrade): StrateoTrade | null {
   // Grid basket: engine legs ka asli P&L % deta hai. Pehli buy se exit ka move yahan galat
   // hota (price gira par hedge se basket profit mein band hua) — isliye wahi lo, flip nahi.
   const basket = typeof t.pnl_pct === "number" && Number.isFinite(t.pnl_pct);
-  let pct = basket ? (t.pnl_pct as number) : movePct(side, entry, exit);
-  // Options (short premium) jaise trades mein price ka move ulta padh sakta hai — P&L ka sign sach hai.
-  if (!basket && Number.isFinite(t.pnl) && t.pnl !== 0 && Math.sign(t.pnl) !== Math.sign(pct)) {
-    pct = Math.abs(pct) * Math.sign(t.pnl);
+  let gross = basket ? (t.pnl_pct as number) : movePct(side, entry, exit);
+  if (structure && Number.isFinite(t.pnl_points) && entry > 0) {
+    // Options: engine ka apna P&L (TP1 par aadha book + baaki ka exit, slippage samet) premium ke % mein.
+    // Entry → exit premium se % nikaalna galat tha: put ko "short" maan kar sign ulta aata, aur
+    // "aadha TP1, baaki SL" wala trade +41.5% SL hit dikhta jabki asal mein ~+29% tha.
+    gross = (t.pnl_points / entry) * 100;
+  } else if (!basket && Number.isFinite(t.pnl) && t.pnl !== 0 && Math.sign(t.pnl) !== Math.sign(gross)) {
+    // Short premium jaise trades mein price ka move ulta padh sakta hai — P&L ka sign sach hai.
+    gross = Math.abs(gross) * Math.sign(t.pnl);
   }
+  // Coin trade (aur grid basket — har leg andar/bahar) par fees + slippage ghatao.
+  const pct = structure ? gross : netOfCosts(gross);
   const status = String(t.status || "").toUpperCase();
+  const partial = structure != null && status.startsWith("PARTIAL_THEN");
   const open = status === "CLOSED_AT_END" || status === "OPEN" || status === "OPEN_AT_END";
   const outcome: StrateoTrade["outcome"] = open
     ? "open"
@@ -204,10 +304,12 @@ function toTrade(t: BacktestTrade): StrateoTrade | null {
     stop: stop > 0 ? stop : null,
     target: target > 0 ? target : null,
     pct,
+    gross,
     outcome,
     open,
     ...(structure ? { premium: true, structure, instrument: t.instrument || undefined } : {}),
     ...(basket ? { basket: true } : {}),
+    ...(partial ? { partial: true } : {}),
   };
 }
 
@@ -229,6 +331,7 @@ export function statsFromResult(
     const side = sideOf(op.side);
     const mark = Number(op.mark_price) || op.entry_price;
     const basket = typeof op.unrealized_pct === "number" && Number.isFinite(op.unrealized_pct);
+    const gross = basket ? (op.unrealized_pct as number) : movePct(side, op.entry_price, mark);
     trades.push({
       side,
       entryTime: toMs(op.entry_time),
@@ -237,7 +340,8 @@ export function statsFromResult(
       exit: mark,
       stop: op.stop_loss > 0 ? op.stop_loss : null,
       target: null,
-      pct: basket ? (op.unrealized_pct as number) : movePct(side, op.entry_price, mark),
+      pct: netOfCosts(gross),
+      gross,
       outcome: "open",
       open: true,
       ...(basket ? { basket: true } : {}),
@@ -247,6 +351,17 @@ export function statsFromResult(
   const closed = trades.filter((t) => !t.open);
   const wins = closed.filter((t) => t.pct > 0).length;
   const today = dayKey(now);
+  const grossWins = closed.filter((t) => t.gross > 0).map((t) => t.gross);
+  const avgWinGross = grossWins.length ? grossWins.reduce((a, b) => a + b, 0) / grossWins.length : null;
+  const premium = closed.some((t) => t.premium);
+  const feeRisk =
+    premium || avgWinGross == null || closed.length < 3
+      ? null
+      : avgWinGross < ROUND_TRIP_COST_PCT
+        ? "below"
+        : avgWinGross < 2 * ROUND_TRIP_COST_PCT
+          ? "thin"
+          : null;
 
   const byDay = new Map<string, { pct: number; trades: number }>();
   for (const t of closed) {
@@ -291,6 +406,8 @@ export function statsFromResult(
     todayPct: (todayRow?.pct ?? 0) + openToday,
     todayClosed: todayRow?.trades ?? 0,
     todaySignals: trades.filter((t) => dayKey(t.entryTime) === today).length,
+    avgWinGross,
+    feeRisk,
     open,
     trades: trades.slice(-KEEP_TRADES),
     lastPrice: open ? open.exit : last ? last.exit : null,
@@ -325,6 +442,8 @@ export async function computeStats(def: StrategyDef, symbol: string): Promise<St
       todayPct: 0,
       todayClosed: 0,
       todaySignals: 0,
+      avgWinGross: null,
+      feeRisk: null,
       open: null,
       trades: [],
       lastPrice: null,
@@ -337,7 +456,8 @@ export async function computeStats(def: StrategyDef, symbol: string): Promise<St
 
 // v2: options trades ab structure / premium ke saath — purana cache inke bina tha.
 // v3: grid basket (BGRH) ka % ab asli P&L se — purane cache mein ulta-pulta flip hua % tha.
-const STATS_KEY = "strateo.stats.v3";
+// v4: % ab fees + slippage ke baad (aur gross alag) — purane cache mein gross tha.
+const STATS_KEY = "strateo.stats.v5";
 const STATS_EVENT = "strateo:stats";
 const memo = new Map<string, StrateoStats>();
 const inflight = new Map<string, Promise<StrateoStats>>();
@@ -546,6 +666,16 @@ export interface AppliedStrategy {
   botId: number | null;
   /** Kis account ne apply kiya — ek browser par doosra user login kare to use ye na dikhe. */
   userId?: number;
+  /**
+   * Apply par user ka chunaav: true = Auto-trade (signal par order khud), false = sirf signal.
+   * Purani rows mein nahi hai — unhe Auto maano (pehle jaisa: master switch par chalti thi).
+   */
+  auto?: boolean;
+}
+
+/** Browser strategy signal par khud order lagayegi? Server bot apna 24×7 khud karta hai. */
+export function autoOrders(row: Pick<AppliedStrategy, "auto">, def: StrategyDef, masterOn: boolean): boolean {
+  return masterOn && row.auto !== false && !isOptionsStrategy(def) && !isResearchOnly(def);
 }
 
 const APPLIED_KEY = "strateo.applied.v1";
@@ -577,7 +707,10 @@ export function useApplied(): AppliedStrategy[] {
 /* Settings tab. */
 
 export interface StrateoSettings {
-  /** Signal aate hi order — bina poochhe. */
+  /**
+   * Auto-trade master switch — on ho to "Auto" wali applied strategies signal aate hi order
+   * lagati hain (bina poochhe). Off = sab ruk jaati hain, sirf signal. Server bots par asar nahi.
+   */
   oneClick: boolean;
   mode: "paper" | "live";
   /** Live orders kis exchange key se. */
@@ -908,11 +1041,17 @@ export async function closeExecution(opts: {
   return row;
 }
 
+/** Order ka $ P&L — fees + slippage (andar + bahar, andaaza) ghata kar. */
 export function executionPnl(exec: Execution, mark: number | null): number {
   const price = exec.closed?.price ?? mark;
   if (price == null || !(price > 0)) return 0;
   const dir = exec.side === "long" ? 1 : -1;
-  return dir * (price - exec.entry) * exec.qty;
+  return dir * (price - exec.entry) * exec.qty - costUsd(exec.entry, exec.qty);
+}
+
+/** Ek poore trade ka andaazan kharcha $ mein. */
+export function costUsd(entry: number, qty: number): number {
+  return (Math.abs(entry * qty) * ROUND_TRIP_COST_PCT) / 100;
 }
 
 /* ── Formatting ────────────────────────────────────────── */
@@ -967,7 +1106,7 @@ export function fmtSince(ms: number, now = Date.now()): string {
 export function outcomeLabel(t: StrateoTrade): string {
   switch (t.outcome) {
     case "stop":
-      return "SL Hit";
+      return t.partial ? "TP1 + SL" : "SL Hit";
     case "target":
       return "Target Hit";
     case "trail":
@@ -975,6 +1114,6 @@ export function outcomeLabel(t: StrateoTrade): string {
     case "open":
       return "Open";
     default:
-      return "Exit";
+      return t.partial ? "TP1 + Exit" : "Exit";
   }
 }

@@ -181,6 +181,7 @@ def run_bot(api, bot, now):
     client.sync()
     if not (bar_due or retry_due):
         events = []
+        prev = dict(state)
         s = state
         if watch_stop:
             # Paper stop ne position band ki ho to abhi dikhao, agli candle tak nahi.
@@ -194,7 +195,9 @@ def run_bot(api, bot, now):
                 more = []
             events += more
         if events:
-            update_strategy_bot(bot["id"], events=events, **s)
+            _, events, wallet = settle_demo_wallet(
+                bot, prev.get("trade_state"), trade_snap(prev), s, events, dict(bot.get("params") or {}))
+            update_strategy_bot(bot["id"], events=events, **s, **wallet)
         return
 
     packed = _candles_for(api, bot, now_ms, bar_ms, last_closed)
@@ -219,7 +222,8 @@ def run_bot(api, bot, now):
         strategy=bot["strategy"],
         # risk_pct replay ki equity (aur isliye size) badalta hai — backtest bhi params mein bhejta hai.
         params={**bot["params"], "risk_pct": bot["risk_pct"]},
-        capital=bot["capital"],
+        # Size from the live demo wallet (starts = capital, moves with closed fills).
+        capital=_wallet(bot),
         start_time_ms=_iso_ms(bot["started_at"]),
         bar_ms=bar_ms,
         now_ms=now_ms,
@@ -245,12 +249,7 @@ def run_bot(api, bot, now):
         risk_msg = acct_msg or risk_msg
 
     prev_trade = state.get("trade_state")
-    prev_snap = {
-        "entry_price": state.get("entry_price"),
-        "quantity": state.get("quantity"),
-        "side": state.get("side"),
-        "stop_loss": state.get("stop_loss"),
-    }
+    prev_snap = trade_snap(state)
     state, events, ok = trend_rider_bot.reconcile(
         state, plan, client,
         now_ms=now_ms,
@@ -262,8 +261,8 @@ def run_bot(api, bot, now):
     )
     if state is None:
         return
-    # Update risk counters when a position closes (pause new entries only — never auto-flatten).
-    params_out = _risk_on_close(bot, prev_trade, state, params_out, events, prev_snap)
+    # Update risk counters + demo wallet when size closes (full exit or TP1 slice).
+    params_out, events, wallet = settle_demo_wallet(bot, prev_trade, prev_snap, state, events, params_out)
     if risk_msg and risk_pause:
         # Surface once per tick window without spamming forever.
         last_texts = [e.get("text") if isinstance(e, dict) else str(e) for e in (bot.get("events") or [])[-3:]]
@@ -280,9 +279,8 @@ def run_bot(api, bot, now):
         last_run_at=datetime.fromtimestamp(now, tz=timezone.utc),
         last_error=error[:400] if isinstance(error, str) else str(error)[:400],
         **state,
+        **wallet,
     )
-    if params_out is not None:
-        update_kwargs["params"] = params_out
     update_strategy_bot(bot["id"], **update_kwargs)
 
 
@@ -323,43 +321,105 @@ def _risk_entry_guard(bot, state):
     return False, "", params
 
 
+def _wallet(bot):
+    """Demo amount left after closed fills — falls back to starting capital."""
+    if bot.get("equity") is not None:
+        return float(bot["equity"])
+    return float(bot.get("capital") or 0)
+
+
+def _side_sign(side):
+    s = (side or "").lower()
+    if s in ("long", "buy"):
+        return 1
+    if s in ("short", "sell"):
+        return -1
+    return 0
+
+
+def _exit_price_from_events(events):
+    for ev in reversed(list(events or [])):
+        text = ev if isinstance(ev, str) else str(ev)
+        if "@ ~" not in text:
+            continue
+        try:
+            return float(text.split("@ ~")[-1].split()[0].replace(",", ""))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return None
+
+
+def _fill_pnl(side, entry, qty, exit_px, stop=0.0):
+    """Realized $ for a closed size. Prefers fill price; stop is the fallback."""
+    sign = _side_sign(side)
+    if not (sign and entry and qty):
+        return 0.0
+    if exit_px:
+        return (exit_px - entry) * qty * sign
+    if stop:
+        return (stop - entry) * qty * sign
+    return 0.0
+
+
 def _risk_on_close(bot, prev_trade, state, params, events, prev_snap=None):
-    """When trade closes, update day P&L / losing streak from close event mark vs entry."""
+    """When size closes (full or TP1 slice), update day P&L / streak and return (params, equity_delta)."""
     if params is None:
         params = dict(bot.get("params") or {})
-    if prev_trade != "open" or state.get("trade_state") != "closed":
-        return params
     snap = prev_snap or {}
+    prev_qty = float(snap.get("quantity") or 0)
+    new_qty = float(state.get("quantity") or 0) if state.get("trade_state") == "open" else 0.0
+    closed_qty = 0.0
+    if prev_trade == "open" and state.get("trade_state") == "closed":
+        closed_qty = prev_qty or float(state.get("quantity") or 0)
+    elif prev_trade == "open" and state.get("trade_state") == "open" and prev_qty > new_qty + 1e-12:
+        # Steady / native TP1 — only the trimmed size realizes.
+        closed_qty = prev_qty - new_qty
+    if closed_qty <= 0:
+        return params, 0.0
+
     risk = dict(params.get("_risk") or {})
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if risk.get("day") != day:
         risk = {"day": day, "day_pnl": 0.0, "losing_streak": 0, "paused_reason": ""}
-    pnl = 0.0
     entry = float(snap.get("entry_price") or state.get("entry_price") or 0)
-    qty = float(snap.get("quantity") or state.get("quantity") or 0)
-    side = (snap.get("side") or state.get("side") or "").lower()
-    exit_px = None
-    for ev in reversed(list(events or [])):
-        text = ev if isinstance(ev, str) else str(ev)
-        if "@ ~" in text:
-            try:
-                exit_px = float(text.split("@ ~")[-1].split()[0].replace(",", ""))
-                break
-            except (TypeError, ValueError, IndexError):
-                pass
-    if exit_px and entry and qty:
-        pnl = (exit_px - entry) * qty * (1 if side == "buy" else -1)
-    else:
-        stop = float(snap.get("stop_loss") or state.get("stop_loss") or 0)
-        if entry and stop and qty:
-            pnl = (stop - entry) * qty * (1 if side == "buy" else -1)
+    side = snap.get("side") or state.get("side") or ""
+    exit_px = _exit_price_from_events(events)
+    stop = float(snap.get("stop_loss") or state.get("stop_loss") or 0)
+    pnl = _fill_pnl(side, entry, closed_qty, exit_px, stop)
     risk["day_pnl"] = float(risk.get("day_pnl") or 0) + pnl
-    if pnl < 0:
-        risk["losing_streak"] = int(risk.get("losing_streak") or 0) + 1
-    elif pnl > 0:
-        risk["losing_streak"] = 0
+    if state.get("trade_state") == "closed":
+        if pnl < 0:
+            risk["losing_streak"] = int(risk.get("losing_streak") or 0) + 1
+        elif pnl > 0:
+            risk["losing_streak"] = 0
     params["_risk"] = risk
-    return params
+    return params, pnl
+
+
+def settle_demo_wallet(bot, prev_trade, prev_snap, state, events, params=None):
+    """
+    Credit/debit the per-bot demo wallet after a fill. Returns
+    (params, events, {equity?} patch). Safe to call when nothing closed.
+    """
+    params, delta = _risk_on_close(bot, prev_trade, state, params, events, prev_snap)
+    patch = {}
+    if params is not None:
+        patch["params"] = params
+    if abs(delta) > 1e-12:
+        before = _wallet(bot)
+        after = round(before + delta, 2)
+        events = list(events or []) + [f"Demo wallet ${before:,.2f} → ${after:,.2f} ({delta:+.2f})"]
+        patch["equity"] = after
+    return params, events, patch
+
+
+def trade_snap(bot_or_state):
+    return {
+        "entry_price": bot_or_state.get("entry_price"),
+        "quantity": bot_or_state.get("quantity"),
+        "side": bot_or_state.get("side"),
+        "stop_loss": bot_or_state.get("stop_loss"),
+    }
 
 
 def close_bot_trade(api, bot, why):
@@ -379,6 +439,8 @@ def _flatten_for_guard(api, bot, state, now):
     if state.get("trade_state") not in ("open", "entering"):
         account_guard.note_flatten(bot["user_id"], True)
         return
+    prev_trade = state.get("trade_state")
+    prev_snap = trade_snap(state)
     try:
         s, events = close_bot_trade(api, bot, "Account flatten")
     except OrderError as exc:
@@ -386,7 +448,10 @@ def _flatten_for_guard(api, bot, state, now):
         _fail(bot, now, f"Flatten failed: {exc}")
         return
     account_guard.note_flatten(bot["user_id"], True)
-    update_strategy_bot(bot["id"], events=events, last_error="", **s)
+    # entering → closed may not realize if no fill; open → closed credits the wallet.
+    _, events, wallet = settle_demo_wallet(
+        bot, "open" if prev_trade == "open" else prev_trade, prev_snap, s, events, dict(bot.get("params") or {}))
+    update_strategy_bot(bot["id"], events=events, last_error="", **s, **wallet)
 
 
 def _fail(bot, now, message, retry_in=RETRY_SECONDS):

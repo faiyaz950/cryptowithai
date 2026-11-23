@@ -1,21 +1,29 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowRight, CheckCircle2, ChevronRight, Info, Loader2, Plus, Server, TriangleAlert } from "lucide-react";
 import { DESK_TZ, symbolLabel, venueShort } from "@/lib/cryptoApi";
 import type { StrategyDef } from "@/lib/strategies";
 import {
+  ROUND_TRIP_COST_PCT,
+  botDemoBalance,
   dayKey,
+  exitRule,
   fmtClock,
+  fmtDemoWallet,
   fmtPct,
   fmtPrice,
   fmtUsd,
   fmtWhen,
+  levelMove,
+  netOfCosts,
   signalKey,
   type Execution,
 } from "@/lib/strateo";
 import {
   fmtDuration,
+  historyResultLabel,
+  levelHits,
   positionHistory,
   sideName,
   sideShort,
@@ -24,14 +32,6 @@ import {
 } from "@/lib/strateoPositions";
 
 const HISTORY_SHOWN = 5;
-
-const RESULT: Record<HistoryRow["outcome"], string> = {
-  target: "Target hit",
-  stop: "SL hit",
-  trail: "Trail stop",
-  exit: "Strategy exit",
-  open: "Running",
-};
 
 interface Props {
   positions: StrateoPosition[];
@@ -138,7 +138,7 @@ export default function PositionsView({
           now={now}
           focused={focusId === p.row.id}
           busy={p.signal ? busyId === signalKey(p.row.id, p.row.symbol, p.signal.entryTime) : false}
-          oneClick={oneClick}
+          autoMaster={oneClick}
           exchangeName={exchangeName}
           onFocus={() => onFocus(p.def)}
           onPlace={() => onPlace(p)}
@@ -154,7 +154,7 @@ function PositionCard({
   now,
   focused,
   busy,
-  oneClick,
+  autoMaster,
   exchangeName,
   onFocus,
   onPlace,
@@ -164,7 +164,7 @@ function PositionCard({
   now: number;
   focused: boolean;
   busy: boolean;
-  oneClick: boolean;
+  autoMaster: boolean;
   exchangeName: string;
   onFocus: () => void;
   onPlace: () => void;
@@ -221,8 +221,28 @@ function PositionCard({
           <small>
             {symbolLabel(row.symbol)} · {row.timeframe.toUpperCase()} ·{" "}
             <span data-mode={row.mode}>{row.mode === "live" ? "Live" : "Paper"}</span>
-            {row.runner === "server" ? " · Server 24×7" : ""}
+            {" · "}
+            {row.runner === "server"
+              ? "Auto · server 24×7"
+              : pos.options || pos.why === "research"
+                ? "Signals only"
+                : row.auto === false
+                  ? "Signals only"
+                  : autoMaster
+                    ? "Auto · while open"
+                    : "Auto (switch off)"}
           </small>
+          {pos.bot && (() => {
+            const wallet = botDemoBalance(pos.bot, pos.mark);
+            return (
+              <small
+                className="st-pos-wallet"
+                data-pnl={wallet.pnl > 0 ? "up" : wallet.pnl < 0 ? "down" : "flat"}
+              >
+                {fmtDemoWallet(wallet)}
+              </small>
+            );
+          })()}
         </span>
         <span className="st-pos-chart">
           Chart <ChevronRight className="w-3.5 h-3.5" aria-hidden />
@@ -270,24 +290,46 @@ function PositionCard({
           {(!pos.premium || pos.stop != null) && (
             <div>
               <dt>Stop-loss</dt>
-              <dd className="st-down">{fmtPrice(pos.stop)}</dd>
+              {pos.stop != null ? (
+                <dd className="st-down">
+                  {fmtPrice(pos.stop)}
+                  <LevelDist move={pos.premium ? null : levelMove(side, pos.entry, pos.stop)} />
+                </dd>
+              ) : (
+                <dd className="st-lvl-rule">None</dd>
+              )}
             </div>
           )}
           {(!pos.premium || pos.target != null) && (
             <div>
-              <dt>Target</dt>
-              <dd className="st-up">{fmtPrice(pos.target)}</dd>
+              <dt>{pos.tp1 != null ? "Target 1" : pos.target != null ? "Target" : "Exit"}</dt>
+              {pos.tp1 != null ? (
+                // Options: aadha Target 1 par, baaki final par — dono dikhao.
+                <dd className="st-up">
+                  {fmtPrice(pos.tp1)}
+                  <small className="st-lvl-dist">
+                    <span>Half here · rest {fmtPrice(pos.target)}</span>
+                  </small>
+                </dd>
+              ) : pos.target != null ? (
+                <dd className="st-up">
+                  {fmtPrice(pos.target)}
+                  <LevelDist move={pos.premium ? null : levelMove(side, pos.entry, pos.target)} />
+                </dd>
+              ) : (
+                <dd className="st-lvl-rule">{exitRule(pos.signal, pos.stats?.trades)}</dd>
+              )}
             </div>
           )}
         </dl>
       )}
 
-      <OrderNote pos={pos} now={now} busy={busy} oneClick={oneClick} exchangeName={exchangeName} onPlace={onPlace} />
+      <OrderNote pos={pos} now={now} busy={busy} exchangeName={exchangeName} onPlace={onPlace} />
 
       <div className="st-pos-hist">
         <div className="st-pos-hist-head">
           <h4>Trade history</h4>
-          <span>Opened → Closed</span>
+          <span>Newest first</span>
         </div>
         {history.length === 0 ? (
           <p className="st-muted-sm st-pos-hist-empty">
@@ -335,14 +377,12 @@ function OrderNote({
   pos,
   now,
   busy,
-  oneClick,
   exchangeName,
   onPlace,
 }: {
   pos: StrateoPosition;
   now: number;
   busy: boolean;
-  oneClick: boolean;
   exchangeName: string;
   onPlace: () => void;
 }) {
@@ -382,19 +422,26 @@ function OrderNote({
     );
   }
   if (state === "signal") {
-    const canPlace = (why === "manual" || why === "before-apply") && row.runner === "browser";
+    const canPlace =
+      (why === "signals-only" || why === "auto-off" || why === "auto-missed" || why === "before-apply") &&
+      row.runner === "browser";
+    const word = pos.side === "short" ? "sell" : "buy";
     const text =
       why === "options"
         ? `Options strategy — signal only. Trade the legs on ${exchangeName}.`
-        : why === "before-apply"
-          ? `This ${pos.side === "short" ? "sell" : "buy"} opened before you applied (${fmtWhen(row.appliedAt, now)}). Strateo places an order on the next fresh entry.`
-          : why === "server"
-            ? bot?.trade_state === "skipped"
-              ? `Server bot skipped this entry${bot.events.length ? ` — ${bot.events[bot.events.length - 1].text}` : ""}.`
-              : "Server bot will pick this up at the next candle check."
-            : oneClick
-              ? "1-Click could not place this order — place it yourself."
-              : "1-Click is off — place this order yourself.";
+        : why === "research"
+          ? "Research only — Strateo does not trade this strategy."
+          : why === "before-apply"
+            ? `This ${word} opened before you applied (${fmtWhen(row.appliedAt, now)}). Auto-trade only takes the next fresh entry — or place this one yourself.`
+            : why === "server"
+              ? bot?.trade_state === "skipped"
+                ? `Server bot skipped this entry${bot.events.length ? ` — ${bot.events[bot.events.length - 1].text}` : ""}.`
+                : "Server bot will pick this up at the next candle check."
+              : why === "signals-only"
+                ? `Signals only — no order was placed. Place this ${word} yourself if you want it.`
+                : why === "auto-off"
+                  ? `Auto-trade switch is off, so no order was placed. Turn it on (top bar) or place this ${word} yourself.`
+                  : `No order was placed — Strateo was closed or the order failed when this ${word} signalled. Place it yourself if you want it.`;
     return (
       <div className="st-pos-note st-pos-note-act" data-tone="warn">
         <Info className="w-3.5 h-3.5" aria-hidden />
@@ -430,6 +477,21 @@ function OrderNote({
   return null;
 }
 
+/** Entry se level ki doori: price move, aur fees + slippage ke baad asal mein kitna. */
+export function LevelDist({ move }: { move: number | null }) {
+  if (move == null) return null;
+  const net = netOfCosts(move);
+  return (
+    <small
+      className="st-lvl-dist"
+      title={`Price move from entry ${fmtPct(move)} · after ~${ROUND_TRIP_COST_PCT.toFixed(2)}% fees + slippage ${fmtPct(net)}`}
+    >
+      <span>{fmtPct(move)}</span>
+      <span className={net >= 0 ? "st-up" : "st-down"}>{fmtPct(net)} net</span>
+    </small>
+  );
+}
+
 function fmtDay(ms: number): string {
   const day = new Date(ms).toLocaleDateString("en-GB", { timeZone: DESK_TZ, day: "2-digit", month: "short" });
   return `${day} ${fmtClock(ms)}`;
@@ -460,12 +522,61 @@ function timeline(rows: HistoryRow[], appliedAt: number, now: number) {
   return out;
 }
 
+/**
+ * Trade ka SL aur target, aur kaunsa chhua. Senior ka sawaal — "1 : 2 hai? algo beech mein nikal
+ * gaya ya target tak ruka?" — isi line se dikhta hai. Options par % premium ka, settings se.
+ */
+function HistoryLevels({ r }: { r: HistoryRow }) {
+  const hits = levelHits(r);
+  const p = r.levelPcts;
+  const cells = [
+    { key: "stop", label: "SL", value: r.stop, pct: p ? p.stop : levelMove(r.side, r.entry, r.stop), hit: hits.stop, tone: "st-down" },
+    { key: "tp1", label: "Target 1", value: r.tp1, pct: p?.tp1 ?? null, hit: hits.tp1, tone: "st-up" },
+    {
+      key: "target",
+      label: r.tp1 != null ? "Final" : "Target",
+      value: r.target,
+      pct: p ? p.target : levelMove(r.side, r.entry, r.target),
+      hit: hits.target,
+      tone: "st-up",
+    },
+  ].filter((c) => c.value != null);
+  if (!cells.length) return null;
+  return (
+    <dl
+      className="st-trade-grid st-trade-lv"
+      style={{ "--n": cells.length } as CSSProperties}
+      title={
+        p
+          ? `From strategy settings, % of premium: full exit at ${fmtPct(p.stop, 0)}${p.tp1 != null ? `, half booked at ${fmtPct(p.tp1, 0)}` : ""}, ${p.tp1 != null ? "rest" : "exit"} at ${fmtPct(p.target, 0)}. Fills include bid/ask slippage, so Exit sits a little past the level.`
+          : "Stop-loss and target, % price move from entry."
+      }
+    >
+      {cells.map((c) => (
+        <div key={c.key} data-hit={c.hit || undefined}>
+          <dt>
+            {c.label}
+            {c.pct != null && <span className="st-lv-pct">{fmtPct(c.pct, p ? 0 : 2)}</span>}
+          </dt>
+          {/* Band trade par jo level nahi chhua wo phika — rang sirf jahan price pahuncha. */}
+          <dd className={c.hit || r.open ? c.tone : "st-lv-miss"}>
+            {fmtPrice(c.value)}
+            {c.hit && <small className="st-lv-hit">hit</small>}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function HistoryItem({ r, now }: { r: HistoryRow; now: number }) {
   const tone = r.pct > 0 ? "st-up" : r.pct < 0 ? "st-down" : "st-flat";
   const sameDay = r.exitTime != null && dayKey(r.exitTime) === dayKey(r.entryTime);
   // Agle din band hua to date ke saath — "11 Nov 22:31 → 12 Nov 04:31", sirf "04:31" nahi.
   const exitWhen = r.exitTime == null ? null : sameDay ? fmtClock(r.exitTime) : fmtDay(r.exitTime);
-  const result = r.open ? RESULT.open : r.closedReason ?? RESULT[r.outcome];
+  // Aadha TP1 par book, baaki SL / time par — "SL hit" akela likhna aur + % dikhana ulta lagta.
+  const partialResult = r.partial && !r.open && !r.closedReason;
+  const result = historyResultLabel(r);
   const tag =
     r.status === "placed"
       ? `Order · ${r.exec?.mode === "live" ? "Live" : "Paper"}`
@@ -474,34 +585,54 @@ function HistoryItem({ r, now }: { r: HistoryRow; now: number }) {
         : r.status === "signal"
           ? "Not placed"
           : "Before apply";
+  const feesAteGain = !r.premium && !r.basket && r.gross > 0 && r.pct <= 0;
   return (
-    <li className="st-tl-item" data-side={r.structure ? "options" : r.side} data-open={r.open} data-status={r.status}>
-      <span className="st-tl-dot" aria-hidden />
-      <div className="st-tl-body">
-        <div className="st-tl-top">
-          <span className="st-side" data-side={r.structure ? "options" : r.side} title={r.structure ?? undefined}>
-            {sideShort(r.side, r.structure)}
-          </span>
-          <span className="st-tl-when">
-            {fmtWhen(r.entryTime, now)} → {exitWhen ?? <em>now</em>}
-          </span>
-          <b className={`st-tl-pct ${tone}`}>
-            {fmtPct(r.pct)}
-            {r.premium && <small className="st-prem">prem</small>}
-          </b>
-        </div>
-        <div className="st-tl-sub">
-          <span className="st-tl-px">
-            {fmtPrice(r.entry)} → {r.exit != null ? fmtPrice(r.exit) : "—"}
-          </span>
-          <span className="st-tl-result" data-o={r.open ? "open" : r.outcome}>
-            {result}
-          </span>
-          <span className="st-tl-tag" data-status={r.status}>
-            {tag}
-          </span>
-        </div>
+    <li className="st-trade" data-side={r.structure ? "options" : r.side} data-open={r.open} data-status={r.status}>
+      <div className="st-trade-top">
+        <span className="st-side" data-side={r.structure ? "options" : r.side} title={r.structure ?? undefined}>
+          {sideShort(r.side, r.structure)}
+        </span>
+        <span className="st-trade-when">
+          {fmtWhen(r.entryTime, now)} → {exitWhen ?? <em>now</em>}
+        </span>
+        <span className="st-tl-tag" data-status={r.status}>
+          {tag}
+        </span>
+        <b
+          className={`st-trade-pct ${tone}`}
+          title={r.premium || r.basket ? undefined : `${fmtPct(r.gross)} price move − ~${ROUND_TRIP_COST_PCT.toFixed(2)}% fees + slippage`}
+        >
+          {fmtPct(r.pct)}
+          {r.premium && <small className="st-prem">prem</small>}
+        </b>
       </div>
+      <dl className="st-trade-grid">
+        <div>
+          <dt>Entry</dt>
+          <dd>{fmtPrice(r.entry)}</dd>
+        </div>
+        <div>
+          {/* Chalu trade ka koi exit nahi hua — ye abhi ka bhaav hai. */}
+          <dt>{r.open ? "Now" : "Exit"}</dt>
+          <dd>{r.exit != null ? fmtPrice(r.exit) : "—"}</dd>
+        </div>
+        <div>
+          <dt>Result</dt>
+          <dd
+            className="st-tl-result"
+            data-o={r.open ? "open" : r.outcome}
+            title={partialResult ? "Half was booked at TP1; the rest closed later at the exit shown. The % is for the whole trade." : undefined}
+          >
+            {result}
+            {feesAteGain && (
+              <span className="st-tl-fee" title={`Price moved ${fmtPct(r.gross)}, fees + slippage took ~${ROUND_TRIP_COST_PCT.toFixed(2)}%`}>
+                Fees &gt; gain
+              </span>
+            )}
+          </dd>
+        </div>
+      </dl>
+      <HistoryLevels r={r} />
     </li>
   );
 }
