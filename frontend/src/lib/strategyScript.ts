@@ -97,6 +97,49 @@ export function buildScriptDoc(def: StrategyDef): StrategyScriptDoc {
 
 /** Hand-tuned docs for featured / complex engines. */
 const SCRIPT_OVERRIDES: Record<string, StrategyScriptDoc> = {
+  "macd-scalp": {
+    overview:
+      "MACD Scalp is a port of MACD1.py, a backtesting.py script tested on SPY 1H. It trades every MACD 12/26/9 cross in both directions. The stop and target are tight fixed percents, and an opposite cross reverses the trade.",
+    howItWorks: [
+      {
+        title: "Signal",
+        body: "MACD line = EMA 12 − EMA 26. Signal line = EMA 9 of the MACD line. A cross above is a long; a cross below is a short. Only closed candles count, and the fill is the next candle's open.",
+      },
+      {
+        title: "Stop and target",
+        body: "Stop is 0.05% and target is 0.2% from the signal close, the same as the script's sl_pct and tp_pct. If one candle touches both, the stop counts first.",
+      },
+      {
+        title: "Reversal",
+        body: "An opposite cross closes the open trade at the next open and opens the other side on the same open.",
+      },
+      {
+        title: "Size",
+        body: "Each trade is 9% of equity as position value (size_frac 0.09 in the script). It does not size from the stop distance.",
+      },
+    ],
+    keyFeatures: [
+      "MACD 12 / 26 / 9",
+      "Long and short, opposite cross reverses",
+      "% stop and % target",
+      "Fixed % of equity per trade",
+      "Server bot · paper and live",
+    ],
+    applications: [
+      "Strateo's fees and slippage (about 0.16% per round trip) are larger than the 0.05% stop. Expect most trades to lose after costs unless you widen the stop and target.",
+      "The original was tested on SPY. Strateo trades crypto perps, which move more per 1H candle.",
+      "With a low win rate, the bot's max-losing-streak guard can pause it often. Raise it if you deploy.",
+      "Backtest on your symbol and timeframe before deploying a bot.",
+    ],
+    settings: [
+      { title: "Fast / Slow / Signal", body: "Default 12 / 26 / 9." },
+      { title: "Stop loss · %", body: "Default 0.05 (0.05%), measured from the signal close." },
+      { title: "Take profit · %", body: "Default 0.2 (0.2%). 0 = no target; the trade exits on its stop or an opposite cross." },
+      { title: "Position size · % of equity", body: "Default 9. Above 100 uses leverage, capped at 3×." },
+    ],
+    conclusion:
+      "Same rules as MACD1.py: MACD cross entries, a tight % stop and target, reversal on the opposite cross, and 9% sizing. Strateo adds real crypto fees, slippage and funding, so check the backtest first.",
+  },
   "btc-eth-rsi-pullback": {
     overview:
       "BTC/ETH RSI Pullback is a 1H mean-reversion system with a trend filter. It does not trade RSI alone: longs only above EMA 200 after RSI reclaims 30, shorts only below EMA 200 after RSI leaves 70. Stop is 1–1.5× ATR. Target is 1.5R–2R.",

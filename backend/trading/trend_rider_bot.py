@@ -114,7 +114,9 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
     out = {"position": None, "pending": None, "forming": None, "equity": float(capital),
            "trades": [], "last_closed": None, "stale": False, "error": None,
            "tp1_r": r_mult if takes_profit and r_mult > 0 else 0.0,
-           "tp1_frac": frac if takes_profit else 0.0}
+           "tp1_frac": frac if takes_profit else 0.0,
+           # >0: fixed notional (equity ka %) — simulate jaisa; 0 = risk_pct se size.
+           "size_pct": float(p.get("size_pct") or 0.0)}
 
     if n < len(times) and times[n] <= now_ms:
         out["forming"] = {"time": int(times[n]), "open": float(o[n]), "high": float(h[n]), "low": float(l[n])}
@@ -152,9 +154,16 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
         ind_kw["volume"] = vol
     ind = eng.indicators(oc, hc, lc, cc, p, **ind_kw)
     pos = res["open_position"]
+    flat_reason = None
     if pos and "exit_long" in ind and ind["exit_long" if pos["side"] == "buy" else "exit_short"][k]:
-        # Trident: momentum is band candle par toota — simulate agli candle ke open par band karta
-        # hai, to bot ke liye trade abhi khatam. Equity bhi us exit ke baad wali (agla size isi se).
+        flat_reason = "Momentum toot gaya (teen mein se do horizon palte) — trade band"
+    elif pos and getattr(eng, "level_targets", False) and ind["short" if pos["side"] == "buy" else "long"][k]:
+        # Native: ulta signal band candle par — simulate agli candle ke open par purana band (SIGNAL_EXIT)
+        # karke wahin naya kholta hai. Bot bhi abhi: purana band, neeche pending naya side.
+        flat_reason = "Ulta signal — purana trade band, naya side khulega"
+    if flat_reason:
+        # Trident / native: simulate agli candle ke open par band karta hai, to bot ke liye trade
+        # abhi khatam. Equity bhi us exit ke baad wali (agla size isi se).
         d = 1 if pos["side"] == "buy" else -1
         forming = out["forming"]
         px = (forming["open"] if forming and forming["time"] == int(tc[k]) + bar_ms else float(cc[k]))
@@ -162,7 +171,7 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
         qty, entry = pos["quantity"], pos["entry_price"]
         cash = out["equity"] - d * qty * (float(cc[k]) - entry)
         out["equity"] = cash + d * qty * (px - entry) - trend_rider.FEE_RATE * qty * px
-        out["flat_reason"] = "Momentum toot gaya (teen mein se do horizon palte) — trade band"
+        out["flat_reason"] = flat_reason
         pos = None
     if pos:
         out["position"] = {
@@ -183,8 +192,10 @@ def plan(times, o, h, l, c, *, params, capital, start_time_ms, bar_ms, now_ms, b
             entry_time = int(tc[k]) + bar_ms
             tp1 = None
             if getattr(eng, "level_targets", False):
-                atr_k = float(ind["atr"][k]) if ind.get("atr") is not None and math.isfinite(ind["atr"][k]) else 0.0
-                stop = float(cc[k] - d * float(p.get("stop_atr") or 1.5) * max(atr_k, 0.0))
+                # simulate jaisa stop: strategy ka apna level (percent stop), warna ATR × stop_atr.
+                stop = native_signals.stop_level(ind, k, d, cc[k], float(p.get("stop_atr") or 1.5))
+                if not math.isfinite(stop):
+                    return out  # simulate bhi is candle par entry nahi leta (ATR abhi settle nahi)
                 tp_arr = ind.get("tp_long") if d > 0 else ind.get("tp_short")
                 if tp_arr is not None and math.isfinite(tp_arr[k]) and d * (float(tp_arr[k]) - cc[k]) > 0:
                     tp1 = float(tp_arr[k])
@@ -227,14 +238,19 @@ def _breakeven(side, entry):
     return entry * (1 + _dir(side) * 2 * (trend_rider.FEE_RATE + trend_rider.SLIPPAGE))
 
 
-def entry_quantity(equity, risk_pct, side, price, stop, max_leverage=None):
-    """`trend_rider.simulate` jaisa size — slippage ke baad stop tak ka risk equity ka risk_pct%."""
+def entry_quantity(equity, risk_pct, side, price, stop, max_leverage=None, size_pct=0.0):
+    """`trend_rider.simulate` jaisa size — slippage ke baad stop tak ka risk equity ka risk_pct%.
+
+    size_pct > 0 (MACD Scalp): fixed notional, equity ka size_pct% — `native_signals` simulate jaisa.
+    """
     lev = trend_rider.DEFAULTS["max_leverage"] if max_leverage is None else max_leverage
     d = _dir(side)
     entry = price * (1 + d * trend_rider.SLIPPAGE)
     dist = d * (entry - stop)
     if not (equity > 0 and entry > 0 and dist > 0 and math.isfinite(dist)):
         return 0.0
+    if size_pct and size_pct > 0:
+        return min(equity * size_pct / 100.0, equity * lev) / entry
     return min(equity * risk_pct / 100.0 / dist, equity * lev / entry)
 
 
@@ -335,7 +351,8 @@ def _enter(s, desired, ctx, events, *, claimed):
     if d * (mark * (1 + d * trend_rider.SLIPPAGE) - stop) <= 0:
         _skip(s, desired, events, f"Price {_fmt_px(mark)} stop {_fmt_px(stop)} ke paar hai — entry skip")
         return
-    qty = client.round_qty(entry_quantity(ctx["plan"]["equity"], ctx["risk_pct"], side, mark, stop))
+    qty = client.round_qty(entry_quantity(ctx["plan"]["equity"], ctx["risk_pct"], side, mark, stop,
+                                          size_pct=ctx["plan"].get("size_pct") or 0.0))
     if qty <= 0:
         _skip(s, desired, events, "Quantity 0 bani — capital/risk badhao (ya contract size se chhota order)")
         return

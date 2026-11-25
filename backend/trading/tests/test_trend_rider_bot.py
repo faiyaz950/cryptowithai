@@ -12,6 +12,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import native_signals  # noqa: E402
 import trend_rider  # noqa: E402
 import trend_rider_bot as bot  # noqa: E402
 from trend_rider_bot import OrderError  # noqa: E402
@@ -429,11 +430,12 @@ class ExchangeSim(FakeClient):
         self.stop = None
 
 
-def walk_forward(times, o, h, l, c, start_i, skip_bars=(), extra=None, btc=None):
+def walk_forward(times, o, h, l, c, start_i, skip_bars=(), extra=None, btc=None, strategy=None, params=None):
     """Har candle khulne ke 30s baad worker ki tarah plan + reconcile. `skip_bars`: worker band tha.
     Steady (`extra` mein tp1) par candle ke beech wali tick bhi: stop na laga ho aur price tp1 chhoo
-    le to wahin hissa book — backtest jaisa (stop pehle, phir tp1)."""
-    params = dict(trend_rider.DEFAULTS, **(extra or {}))
+    le to wahin hissa book — backtest jaisa (stop pehle, phir tp1).
+    strategy/params: native engine (jaise MACD Scalp) — params `native_signals.settings` se."""
+    params = dict(params) if params is not None else dict(trend_rider.DEFAULTS, **(extra or {}))
     ex = ExchangeSim()
     state = empty_state()
     start_time = int(times[start_i]) + 3_600_000  # deploy candle ke beech mein
@@ -456,7 +458,7 @@ def walk_forward(times, o, h, l, c, start_i, skip_bars=(), extra=None, btc=None)
             # BTC ki chalu candle bhi abhi sirf open hai.
             btc_now = (btc[0][:i + 1], np.append(btc[4][:i], btc[1][i]))
         p = bot.plan(ft, fo, fh, fl, fc, params=params, capital=1000.0, start_time_ms=start_time,
-                     bar_ms=BAR, now_ms=now, btc=btc_now)
+                     bar_ms=BAR, now_ms=now, btc=btc_now, strategy=strategy)
         assert p["error"] is None and not p["stale"]
         ex.mark_price = o[i]
         ex.now_bar = int(times[i])
@@ -586,6 +588,53 @@ class ProParityTest(unittest.TestCase):
             self.assertEqual(b["tp1"], s["tp1_hit"])
             d = 1 if b["side"] == "long" else -1
             self.assertAlmostEqual(b["exit_raw"] * (1 - d * trend_rider.SLIPPAGE), s["exit_price"], places=3)
+
+
+class MacdScalpParityTest(unittest.TestCase):
+    """MACD Scalp bot: % stop/target, % equity size, ulta cross par reversal — `native_signals` simulate jaisa."""
+    strategy = "macd-scalp"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = synthetic_candles()
+        cls.start_i = 700
+        # Synthetic 4h candles ~1.2% chalte hain — stop/target itne chaude ki teeno exit dikhein.
+        _, _, cls.params = native_signals.settings(cls.strategy, {"capital": 1000, "stop_pct": 1.5, "target_pct": 3})
+        cls.ex = walk_forward(*cls.data, cls.start_i, strategy=cls.strategy, params=cls.params)
+        t, o, h, l, c = (x[:-1] for x in cls.data)
+        cls.sim = native_signals.ENGINES[cls.strategy].simulate(
+            t, o, h, l, c, params=cls.params, capital=1000.0, start_index=cls.start_i, bar_hours=4.0)
+
+    def test_every_exit_kind_happens(self):
+        kinds = {t["status"] for t in self.sim["trades"]}
+        self.assertTrue({"SL_HIT", "TARGET_HIT", "SIGNAL_EXIT"} <= kinds, kinds)
+
+    def test_same_trades_as_backtest(self):
+        sim = self.sim["trades"]
+        self.assertEqual(len(self.ex.trades), len(sim))
+        for s, b in zip(sim, self.ex.trades):
+            self.assertEqual(b["side"], "long" if s["side"] == "buy" else "short")
+            self.assertEqual(b["entry_time"], s["entry_time"])
+            self.assertEqual(b["exit_time"], s["exit_time"])
+            self.assertAlmostEqual(b["init_stop"], s["stop_loss"], places=5)
+            self.assertAlmostEqual(b["qty"], s["quantity"], delta=2e-6)
+            d = 1 if b["side"] == "long" else -1
+            self.assertAlmostEqual(b["exit_raw"] * (1 - d * trend_rider.SLIPPAGE), s["exit_price"], places=3)
+
+    def test_opposite_cross_flips_in_the_same_candle(self):
+        """Pehle bot ulta trade ek candle late band karta tha aur naya side skip — ab backtest jaisa."""
+        flip = next(t for t in self.sim["trades"] if t["status"] == "SIGNAL_EXIT")
+        times, o, h, l, c = self.data
+        i = int(np.searchsorted(times, flip["exit_time"]))
+        ft, fo, fh, fl, fc = (np.append(times[:i], times[i]), np.append(o[:i], o[i]), np.append(h[:i], o[i]),
+                              np.append(l[:i], o[i]), np.append(c[:i], o[i]))
+        p = bot.plan(ft, fo, fh, fl, fc, params=self.params, capital=1000.0,
+                     start_time_ms=int(times[self.start_i]) + 3_600_000, bar_ms=BAR,
+                     now_ms=int(times[i]) + 30_000, strategy=self.strategy)
+        self.assertIsNone(p["position"])
+        self.assertEqual(p["pending"]["entry_time"], int(times[i]))
+        self.assertEqual(p["pending"]["side"], "short" if flip["side"] == "buy" else "long")
+        self.assertIn("Ulta signal", p["flat_reason"])
 
 
 class FilterTest(unittest.TestCase):

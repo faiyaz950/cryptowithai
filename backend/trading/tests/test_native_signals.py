@@ -169,6 +169,53 @@ class NativeSignalTests(unittest.TestCase):
             self.assertGreater(dist, 0)
             self.assertAlmostEqual(abs(trade["target"] - trade["entry_price"]) / dist, 2.0, delta=0.2)
 
+    def test_macd_scalp_percent_stop_target_and_size(self):
+        """MACD1.py: same MACD cross, stop/target % of the signal close, 9% of equity per trade."""
+        times, o, h, l, c, v = _series(400, seed=5)
+        eng = ns.ENGINES["macd-scalp"]
+        _, _, p = ns.settings("macd-scalp", {"capital": 1000})
+        ind = eng.indicators(o, h, l, c, p)
+        plain = ns.ENGINES["macd"].indicators(o, h, l, c, {})
+        np.testing.assert_array_equal(ind["long"], plain["long"])
+        np.testing.assert_array_equal(ind["short"], plain["short"])
+
+        res = eng.simulate(times, o, h, l, c, volume=v, params=p, capital=1000, start_index=40, bar_hours=1.0)
+        trades = res["trades"]
+        self.assertGreater(len(trades), 5)
+        for t in trades:
+            k = int(np.searchsorted(times, t["entry_time"])) - 1
+            d = 1 if t["side"] == "buy" else -1
+            self.assertAlmostEqual(t["stop_loss"], c[k] * (1 - d * 0.0005), places=5)
+            self.assertAlmostEqual(t["target"], c[k] * (1 + d * 0.002), places=5)
+        first = trades[0]
+        self.assertAlmostEqual(first["quantity"] * first["entry_price"], 1000 * 0.09, places=3)
+
+    def test_macd_scalp_opposite_cross_reverses(self):
+        times, o, h, l, c, v = _series(400, seed=5)
+        _, _, p = ns.settings("macd-scalp", {"capital": 1000, "stop_pct": 10, "target_pct": 0})
+        trades = ns.ENGINES["macd-scalp"].simulate(times, o, h, l, c, params=p, capital=1000,
+                                                    start_index=40, bar_hours=1.0)["trades"]
+        self.assertIsNone(trades[0]["target"])
+        flips = [(a, b) for a, b in zip(trades, trades[1:]) if a["status"] == "SIGNAL_EXIT"]
+        self.assertGreater(len(flips), 3)
+        for a, b in flips:
+            # Old trade closes on the next open and the other side opens on that same open.
+            self.assertEqual(a["exit_time"], b["entry_time"])
+            self.assertNotEqual(a["side"], b["side"])
+
+    def test_macd_scalp_settings(self):
+        _, _, p = ns.settings("macd-scalp", {"capital": 1000})
+        self.assertEqual((p["tp1_r"], p["tp1_frac"]), (0.0, 1.0))  # bot exits the whole trade at the % target
+        _, _, no_target = ns.settings("macd-scalp", {"capital": 1000, "target_pct": 0})
+        self.assertEqual(no_target["tp1_frac"], 0.0)
+        for bad in ({"stop_pct": 0}, {"stop_pct": 11}, {"target_pct": 25}, {"size_pct": 0.5}, {"size_pct": 400}):
+            with self.assertRaises(ValueError):
+                ns.settings("macd-scalp", {"capital": 1000, **bad})
+        # Other engines ignore the percent keys.
+        _, _, plain = ns.settings("macd", {"capital": 1000, "stop_pct": 0.05, "size_pct": 9})
+        self.assertNotIn("stop_pct", plain)
+        self.assertNotIn("size_pct", plain)
+
     def test_donchian_does_not_short(self):
         data = _series(400, seed=1)
         res = ns.ENGINES["donchian-breakout-20k"].simulate(

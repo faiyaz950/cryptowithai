@@ -20,6 +20,7 @@ from trend_rider import FEE_RATE, FUNDING_PER_8H, SLIPPAGE, _stats, atr, ema
 _FLOAT_KEYS = (
     "stop_atr", "target_r", "trail_atr", "atr_mult", "adx_min", "adx_thresh",
     "pullback_pct", "vol_mult", "bb_std", "risk_pct", "tp1_r", "tp1_frac",
+    "stop_pct", "target_pct", "size_pct",
 )
 _INT_KEYS = (
     "fast", "slow", "signal", "ema9", "ema21", "ema50", "ema_period", "atr_period",
@@ -179,23 +180,34 @@ def _blank(n):
     return np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
 
 
-def _stops(close, atr_line, stop_atr):
-    stop_long = close - stop_atr * atr_line
-    stop_short = close + stop_atr * atr_line
-    return stop_long, stop_short
-
-
-def _pack(long, short, atr_line, stop_atr, tp_long=None, tp_short=None):
+def _pack(long, short, atr_line, stop_atr, tp_long=None, tp_short=None, sl_long=None, sl_short=None):
     n = len(long)
-    sl, ss = _stops(np.zeros(n), atr_line, stop_atr) if False else (None, None)
-    # Stops are filled by the simulator from ATR; absolute targets only when given.
+    # Stops come from ATR in the simulator unless a strategy gives absolute stop levels
+    # (percent-stop systems). Absolute targets only when given.
     return {
         "long": long,
         "short": short,
         "atr": atr_line,
         "tp_long": tp_long if tp_long is not None else np.full(n, np.nan),
         "tp_short": tp_short if tp_short is not None else np.full(n, np.nan),
+        "sl_long": sl_long if sl_long is not None else np.full(n, np.nan),
+        "sl_short": sl_short if sl_short is not None else np.full(n, np.nan),
     }
+
+
+def stop_level(ind, k, d, close_k, stop_atr):
+    """Signal candle `k` ka stop — strategy ka apna level, warna close ± stop_atr × ATR.
+
+    Backtest aur bot dono yahi padhte hain. NaN = is candle par entry nahi (ATR abhi settle nahi).
+    """
+    arr = ind.get("sl_long" if d > 0 else "sl_short")
+    if arr is not None and math.isfinite(arr[k]):
+        return float(arr[k])
+    atr_line = ind.get("atr")
+    atr_k = float(atr_line[k]) if atr_line is not None and math.isfinite(atr_line[k]) else float("nan")
+    if not (math.isfinite(atr_k) and atr_k > 0):
+        return float("nan")
+    return float(close_k - d * float(stop_atr) * atr_k)
 
 
 # ── Signal builders (closed bar = the bar itself) ──────────────────────────
@@ -208,6 +220,26 @@ def _ema_cross(o, h, l, c, v, times, p):
 def _macd(o, h, l, c, v, times, p):
     line, sig = macd_lines(c, p["fast"], p["slow"], p["signal"])
     return _pack(_cross_up(line, sig), _cross_down(line, sig), atr(h, l, c, int(p["atr_period"])), p["stop_atr"])
+
+
+def _macd_scalp(o, h, l, c, v, times, p):
+    """MACD1.py (backtesting.py) ka port — MACD line signal line ko cross kare.
+
+    Long: MACD crosses above signal. Short: crosses below. Stop aur target signal close ke
+    fixed percent par (default 0.05% / 0.2%), ATR nahi. Ulta cross chalu trade band karke
+    naya kholta hai (simulator ka SIGNAL_EXIT). Size equity ka size_pct% notional.
+    """
+    line, sig = macd_lines(c, p["fast"], p["slow"], p["signal"])
+    long, short = _cross_up(line, sig), _cross_down(line, sig)
+    long[0] = short[0] = False
+    sl = float(p["stop_pct"]) / 100.0
+    tp = float(p.get("target_pct") or 0) / 100.0
+    nan = np.full(len(c), np.nan)
+    return _pack(
+        long, short, atr(h, l, c, int(p["atr_period"])), p["stop_atr"],
+        tp_long=c * (1 + tp) if tp > 0 else nan, tp_short=c * (1 - tp) if tp > 0 else nan,
+        sl_long=c * (1 - sl), sl_short=c * (1 + sl),
+    )
 
 
 def _rsi_divergence(o, h, l, c, v, times, p):
@@ -474,6 +506,7 @@ class NativeEngine:
         trail_atr = float(p.get("trail_atr") or 0)
         max_bars = int(p.get("max_bars") or 0)
         lev = float(p.get("max_leverage") or 3)
+        size_frac = float(p.get("size_pct") or 0) / 100.0
 
         eq = float(capital)
         trades, curve = [], []
@@ -507,13 +540,16 @@ class NativeEngine:
 
             if pos is None and k >= start - 1 and (ind["long"][k] or ind["short"][k]):
                 d = 1 if ind["long"][k] else -1
-                atr_k = float(ind["atr"][k]) if math.isfinite(ind["atr"][k]) else float("nan")
-                if math.isfinite(atr_k) and atr_k > 0:
-                    stop = float(c[k] - d * stop_atr * atr_k)
+                stop = stop_level(ind, k, d, c[k], stop_atr)
+                if math.isfinite(stop):
                     entry = float(o[i] * (1 + d * SLIPPAGE))
                     dist = d * (entry - stop)
                     if dist > 0 and math.isfinite(dist) and eq > 0:
-                        qty = min(eq * risk / dist, eq * lev / entry)
+                        if size_frac > 0:
+                            # Fixed notional (equity ka size_pct%), stop ke risk se nahi.
+                            qty = min(eq * size_frac, eq * lev) / entry
+                        else:
+                            qty = min(eq * risk / dist, eq * lev / entry)
                         if qty > 0 and math.isfinite(qty):
                             fee = FEE_RATE * qty * entry
                             eq -= fee
@@ -628,6 +664,11 @@ ENGINES = {
         "macd", "MACD", _macd,
         _base(fast=12, slow=26, signal=9, min_bars=40),
         ("fast", "slow", "signal", *_RISK_META)),
+    "macd-scalp": _engine(
+        "macd-scalp", "MACD Scalp", _macd_scalp,
+        _base(fast=12, slow=26, signal=9, stop_pct=0.05, target_pct=0.2, size_pct=9.0,
+              target_r=0.0, trail_atr=0.0, allow_shorts=True, max_bars=0, min_bars=40),
+        ("fast", "slow", "signal", "stop_pct", "target_pct", "size_pct", "allow_shorts")),
     "rsi-divergence": _engine(
         "rsi-divergence", "RSI Divergence", _rsi_divergence,
         _base(rsi_period=14, overbought=70, oversold=30, pivot_span=3, min_bars=40),
@@ -717,11 +758,18 @@ def settings(strategy, source):
         raise ValueError("Stop ATR multiple must be between 0.5 and 6.")
     if float(p.get("target_r") or 0) < 0 or float(p.get("target_r") or 0) > 8:
         raise ValueError("Target R must be between 0 and 8 (0 = no fixed target).")
+    if "stop_pct" in p and not (0.01 <= float(p["stop_pct"]) <= 10):
+        raise ValueError("Stop % must be between 0.01 and 10.")
+    if "target_pct" in p and not (0 <= float(p["target_pct"]) <= 20):
+        raise ValueError("Target % must be between 0 and 20 (0 = no fixed target).")
+    max_size = 100 * float(p.get("max_leverage") or 3)
+    if "size_pct" in p and not (1 <= float(p["size_pct"]) <= max_size):
+        raise ValueError(f"Position size must be between 1% and {max_size:g}% of equity.")
     # Bot watches tp1 for a full exit when there is a fixed target or a mean target.
     if float(p.get("target_r") or 0) > 0:
         p["tp1_r"] = float(p["target_r"])
         p["tp1_frac"] = 1.0
-    elif p.get("exit_mid"):
+    elif p.get("exit_mid") or float(p.get("target_pct") or 0) > 0:
         p["tp1_r"] = 0.0
         p["tp1_frac"] = 1.0
     else:

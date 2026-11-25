@@ -637,6 +637,157 @@ const macdStrategy: StrategyDef = {
   },
 };
 
+/**
+ * MACD Scalp — port of MACD1.py (backtesting.py, SPY 1H). Same MACD cross as `macd`, but the
+ * stop and target are fixed percents of the signal close, size is a fixed slice of equity,
+ * and the opposite cross closes the trade and opens the other side.
+ */
+const macdScalp: StrategyDef = {
+  id: "macd-scalp",
+  name: "MACD Scalp",
+  category: "Momentum · Scalp · 1H",
+  blurb: "MACD 12/26/9 cross with a tight % stop and target. Opposite cross reverses.",
+  logic:
+    "MACD line = EMA 12 − EMA 26; signal line = EMA 9 of MACD. LONG when MACD crosses above the signal line on a closed candle. SHORT when it crosses below. The fill is the next candle's open. Stop is 0.05% and target 0.2% from the signal close (both editable). An opposite cross closes the open trade and opens the other side. Each trade uses 9% of equity as position value. Built from MACD1.py, which was tested on SPY 1H.",
+  accent: "#ec4899",
+  icon: Zap,
+  autoTrade: true,
+  minHistoryBars: 40,
+  engineNote:
+    "Native engine — backtest and the 24/7 server bot share these closed-bar rules. Stop and target are fixed percents of the signal close (not ATR), size is a fixed % of equity (not risk-based), and fees, slippage and funding are included. Strateo's fees and slippage come to about 0.16% per round trip. That is more than the default 0.05% stop, which also sits inside a normal 1H candle on BTC/ETH. Backtest before you deploy.",
+  botParams: nativeBotParams(["fast", "slow", "signal", "stop_pct", "target_pct", "size_pct"]),
+  fields: [
+    { key: "fast", label: "Fast period", kind: "number", group: "signal", min: 1, max: 100, onCard: true },
+    { key: "slow", label: "Slow period", kind: "number", group: "signal", min: 2, max: 200, onCard: true },
+    { key: "signal", label: "Signal period", kind: "number", group: "signal", min: 1, max: 50, onCard: true },
+    ...marketFields,
+    {
+      key: "stop_pct",
+      label: "Stop loss · %",
+      kind: "number",
+      group: "risk",
+      min: 0.01,
+      max: 10,
+      step: 0.01,
+      onCard: true,
+      hint: "Percent from the signal close. 0.05 = 0.05%.",
+    },
+    {
+      key: "target_pct",
+      label: "Take profit · %",
+      kind: "number",
+      group: "risk",
+      min: 0,
+      max: 20,
+      step: 0.05,
+      onCard: true,
+      hint: "Percent from the signal close. 0 = no target; exit on stop or opposite cross.",
+    },
+    {
+      key: "size_pct",
+      label: "Position size · % of equity",
+      kind: "number",
+      group: "risk",
+      min: 1,
+      max: 300,
+      step: 1,
+      hint: "Position value as % of equity. 9 = the original script. Above 100 uses leverage (max 3×).",
+    },
+    { key: "allow_shorts", label: "Allow shorts", kind: "toggle", group: "risk" },
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "1h",
+    fast: 12,
+    slow: 26,
+    signal: 9,
+    stop_pct: 0.05,
+    target_pct: 0.2,
+    size_pct: 9,
+    risk_pct: 1,
+    allow_shorts: true,
+    days: 90,
+  },
+  analyze(candles, values) {
+    const fast = num(values, "fast", 12);
+    const slow = num(values, "slow", 26);
+    const signalPeriod = num(values, "signal", 9);
+    const stopPct = num(values, "stop_pct", 0.05);
+    const targetPct = num(values, "target_pct", 0.2);
+    const overlays: ChartOverlay[] = [
+      { key: emaKey(fast), label: `EMA ${fast}`, color: FAST_COLOR },
+      { key: emaKey(slow), label: `EMA ${slow}`, color: SLOW_COLOR },
+    ];
+    if (candles.length < 2) return emptyAnalysis(candles, overlays);
+
+    const decorated = attachEma(candles, [fast, slow]);
+    const points = macd(candles.map((c) => c.close), fast, slow, signalPeriod);
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    const close = candles[candles.length - 1].close;
+    const cross = crossDirection(prev.macd, last.macd, prev.signal, last.signal);
+    const shortsOn = values.allow_shorts !== false;
+    const dir = cross === "up" ? 1 : cross === "down" && shortsOn ? -1 : 0;
+
+    let signal: LiveSignal;
+    if (dir === 1) {
+      signal = {
+        headline: "BUY — MACD crossed above signal",
+        detail: "Closes any short, then goes long on the next open.",
+        tone: "buy",
+        readouts: [],
+      };
+    } else if (dir === -1) {
+      signal = {
+        headline: "SELL — MACD crossed below signal",
+        detail: "Closes any long, then goes short on the next open.",
+        tone: "sell",
+        readouts: [],
+      };
+    } else if (cross === "down") {
+      signal = {
+        headline: "MACD crossed below signal — shorts off",
+        detail: "No trade. With shorts off, an open long exits only at its stop or target.",
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = {
+        headline: "Waiting for a MACD cross",
+        detail: `Histogram ${last.hist >= 0 ? "above" : "below"} zero and ${last.hist > prev.hist ? "rising" : "falling"}.`,
+        tone: "neutral",
+        readouts: [],
+      };
+    }
+
+    // Reference levels from this close, as the engine sets them on a fresh cross.
+    const side = dir === 0 ? (last.hist >= 0 ? 1 : -1) : dir;
+    const sl = close * (1 - (side * stopPct) / 100);
+    const tp = targetPct > 0 ? close * (1 + (side * targetPct) / 100) : null;
+    signal.readouts = [
+      { label: "Price", value: price(close) },
+      { label: "MACD", value: last.macd.toFixed(2), color: FAST_COLOR },
+      { label: "Signal", value: last.signal.toFixed(2), color: SLOW_COLOR },
+      { label: "Histogram", value: last.hist.toFixed(2), color: last.hist >= 0 ? "var(--green)" : "var(--red)" },
+      { label: `SL ref (${stopPct}%)`, value: price(sl), color: "var(--red)" },
+      { label: `TP ref (${targetPct}%)`, value: price(tp), color: "var(--green)" },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return nativeBacktest("macd-scalp", values, {
+      fast: num(values, "fast", 12),
+      slow: num(values, "slow", 26),
+      signal: num(values, "signal", 9),
+      stop_pct: num(values, "stop_pct", 0.05),
+      target_pct: num(values, "target_pct", 0.2),
+      size_pct: num(values, "size_pct", 9),
+      allow_shorts: values.allow_shorts !== false,
+    });
+  },
+};
+
 const customEma: StrategyDef = {
   id: "custom-ema",
   name: "Custom EMA Crossover",
@@ -4540,6 +4691,7 @@ const buyGridRecoveryHedge: StrategyDef = {
 export const STRATEGIES: StrategyDef[] = [
   btcEthBreakout,
   btcEthRsiPullback,
+  macdScalp,
   buyGridRecoveryHedge,
   avptPullback,
   tridentMomentum,
