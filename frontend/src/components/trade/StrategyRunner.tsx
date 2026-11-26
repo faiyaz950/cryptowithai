@@ -628,12 +628,18 @@ export default function StrategyRunner({ def, initialValues, autoBacktest }: Pro
   };
 
   const autoRan = useRef(false);
+  const resultsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!autoBacktest || autoRan.current) return;
     autoRan.current = true;
     void handleBacktest();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sirf pehli baar, card se aane par
   }, [autoBacktest]);
+  // Card ke Backtest se aaye to report khud screen par aaye, setup ke neeche chhupi na rahe.
+  useEffect(() => {
+    if (!autoBacktest || !btResult) return;
+    resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [autoBacktest, btResult]);
 
   const maxDays = maxDaysForInterval(timeframe);
   const clamped = chartDays > maxDays;
@@ -1283,13 +1289,15 @@ export default function StrategyRunner({ def, initialValues, autoBacktest }: Pro
         {def.optionCondor && <CondorPanel def={def} values={settledValues} />}
 
         {def.backtestable !== false && (btRunning || btResult) && (
-          <BacktestResults
-            running={btRunning}
-            result={btResult}
-            fallbackSymbol={symbol}
-            fallbackTimeframe={timeframe}
-            emptyHint={<>Run a backtest from Setup.</>}
-          />
+          <div ref={resultsRef}>
+            <BacktestResults
+              running={btRunning}
+              result={btResult}
+              fallbackSymbol={symbol}
+              fallbackTimeframe={timeframe}
+              emptyHint={<>Run a backtest from Setup.</>}
+            />
+          </div>
         )}
 
         {def.id === "avpt-pullback" && (

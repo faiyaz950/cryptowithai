@@ -14,6 +14,7 @@ import {
   Sparkles,
   Star,
   UserRound,
+  Wallet,
   Wand2,
   Zap,
 } from "lucide-react";
@@ -81,6 +82,13 @@ export const DESK_STAGES: DeskStage[] = [
       { id: "exchanges", tab: "exchanges", label: "Exchanges", blurb: "Apni API key jodo", icon: Plug, href: "/trade?tab=exchanges" },
       { id: "markets", tab: "markets", label: "Terminal", blurb: "Live chart aur orders", icon: LineChart, href: "/trade?tab=markets" },
       { id: "strateo", label: "Strateo", blurb: "Strategy apply karo, exchange par chalao", icon: Zap, href: "/trade/strateo" },
+      {
+        id: "strateo-wallets",
+        label: "Demo wallets",
+        blurb: "Strategy pe kitna demo amount, P&L",
+        icon: Wallet,
+        href: "/trade/strateo/wallets",
+      },
       { id: "watchlist", tab: "watchlist", label: "Watchlist", blurb: "Pasand ki coins", icon: Star, href: "/trade?tab=watchlist" },
       { id: "trades", tab: "trades", label: "Trades", blurb: "Positions aur order history", icon: ListOrdered, href: "/trade?tab=trades" },
       { id: "bots", tab: "bots", label: "Bots", blurb: "DCA, Grid, Combo", icon: Bot, href: "/trade?tab=bots" },

@@ -3597,8 +3597,15 @@ def _paper_exposure_added(orders, symbol, side, qty):
     return max(0.0, qty - abs(q))
 
 
-def _paper_fill_check(orders, symbol, side, qty, price):
-    """None = fill ho sakta hai, warna wajah."""
+def _paper_fill_check(orders, symbol, side, qty, price, buying_power=None):
+    """
+    None = fill ho sakta hai, warna wajah.
+
+    `buying_power` (USD) sirf server strategy bot deta hai: bot ka apna demo wallet. Tab
+    order desk ke $10k paper cash se nahi, us wallet se naapa jata hai — warna $100k wale
+    bot ka ~$30k order "Insufficient paper balance" se reject hota tha. Desk ke orders
+    (buying_power=None) pehle jaise paper account ke available cash se hi chalte hain.
+    """
     meta = _spot_meta(symbol)
     if meta is not None and side == 'sell':
         # Spot par short nahi hota — jitna coin paas hai utna hi bikta hai.
@@ -3614,13 +3621,32 @@ def _paper_fill_check(orders, symbol, side, qty, price):
     fx = _paper_fx(symbol)
     if not fx:
         return f'{meta["quote"] if meta else "USD"} USD rate unavailable — try again shortly.'
+    needed = added * price * fx
+    if buying_power is not None:
+        available = _bot_buying_power_left(orders, symbol, side, buying_power, fx)
+        if needed > available + 1e-9:
+            return (f'Insufficient demo wallet: this order needs ~${needed:,.2f}, '
+                    f'wallet has ${available:,.2f} free.')
+        return None
     marks = _paper_prices_for({o['symbol'] for o in orders if o.get('status') == 'filled'} | {symbol})
     available = _paper_account(orders, marks)['available']
-    needed = added * price * fx
     if needed > available + 1e-9:
         return (f'Insufficient paper balance: this order needs ~${needed:,.2f}, '
                 f'available ${available:,.2f}.')
     return None
+
+
+def _bot_buying_power_left(orders, symbol, side, wallet, fx):
+    """
+    Bot ke demo wallet mein se is symbol ki khuli position ka margin ghata kar bacha hua.
+    Ulti side ki position order se pehle band hoti hai, isliye wo margin free maana jata hai.
+    """
+    positions, _ = _paper_book(orders)
+    pos = positions.get(symbol)
+    held = 0.0
+    if pos and pos['qty'] != 0 and (pos['qty'] > 0) == (side == 'buy'):
+        held = abs(pos['qty']) * pos['entry'] * fx
+    return max(0.0, float(wallet) - held)
 
 
 def _bracket_targets(bracket):
@@ -3856,11 +3882,14 @@ class PaperOrderRejected(Exception):
         self.reason = reason
 
 
-def place_paper_order(user_id, data):
+def place_paper_order(user_id, data, buying_power=None):
     """
     Paper order ka poora rasta — desk (`/api/place-order`) aur server ka strategy bot
     dono isi se jaate hain, taaki bot ki position wahi paper account aur wahi SL/Target
     engine mein rahe jo desk dikhata hai.
+
+    `buying_power`: sirf server bot (bot_worker) python se deta hai — HTTP body se kabhi nahi,
+    warna koi bhi client balance check bypass kar leta.
 
     Returns (order_entry, message). Galti par PaperOrderRejected.
     """
@@ -3916,7 +3945,7 @@ def place_paper_order(user_id, data):
     orders = _settle_paper_limits(user_id)
     settled = [o for o in orders if o['status'] == 'filled']
     if marketable or (meta and side == 'sell'):
-        reason = _paper_fill_check(settled, symbol, side, quantity, fill_price)
+        reason = _paper_fill_check(settled, symbol, side, quantity, fill_price, buying_power=buying_power)
         if reason:
             raise PaperOrderRejected(reason, reason='paper_balance')
 

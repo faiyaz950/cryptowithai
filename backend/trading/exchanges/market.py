@@ -24,6 +24,9 @@ from .base import fnum
 
 TIMEOUT = 15
 
+# Derived (khud jode hue) intraday timeframes ke liye minutes.
+_IV_MINUTES = {"1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720}
+
 # Chart har kuch second poll hota hai — reused connection har baar ka TLS
 # handshake bacha leta hai.
 _HTTP = requests.Session()
@@ -68,12 +71,19 @@ class MarketSource:
 
     @classmethod
     def _aggregate(cls, ui_symbol, interval, limit, end_ms):
-        days_per = 7 if interval == "1w" else 31
-        need = min((limit + 1) * days_per, cls._DERIVED_MAX_DAYS)
+        base = cls.DERIVED[interval]
+        intraday = interval not in ("1w", "1M")
+        if intraday:
+            # Jaise 12h = teen 4h — UTC par aligned (00:00 / 12:00), Bybit ki 12h jaisa.
+            step_ms = _IV_MINUTES[interval] * 60_000
+            need = (limit + 1) * (_IV_MINUTES[interval] // _IV_MINUTES[base])
+        else:
+            days_per = 7 if interval == "1w" else 31
+            need = min((limit + 1) * days_per, cls._DERIVED_MAX_DAYS)
         daily: List[Dict[str, Any]] = []
         cursor = end_ms
         while len(daily) < need:
-            page = cls.candles(ui_symbol, "1d", min(1000, need - len(daily)), end_ms=cursor)
+            page = cls.candles(ui_symbol, base, min(1000, need - len(daily)), end_ms=cursor)
             if not page:
                 break
             daily = page + [c for c in daily if c["time"] > page[-1]["time"]]
@@ -84,6 +94,8 @@ class MarketSource:
             return None
 
         def bucket(ms: int) -> int:
+            if intraday:
+                return ms - ms % step_ms
             d = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
             if interval == "1w":  # Monday 00:00 UTC
                 d = d.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -183,6 +195,7 @@ class CoinDCXMarket(MarketSource):
         "1m": "1", "5m": "5", "15m": "15", "30m": "30",
         "1h": "60", "4h": "240", "1d": "1D",
     }
+    DERIVED = {**MarketSource.DERIVED, "12h": "4h"}
     _MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
 
     @classmethod
@@ -549,6 +562,8 @@ class DeltaMarket(MarketSource):
         "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m", "30m": "30m",
         "1h": "1h", "2h": "2h", "4h": "4h", "6h": "6h", "1d": "1d", "1w": "1w",
     }
+    # 12h Delta nahi deta — teen 4h jod kar (gold jaisi 12h strategies ke liye).
+    DERIVED = {**MarketSource.DERIVED, "12h": "4h"}
 
     @classmethod
     def to_symbol(cls, ui_symbol: str) -> Optional[str]:

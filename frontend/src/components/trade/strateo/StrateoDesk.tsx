@@ -1481,6 +1481,14 @@ export default function StrateoDesk() {
             <span className="st-dock-pulse" aria-hidden />
             Running <b>{applied.length}</b>
           </span>
+          <Link
+            href="/trade/strateo/wallets"
+            className="st-dock-info"
+            title="Demo amounts, running P&L, and allocation by strategy"
+          >
+            <Wallet className="w-3.5 h-3.5" aria-hidden />
+            Demo wallets
+          </Link>
           <div className="st-applied" aria-label="Applied strategies">
             {applied.map((a) => {
               const def = getStrategy(a.id);

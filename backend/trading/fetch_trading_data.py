@@ -90,6 +90,28 @@ CANDLES_RETRIES = 3
 CANDLES_BATCH_LIMIT = 500  # Max candles per request (Delta may cap this)
 AUTH_TIMEOUT = 12
 
+# Delta India ye resolutions nahi deta (400 bad_schema) — chhoti candles jod kar banate hain.
+# 12h = teen 4h, UTC 00:00 / 12:00 par (Bybit ki 12h candles jaisa).
+DELTA_DERIVED = {'12h': ('4h', 720)}
+
+
+def aggregate_candles(df, minutes):
+    """'Open Time' wale OHLCV df ko `minutes` ki UTC-aligned candles mein jodo."""
+    if df is None or len(df) == 0:
+        return df
+    df = df.sort_values('Open Time')
+    bucket = pd.to_datetime(df['Open Time']).dt.floor(f'{minutes}min')
+    groups = df.assign(_bucket=bucket).groupby('_bucket', sort=True)
+    out = groups.agg(Open=('Open', 'first'), High=('High', 'max'), Low=('Low', 'min'),
+                     Close=('Close', 'last'), Volume=('Volume', 'sum'))
+    first_seen = groups['Open Time'].first()
+    out = out.reset_index().rename(columns={'_bucket': 'Open Time'})
+    # Sabse purani bucket aadhi ho sakti hai (window uske beech se shuru hua) — aadhi candle
+    # poori jaisi dikhti aur indicators bigadti, isliye hata do.
+    if len(out) > 1 and pd.Timestamp(first_seen.iloc[0]) != pd.Timestamp(out['Open Time'].iloc[0]):
+        out = out.iloc[1:]
+    return out[['Open Time', 'Open', 'High', 'Low', 'Close', 'Volume']].reset_index(drop=True)
+
 # Har request par naya client banta hai, isliye ye dono process-level hain:
 # product_id kabhi badalta nahi, aur reused connection har call se TLS
 # handshake (~0.1-0.3s) bacha leta hai — screener mein ye 30 baar judta hai.
@@ -433,6 +455,11 @@ class DeltaExchangeClient:
         """
         if to_timestamp_ms is None:
             to_timestamp_ms = int(time.time() * 1000)
+        if resolution in DELTA_DERIVED:
+            base, minutes = DELTA_DERIVED[resolution]
+            out = self.fetch_historical_data_public(symbol, base, from_timestamp_ms, to_timestamp_ms)
+            df = aggregate_candles(out.get('dataframe'), minutes)
+            return {**out, 'dataframe': df, 'interval': resolution, 'count': 0 if df is None else len(df)}
         delta_symbol = self._delta_symbol(symbol)
         path = "/v2/history/candles"
         headers = {'User-Agent': 'python-crypto-client/1.0', 'Accept': 'application/json'}

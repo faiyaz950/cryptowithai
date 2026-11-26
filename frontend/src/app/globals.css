@@ -7192,6 +7192,76 @@ textarea:focus-visible {
 .pnl .pf-stats dd[data-up="true"] { color: var(--green); }
 .pnl .pf-stats dd[data-up="false"] { color: var(--p-ff8a80); }
 
+/* Backtest P&L calendar — months across, Mon–Sun down, one square per day. */
+.bt-heat { --bt-cell: 15px; --bt-gap: 3px; padding: 14px 16px 14px; }
+.bt-heat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.bt-heat-nav { display: flex; gap: 6px; }
+.bt-heat-nav button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--tr-line); background: var(--tr-field); color: var(--text-secondary);
+}
+.bt-heat-nav button:hover { color: var(--text-primary); border-color: var(--tr-line-2, var(--tr-line)); }
+.bt-heat-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bt-heat-frame { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.bt-heat-dow {
+  flex: none;
+  display: grid;
+  grid-template-rows: repeat(7, var(--bt-cell));
+  gap: var(--bt-gap);
+  margin-top: 26px;
+}
+.bt-heat-dow span {
+  font-size: 10px; line-height: var(--bt-cell); width: 28px;
+  text-align: right; color: var(--text-muted); letter-spacing: 0.01em;
+}
+.bt-heat-body {
+  flex: 1; min-width: 0;
+  display: flex; align-items: flex-start; gap: 18px;
+  overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: thin; scrollbar-color: var(--tr-line) transparent;
+}
+.bt-heat-month {
+  flex: none;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.bt-heat-name {
+  height: 18px; font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--text-secondary); white-space: nowrap;
+}
+.bt-heat-grid {
+  display: grid;
+  grid-template-rows: repeat(7, var(--bt-cell));
+  grid-auto-flow: column;
+  grid-auto-columns: var(--bt-cell);
+  gap: var(--bt-gap);
+}
+.bt-heat-cell {
+  width: var(--bt-cell); height: var(--bt-cell); border-radius: 4px;
+  transition: transform 0.15s ease;
+}
+.bt-heat-cell[data-pad="true"] { background: transparent; }
+.bt-heat-cell[data-empty="true"]:not([data-pad="true"]) { background: rgb(255 255 255 / 0.06); }
+.bt-heat-cell[data-empty="false"]:hover { transform: scale(1.2); }
+@media (prefers-reduced-motion: reduce) {
+  .bt-heat-cell { transition: none; }
+  .bt-heat-cell[data-empty="false"]:hover { transform: none; }
+}
+.bt-heat-total {
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em; white-space: nowrap; color: var(--text-muted);
+}
+.bt-heat-total[data-up="true"] { color: var(--green); }
+.bt-heat-total[data-up="false"] { color: var(--red); }
+.bt-heat-legend {
+  display: flex; align-items: center; gap: 3px;
+  margin-top: 14px; font-size: 11px; color: var(--text-muted);
+}
+.bt-heat-legend > span:first-child { margin-right: 6px; }
+.bt-heat-legend > span:last-child { margin-left: 6px; }
+.bt-heat-legend-gap { width: 8px; }
+.bt-heat-swatch { width: 12px; height: 12px; border-radius: 3px; }
+
 .pnl-heat { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 2px; }
 .pnl-heat-col { display: grid; gap: 3px; }
 .pnl-heat-cell {
@@ -7915,6 +7985,23 @@ textarea:focus-visible {
 }
 .cm-legend-stack .trade-chart-legend { position: static; }
 .cm-ind-legend { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+/* Hover wali candle ke trade marks — chart par bheed mein text chhupa ho tab bhi poora. */
+.cm-mark-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; max-width: 100%; }
+.cm-mark-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: rgb(var(--surface-rgb) / .88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--tr-line);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.cm-mark-chip i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .cm-ind-row {
   display: inline-flex;
   align-items: center;

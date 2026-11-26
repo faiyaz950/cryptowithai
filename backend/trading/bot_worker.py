@@ -495,7 +495,8 @@ def _candles_for(api, bot, now_ms, bar_ms, last_closed):
 def make_client(api, bot):
     """(client, None) ya (None, kyun ruka hai). Live ke teeno switch yahin jaanche jaate hain."""
     if bot["mode"] != "live":
-        return PaperClient(api, bot["user_id"], bot["symbol"]), None
+        # Bot ka size demo wallet se nikalta hai, isliye balance check bhi usi wallet se (desk ke $10k cash se nahi).
+        return PaperClient(api, bot["user_id"], bot["symbol"], buying_power=_wallet(bot)), None
     if not api.LIVE_ORDERS_ENABLED:
         return None, ("Live bot ruka hai: server par LIVE_ORDERS_ENABLED band hai. Khuli position ka stop "
                       "exchange par laga hai, par trail nahi ho raha.")
@@ -516,10 +517,11 @@ class PaperClient:
 
     mode = "paper"
 
-    def __init__(self, api, user_id, symbol):
+    def __init__(self, api, user_id, symbol, buying_power=None):
         self.api = api
         self.user_id = user_id
         self.symbol = symbol
+        self.buying_power = buying_power
 
     def sync(self):
         self.api._settle_paper_limits(self.user_id)
@@ -588,7 +590,7 @@ class PaperClient:
                 "order_type": "market",
                 "quantity": qty,
                 "stop_loss": stop_loss,
-            })
+            }, buying_power=self.buying_power)
         except self.api.PaperOrderRejected as rej:
             raise OrderError(rej.message)
         return order

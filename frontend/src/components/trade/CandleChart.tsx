@@ -20,6 +20,7 @@ import { DESK_TZ, DESK_TZ_LABEL, DESK_VENUE_SHORT, type Candle } from "@/lib/cry
 import { subscribeLiveCandles, type LiveBar, type LiveStatus } from "@/lib/deltaLive";
 import { DRAW_COLORS, DRAW_WIDTHS, DrawingsPrimitive, useChartDrawings, type DrawTool } from "@/lib/chartDrawings";
 import type { ChartType } from "@/lib/chartTypes";
+import { declutterMarkers, markerTextsByBar, snapToBar } from "@/lib/chartMarkerLayout";
 import {
   INDICATOR_BY_ID,
   barMinutesOf,
@@ -569,6 +570,21 @@ function priceRegimeChanged(prev: Ohlc[], next: Ohlc[]): boolean {
 
 function toUnix(timeMs: number): UTCTimestamp {
   return Math.floor(timeMs / 1000) as UTCTimestamp;
+}
+
+const markTextWidths = new Map<string, number>();
+let markMeasure: CanvasRenderingContext2D | null | undefined;
+/** Mark ke label ki chaudai (px) — chart ka hi font (layout 11px Inter), canvas se naapi. */
+function markerTextWidth(text: string): number {
+  const hit = markTextWidths.get(text);
+  if (hit != null) return hit;
+  if (markMeasure === undefined) {
+    markMeasure = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+    if (markMeasure) markMeasure.font = "11px Inter, system-ui, sans-serif";
+  }
+  const w = markMeasure ? markMeasure.measureText(text).width : text.length * 6;
+  markTextWidths.set(text, w);
+  return w;
 }
 
 /**
@@ -1538,26 +1554,47 @@ export default function CandleChart({
       series.setMarkers([]);
       return;
     }
-    const snap = (t: number): number | null => {
-      if (t < bars[0].time) return null;
-      let lo = 0;
-      let hi = bars.length - 1;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (bars[mid].time <= t) lo = mid;
-        else hi = mid - 1;
-      }
-      return bars[lo].time;
-    };
+    const times = bars.map((b) => b.time);
     const list = markers
       .map((m) => {
-        const at = snap(m.time);
-        return at == null ? null : { time: toUnix(at) as Time, position: m.position, shape: m.shape, color: m.color, text: m.text };
+        const at = snapToBar(times, m.time);
+        return at == null ? null : { time: toUnix(at), position: m.position, shape: m.shape, color: m.color, text: m.text };
       })
       .filter((m): m is NonNullable<typeof m> => m !== null)
-      .sort((a, b) => Number(a.time) - Number(b.time));
-    series.setMarkers(list);
+      .sort((a, b) => a.time - b.time);
+    const ts = chartRef.current?.timeScale();
+    if (!ts) {
+      series.setMarkers(list);
+      return;
+    }
+    // Zoom ke saath candle ki chaudai badalti hai — bheed wali candle ka label text hatao
+    // (mark rehta hai), poora text hover par legend mein. Scroll par chaudai wahi, kuch nahi.
+    let spacing = -1;
+    const place = () => {
+      const range = ts.getVisibleLogicalRange();
+      const width = ts.width();
+      const next = range && range.to > range.from && width > 0 ? width / (range.to - range.from) : 8;
+      if (Math.abs(next - spacing) < 0.5) return;
+      spacing = next;
+      series.setMarkers(declutterMarkers(list, barIndexRef.current, spacing, markerTextWidth));
+    };
+    place();
+    ts.subscribeVisibleLogicalRangeChange(place);
+    return () => {
+      try {
+        ts.unsubscribeVisibleLogicalRangeChange(place);
+      } catch {
+        /* chart pehle hi hat chuka (unmount) — subscription uske saath gayi */
+      }
+    };
   }, [markers, candles, chartType]);
+
+  // Hover wali candle ke marks ka poora text — bheed mein chart par text chhupa ho tab bhi.
+  const markTexts = useMemo(
+    () => markerTextsByBar(markers ?? [], candles.map((c) => c.time).sort((a, b) => a - b)),
+    [markers, candles],
+  );
+  const hoverMarks = hoverTime == null ? undefined : markTexts.get(hoverTime);
 
   const revealedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1666,6 +1703,16 @@ export default function CandleChart({
       )}
       {overlayRows.length > 0 && (
         <div className="cm-ind-legend">{overlayRows.map(({ ind, values }) => renderIndRow(ind, values))}</div>
+      )}
+      {hoverMarks && (
+        <div className="cm-mark-legend">
+          {hoverMarks.map((m, i) => (
+            <span key={i} className="cm-mark-chip">
+              <i style={{ background: m.color }} aria-hidden />
+              {m.text}
+            </span>
+          ))}
+        </div>
       )}
       </div>
       <div

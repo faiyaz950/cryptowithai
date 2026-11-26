@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { FlaskConical } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, FlaskConical } from "lucide-react";
 import type { BacktestResult, BacktestTrade, ValidationEnvBlock } from "@/lib/cryptoApi";
 import { symbolLabel } from "@/lib/cryptoApi";
 
@@ -155,6 +155,8 @@ export default function BacktestResults({ running, result, fallbackSymbol, fallb
         <Kpi label="Days covered" value={String(result.days_covered ?? 0)} sub={`${result.total_candles ?? 0} candles`} />
       </div>
 
+      <PnlHeatmap trades={allTrades} />
+
       {settled > 0 && (
         <div className="trade-panel trade-panel-body">
           <div className="flex items-center justify-between mb-2.5">
@@ -286,6 +288,131 @@ function EquityCurve({ points, capital }: { points: [number, number][]; capital:
       <path d={`${path}L${W},${H}L0,${H}Z`} fill={color} opacity={0.08} />
       <path d={path} fill="none" stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
     </svg>
+  );
+}
+
+const HEAT_DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const HEAT_LOSS = ["#4a2428", "#7a3034", "#b83d42", "#e04a4f", "#ff5252"];
+const HEAT_GAIN = ["#143d28", "#166534", "#15803d", "#16a34a", "#22c55e"];
+
+function heatMoney(n: number): string {
+  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  const body = abs >= 100
+    ? abs.toLocaleString("en-US", { maximumFractionDigits: 0 })
+    : abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${sign}$${body}`;
+}
+
+function heatShade(pnl: number, peak: number): string {
+  if (pnl === 0 || peak <= 0) return "#3f3f46";
+  const mag = Math.sqrt(Math.min(1, Math.abs(pnl) / peak));
+  const steps = pnl > 0 ? HEAT_GAIN : HEAT_LOSS;
+  return steps[Math.min(steps.length - 1, Math.floor(mag * steps.length))];
+}
+
+/** Closed-trade P&L by UTC day, months as columns, Mon–Sun as rows. */
+function PnlHeatmap({ trades }: { trades: BacktestTrade[] }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const months = useMemo(() => {
+    const byDay = new Map<string, number>();
+    for (const t of trades) {
+      const ms = tradeMs(t.exit_time || t.entry_time);
+      if (ms == null) continue;
+      const d = new Date(ms);
+      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+      byDay.set(key, (byDay.get(key) ?? 0) + t.pnl);
+    }
+    if (!byDay.size) return [];
+    const keys = [...byDay.keys()].sort();
+    let peak = 0;
+    for (const v of byDay.values()) peak = Math.max(peak, Math.abs(v));
+    const [fy, fm] = keys[0].split("-").map(Number);
+    const [ly, lm] = keys[keys.length - 1].split("-").map(Number);
+    const out: { key: string; label: string; pnl: number; cells: { key: string; pad: boolean; empty: boolean; color?: string; title?: string }[] }[] = [];
+    let y = fy;
+    let m = fm;
+    while (y < ly || (y === ly && m <= lm)) {
+      const key = `${y}-${String(m).padStart(2, "0")}`;
+      const start = new Date(Date.UTC(y, m - 1, 1));
+      const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      const lead = (start.getUTCDay() + 6) % 7;
+      const cells: { key: string; pad: boolean; empty: boolean; color?: string; title?: string }[] = [];
+      for (let i = 0; i < lead; i++) cells.push({ key: `${key}-pad-${i}`, pad: true, empty: true });
+      let pnl = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dk = `${key}-${String(d).padStart(2, "0")}`;
+        const dayPnl = byDay.get(dk);
+        const label = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+          day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+        });
+        if (dayPnl == null) {
+          cells.push({ key: dk, pad: false, empty: true, title: `${label} · no trades` });
+        } else {
+          pnl += dayPnl;
+          cells.push({ key: dk, pad: false, empty: false, color: heatShade(dayPnl, peak), title: `${label} · ${heatMoney(dayPnl)}` });
+        }
+      }
+      const tail = (7 - (cells.length % 7)) % 7;
+      for (let i = 0; i < tail; i++) cells.push({ key: `${key}-tail-${i}`, pad: true, empty: true });
+      const label = `${start.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" })} '${String(y).slice(2)}`;
+      out.push({ key, label, pnl, cells });
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+    }
+    return out;
+  }, [trades]);
+
+  if (!months.length) return null;
+
+  return (
+    <div className="trade-panel bt-heat" role="img" aria-label="Daily profit and loss heatmap">
+      <div className="bt-heat-head">
+        <span className="trade-panel-title">PNL Heatmap</span>
+        <div className="bt-heat-nav">
+          <button type="button" aria-label="Previous months" onClick={() => scroller.current?.scrollBy({ left: -280, behavior: "smooth" })}>
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button type="button" aria-label="Next months" onClick={() => scroller.current?.scrollBy({ left: 280, behavior: "smooth" })}>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+      <div className="bt-heat-frame">
+        <div className="bt-heat-dow" aria-hidden>
+          {HEAT_DOW.map((d) => <span key={d}>{d}</span>)}
+        </div>
+        <div className="bt-heat-body" ref={scroller}>
+          {months.map((month) => (
+            <div key={month.key} className="bt-heat-month">
+              <div className="bt-heat-name">{month.label}</div>
+              <div className="bt-heat-grid">
+                {month.cells.map((cell) => (
+                  <span
+                    key={cell.key}
+                    className="bt-heat-cell"
+                    data-pad={cell.pad ? "true" : "false"}
+                    data-empty={cell.empty ? "true" : "false"}
+                    style={cell.color ? { background: cell.color } : undefined}
+                    title={cell.title}
+                  />
+                ))}
+              </div>
+              <div className="bt-heat-total" data-up={month.pnl > 0 ? "true" : month.pnl < 0 ? "false" : undefined}>
+                {heatMoney(month.pnl)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="bt-heat-legend">
+        <span>Loss</span>
+        {HEAT_LOSS.map((c) => <span key={c} className="bt-heat-swatch" style={{ background: c }} />)}
+        <span className="bt-heat-legend-gap" />
+        {HEAT_GAIN.map((c) => <span key={c} className="bt-heat-swatch" style={{ background: c }} />)}
+        <span>Profit</span>
+      </div>
+    </div>
   );
 }
 
@@ -860,6 +987,8 @@ function CapitalResults({
           Only {result.total_trades} closed trades — thin sample; treat stats as provisional.
         </p>
       )}
+
+      <PnlHeatmap trades={all} />
 
       <div className="trade-seg overflow-x-auto scrollbar-hide max-w-full">
         {tabs.map((t) => (
