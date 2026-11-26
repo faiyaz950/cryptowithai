@@ -24,6 +24,7 @@ import {
   replayBuyGridRecovery,
 } from "./buyGridRecovery";
 import { TREND_KEYS, replayTrendRider, trendRiderQuantity } from "./trendRider";
+import { meanRevertBands, spreadStats } from "./meanRevert";
 import { TRIDENT_DEFAULTS, TRIDENT_KEYS, replayTrident, validHorizons } from "./trident";
 
 const RANGE_COLOR = "#0891b2";
@@ -783,6 +784,125 @@ const macdScalp: StrategyDef = {
       stop_pct: num(values, "stop_pct", 0.05),
       target_pct: num(values, "target_pct", 0.2),
       size_pct: num(values, "size_pct", 9),
+      allow_shorts: values.allow_shorts !== false,
+    });
+  },
+};
+
+/**
+ * Mean Revert — revert.py (meanrevert_testingstrategy) ke tests ka trade rule.
+ * revert.py do stocks (PEP/KO) ka spread test karta hai; Strateo ek symbol chalata hai, isliye
+ * spread = log(close) − pichhli `lookback` candles ki OLS trend line. Entry sirf tab jab
+ * ADF / Hurst / half-life teeno spread ko mean-reverting bolein.
+ */
+const meanRevert: StrategyDef = {
+  id: "mean-revert",
+  name: "Mean Revert",
+  category: "Mean reversion · Stats · 4H",
+  blurb: "Spread z-score ±2, only when ADF, Hurst and half-life say the spread mean-reverts.",
+  logic:
+    "Built from revert.py. Every closed candle: fit an OLS trend line to log(close) over the last 120 candles. The spread is how far price sits from that line. LONG when the spread z-score is −2 or lower; SHORT when it is +2 or higher. Only trade when all three tests agree: ADF p-value below 0.05 (stationary), Hurst below 0.5 (anti-persistent) and OU half-life at most 30 candles. Target is the trend line at the signal candle (spread back to 0). Stop is 2× ATR. Time exit after 60 candles. revert.py compares two stocks; Strateo runs one symbol, so the trend line takes the place of the second stock.",
+  accent: "#14b8a6",
+  icon: Waves,
+  autoTrade: true,
+  minHistoryBars: 130,
+  engineNote:
+    NATIVE_ENGINE_NOTE +
+    " Long and short. Entry is a ±z spread extreme with the three revert.py tests passing, filled on the next open. Target is the trend line from the signal candle, stop is ATR ×, and the trade closes after max candles.",
+  botParams: nativeBotParams(["lookback", "entry_z", "adf_p", "max_hurst", "max_half_life", "max_bars"]),
+  fields: [
+    { key: "lookback", label: "Lookback · candles", kind: "number", group: "signal", min: 30, max: 1000, onCard: true, hint: "Window for the trend line and all three tests." },
+    { key: "entry_z", label: "Entry z-score", kind: "number", group: "signal", min: 0.5, max: 5, step: 0.25, onCard: true },
+    { key: "adf_p", label: "Max ADF p-value", kind: "number", group: "signal", min: 0.01, max: 1, step: 0.01, hint: "0.05 = revert.py. 1 = test off." },
+    { key: "max_hurst", label: "Max Hurst", kind: "number", group: "signal", min: 0.1, max: 1, step: 0.05, hint: "Below 0.5 = mean-reverting. 1 = test off." },
+    { key: "max_half_life", label: "Max half-life · candles", kind: "number", group: "signal", min: 1, max: 1000 },
+    ...marketFields,
+    { key: "stop_atr", label: "Stop · ATR ×", kind: "number", group: "risk", min: 0.5, max: 6, step: 0.5 },
+    { key: "max_bars", label: "Time exit · candles", kind: "number", group: "risk", min: 0, max: 500, hint: "0 = no time exit." },
+    { key: "risk_pct", label: "Risk % of capital", kind: "number", group: "risk", min: 0.1, max: 5, step: 0.1 },
+    { key: "allow_shorts", label: "Allow shorts", kind: "toggle", group: "risk" },
+    ...backtestFields,
+  ],
+  defaults: {
+    ...sharedDefaults,
+    timeframe: "4h",
+    lookback: 120,
+    entry_z: 2,
+    adf_p: 0.05,
+    max_hurst: 0.5,
+    max_half_life: 30,
+    stop_atr: 2,
+    max_bars: 60,
+    risk_pct: 1,
+    allow_shorts: true,
+    days: 365,
+  },
+  analyze(candles, values) {
+    const lookback = Math.round(num(values, "lookback", 120));
+    const entryZ = num(values, "entry_z", 2);
+    const maxP = num(values, "adf_p", 0.05);
+    const maxH = num(values, "max_hurst", 0.5);
+    const maxHl = num(values, "max_half_life", 30);
+    const overlays: ChartOverlay[] = [
+      { key: "mr_mid", label: `Trend line (${lookback})`, color: "#14b8a6" },
+      // Chart library CSS vars nahi padhti — hex chahiye.
+      { key: "mr_upper", label: `+${entryZ}σ`, color: "#ef4444" },
+      { key: "mr_lower", label: `−${entryZ}σ`, color: "#22c55e" },
+    ];
+    if (candles.length < lookback + 2) return emptyAnalysis(candles, overlays);
+
+    const closes = candles.map((c) => c.close);
+    const bands = meanRevertBands(closes, lookback, entryZ);
+    const decorated = candles.map((c, i) => ({ ...c, mr_mid: bands.mid[i], mr_upper: bands.upper[i], mr_lower: bands.lower[i] }));
+    const st = spreadStats(closes.slice(-lookback).map(Math.log));
+    const lastAtr = atr(candles, 14).at(-1) ?? 0;
+    const close = closes[closes.length - 1];
+
+    const adfOk = st.adfP < maxP;
+    const hurstOk = Number.isFinite(st.hurst) && st.hurst < maxH;
+    const hlOk = st.halfLife <= maxHl;
+    const testsOk = adfOk && hurstOk && hlOk;
+    const shortsOn = values.allow_shorts !== false;
+    const stopAtr = num(values, "stop_atr", 2);
+
+    let signal: LiveSignal;
+    if (st.z <= -entryZ && testsOk) {
+      signal = { headline: `BUY — spread ${st.z.toFixed(2)}σ below the trend line`, detail: `Target ${price(st.meanPrice)} (spread back to 0). Bot fills on the next open if this candle closes here.`, tone: "buy", readouts: [] };
+    } else if (st.z >= entryZ && testsOk && shortsOn) {
+      signal = { headline: `SELL — spread +${st.z.toFixed(2)}σ above the trend line`, detail: `Target ${price(st.meanPrice)} (spread back to 0). Bot fills on the next open if this candle closes here.`, tone: "sell", readouts: [] };
+    } else if (Math.abs(st.z) >= entryZ) {
+      const failed = [!adfOk && "ADF", !hurstOk && "Hurst", !hlOk && "half-life"].filter(Boolean).join(", ");
+      signal = {
+        headline: `Spread at ${st.z.toFixed(2)}σ — no trade`,
+        detail: failed ? `Failed: ${failed}. The spread is not proven mean-reverting right now.` : "Shorts are off.",
+        tone: "neutral",
+        readouts: [],
+      };
+    } else {
+      signal = { headline: `Waiting for ±${entryZ}σ`, detail: `Spread is ${st.z.toFixed(2)}σ from the trend line.`, tone: "neutral", readouts: [] };
+    }
+
+    const ok = (pass: boolean) => (pass ? "var(--green)" : "var(--red)");
+    signal.readouts = [
+      { label: "Price", value: price(close) },
+      { label: "Z-score", value: st.z.toFixed(2), color: Math.abs(st.z) >= entryZ ? "#14b8a6" : undefined },
+      { label: "Trend line", value: price(st.meanPrice), color: "#14b8a6" },
+      { label: `ADF p (< ${maxP})`, value: st.adfP.toFixed(3), color: ok(adfOk) },
+      { label: `Hurst (< ${maxH})`, value: Number.isFinite(st.hurst) ? st.hurst.toFixed(3) : "—", color: ok(hurstOk) },
+      { label: `Half-life (≤ ${maxHl})`, value: Number.isFinite(st.halfLife) ? `${st.halfLife.toFixed(1)} c` : "∞", color: ok(hlOk) },
+      { label: `Stop ref (${stopAtr}× ATR)`, value: price(st.z < 0 ? close - stopAtr * lastAtr : close + stopAtr * lastAtr), color: "var(--red)" },
+    ];
+    return { candles: decorated, overlays, signal };
+  },
+  toBacktest(values) {
+    return nativeBacktest("mean-revert", values, {
+      lookback: num(values, "lookback", 120),
+      entry_z: num(values, "entry_z", 2),
+      adf_p: num(values, "adf_p", 0.05),
+      max_hurst: num(values, "max_hurst", 0.5),
+      max_half_life: num(values, "max_half_life", 30),
+      max_bars: num(values, "max_bars", 60),
+      target_r: 0,
       allow_shorts: values.allow_shorts !== false,
     });
   },
@@ -4692,6 +4812,7 @@ export const STRATEGIES: StrategyDef[] = [
   btcEthBreakout,
   btcEthRsiPullback,
   macdScalp,
+  meanRevert,
   buyGridRecoveryHedge,
   avptPullback,
   tridentMomentum,

@@ -21,6 +21,7 @@ _FLOAT_KEYS = (
     "stop_atr", "target_r", "trail_atr", "atr_mult", "adx_min", "adx_thresh",
     "pullback_pct", "vol_mult", "bb_std", "risk_pct", "tp1_r", "tp1_frac",
     "stop_pct", "target_pct", "size_pct",
+    "entry_z", "adf_p", "max_hurst", "max_half_life",
 )
 _INT_KEYS = (
     "fast", "slow", "signal", "ema9", "ema21", "ema50", "ema_period", "atr_period",
@@ -399,6 +400,182 @@ def _btc_eth_rsi_pullback(o, h, l, c, v, times, p):
     return _pack(long, short, a, p["stop_atr"])
 
 
+# ── Mean Revert (revert.py ka port) ────────────────────────────────────────
+# MacKinnon (1994/2010) ADF p-value, ek series (statsmodels `mackinnonp(..., N=1)` ke
+# coefficients) — scipy/statsmodels ke bina. "ct" = constant + trend: spread trend line se
+# banta hai, to trend wala test hi sahi hai ("c" par random walk bhi stationary dikhta).
+_ADF_P = {
+    "c": (2.74, -18.83, -1.61, (2.1659, 1.4412, 0.038269), (1.7339, 0.93202, -0.12745, -0.010368)),
+    "ct": (0.7, -16.18, -2.89, (3.2512, 1.6047, 0.049588), (2.5261, 0.61654, -0.37956, -0.060285)),
+}
+
+
+def adf_pvalue(tstat, regression="ct"):
+    if not math.isfinite(tstat):
+        return float("nan")
+    t_max, t_min, t_star, small, large = _ADF_P[regression]
+    if tstat > t_max:
+        return 1.0
+    if tstat < t_min:
+        return 0.0
+    coef = small if tstat <= t_star else large
+    z = sum(cf * tstat ** i for i, cf in enumerate(coef))
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _ols_t(y, cols):
+    """y ~ cols (constant included by caller). Returns (coef, t-stats)."""
+    X = np.column_stack(cols)
+    with np.errstate(all="ignore"):
+        coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+        resid = y - X @ coef
+        dof = len(y) - X.shape[1]
+        if dof <= 0:
+            return coef, np.full(len(coef), np.nan)
+        s2 = float(resid @ resid) / dof
+        try:
+            cov = s2 * np.linalg.inv(X.T @ X)
+        except np.linalg.LinAlgError:
+            return coef, np.full(len(coef), np.nan)
+        se = np.sqrt(np.clip(np.diag(cov), 0, None))
+        return coef, coef / se
+
+
+def spread_stats(log_px):
+    """revert.py ke chaar test, ek coin ki ek window par.
+
+    revert.py do stocks ka spread banata hai: log(A) − (β·log(B) + α). Strateo ek symbol
+    chalata hai, isliye yahan B ki jagah samay hai: spread = log(close) − OLS trend line.
+    Phir wahi: ADF p-value (1 lag, constant), Hurst exponent, OU half-life, aur spread ka z-score.
+    """
+    s = np.asarray(log_px, dtype=float)
+    n = len(s)
+    t = np.arange(n, dtype=float)
+    beta, alpha = np.polyfit(t, s, 1)
+    res = s - (alpha + beta * t)
+    sd = res.std(ddof=1)
+    z = float(res[-1] / sd) if sd > 0 else float("nan")
+
+    ds = np.diff(res)
+    # ADF: Δs_t = c + δ·t + γ·s_{t−1} + φ·Δs_{t−1} (log price par; trend term = trend line)
+    dx = np.diff(s)
+    y = dx[1:]
+    _, tstats = _ols_t(y, [np.ones(len(y)), t[2:], s[1:-1], dx[:-1]])
+    adf_p = adf_pvalue(float(tstats[2]), "ct")
+
+    # OU half-life: Δs_t = c + λ·s_{t−1}
+    coef, _ = _ols_t(ds, [np.ones(len(ds)), res[:-1]])
+    lam = float(coef[1])
+    half_life = -math.log(2) / lam if lam < 0 else float("inf")
+
+    return {
+        "z": z, "adf_p": adf_p, "hurst": hurst(s), "half_life": half_life,
+        "beta": float(beta), "mean": float(alpha + beta * (n - 1)),
+    }
+
+
+def _hurst_lags(n):
+    """Lags 2..n/8 (max 100). Chhoti window me n/2 tak ke lag Hurst ko neeche kheench dete hain —
+    120 candles ke random walk par ~0.27 aata, to "< 0.5" gate kuch filter nahi karta.
+    n/8 par random walk ~0.45, OU ~0.3."""
+    return np.arange(2, max(8, min(100, n // 8)))
+
+
+def hurst(series):
+    """std(x[t+lag] − x[t]) ∝ lag^H — log-log slope = H.
+
+    revert.py `sqrt(std)` leta tha, jisse slope H/2 aata hai (0.185 asal me ~0.37). Yahan
+    seedha std, taaki 0.5 = random walk wali README ki baat sach rahe. Trend line ghataane se
+    lagged differences ka std nahi badalta, isliye log price par hi chal jaata hai.
+    """
+    x = np.asarray(series, dtype=float)
+    lags = _hurst_lags(len(x))
+    tau = np.array([np.std(x[lag:] - x[:-lag]) for lag in lags])
+    ok = tau > 0
+    if ok.sum() < 3:
+        return float("nan")
+    return float(np.polyfit(np.log(lags[ok]), np.log(tau[ok]), 1)[0])
+
+
+def _rolling_hurst(x, window):
+    """`hurst()` har window par, cumsum se — har candle par polyfit loop nahi."""
+    n = len(x)
+    out = np.full(n, np.nan)
+    if n < window:
+        return out
+    lags = _hurst_lags(window)
+    logs = np.full((n, len(lags)), np.nan)
+    for j, lag in enumerate(lags):
+        d = x[lag:] - x[:-lag]               # d[m] = x[m+lag] − x[m]
+        m = window - lag                      # window me itne differences
+        cs = np.r_[0.0, np.cumsum(d)]
+        cs2 = np.r_[0.0, np.cumsum(d * d)]
+        # Window ending at k uses d[k−window+1 .. k−lag]
+        end = np.arange(window - 1, n) - lag + 1
+        start = end - m
+        mean = (cs[end] - cs[start]) / m
+        var = np.clip((cs2[end] - cs2[start]) / m - mean * mean, 0, None)
+        with np.errstate(divide="ignore"):
+            logs[window - 1:, j] = np.log(np.sqrt(var))
+    lx = np.log(lags.astype(float))
+    lx = lx - lx.mean()
+    with np.errstate(all="ignore"):
+        ly = logs - logs.mean(axis=1, keepdims=True)
+        out = (ly @ lx) / (lx @ lx)
+    out[~np.isfinite(out)] = np.nan
+    return out
+
+
+def _mean_revert(o, h, l, c, v, times, p):
+    """revert.py ke tests ko trade rule banaya.
+
+    Har band candle par pichhli `lookback` candles ki log price se trend line (OLS) hatao —
+    bacha hua spread. LONG jab z ≤ −entry_z, SHORT jab z ≥ +entry_z, lekin sirf tab jab
+    spread mean-reverting saabit ho: ADF p < adf_p, Hurst < max_hurst, half-life ≤ max_half_life.
+    Target = us candle ki trend line (spread 0), stop = ATR, max_bars ke baad time exit.
+    """
+    n = len(c)
+    win = int(p["lookback"])
+    long, short = _blank(n)
+    tp_long, tp_short = np.full(n, np.nan), np.full(n, np.nan)
+    a = atr(h, l, c, int(p["atr_period"]))
+    if n < win or win < 30:
+        return _pack(long, short, a, p["stop_atr"])
+    lp = np.log(c)
+    hu = _rolling_hurst(lp, win)
+    entry_z = float(p["entry_z"])
+    max_p, max_h, max_hl = float(p["adf_p"]), float(p["max_hurst"]), float(p["max_half_life"])
+    t = np.arange(win, dtype=float)
+    tc = t - t.mean()
+    tvar = float(tc @ tc)
+    raw_l, raw_s = _blank(n)
+    for k in range(win - 1, n):
+        if not (math.isfinite(hu[k]) and hu[k] < max_h):
+            continue
+        s = lp[k - win + 1:k + 1]
+        beta = float(tc @ (s - s.mean())) / tvar
+        res = s - (s.mean() + beta * tc)
+        sd = res.std(ddof=1)
+        if not sd > 0:
+            continue
+        z = res[-1] / sd
+        if abs(z) < entry_z:
+            continue
+        st = spread_stats(s)
+        if not (st["adf_p"] < max_p and st["half_life"] <= max_hl):
+            continue
+        mean_px = math.exp(st["mean"])
+        if z <= -entry_z:
+            raw_l[k] = True
+            tp_long[k] = mean_px
+        else:
+            raw_s[k] = True
+            tp_short[k] = mean_px
+    long, short = _edge(raw_l), _edge(raw_s)
+    return _pack(long, short, a, p["stop_atr"],
+                 tp_long=np.where(long, tp_long, np.nan), tp_short=np.where(short, tp_short, np.nan))
+
+
 def _ema_adx(o, h, l, c, v, times, p):
     fast, slow = ema(c, int(p["fast"])), ema(c, int(p["slow"]))
     e200 = ema(c, 200)
@@ -701,6 +878,13 @@ ENGINES = {
         _base(rsi_period=14, oversold=30, overbought=70, stop_atr=1.5, target_r=2.0,
               trail_atr=0.0, allow_shorts=True, max_bars=0, min_bars=220),
         ("rsi_period", "oversold", "overbought", "stop_atr", "target_r", "allow_shorts")),
+    "mean-revert": _engine(
+        "mean-revert", "Mean Revert", _mean_revert,
+        _base(lookback=120, entry_z=2.0, adf_p=0.05, max_hurst=0.5, max_half_life=30.0,
+              stop_atr=2.0, target_r=0.0, exit_mid=True, trail_atr=0.0, allow_shorts=True,
+              max_bars=60, tp1_r=0.0, tp1_frac=1.0, min_bars=130),
+        ("lookback", "entry_z", "adf_p", "max_hurst", "max_half_life", "stop_atr", "max_bars",
+         "allow_shorts")),
     "donchian-breakout-20k": _engine(
         "donchian-breakout-20k", "Donchian Breakout", _donchian,
         _base(lookback=20, stop_atr=2.0, target_r=0.0, trail_atr=3.0, allow_shorts=False,
@@ -762,6 +946,16 @@ def settings(strategy, source):
         raise ValueError("Stop % must be between 0.01 and 10.")
     if "target_pct" in p and not (0 <= float(p["target_pct"]) <= 20):
         raise ValueError("Target % must be between 0 and 20 (0 = no fixed target).")
+    if "entry_z" in p and not (0.5 <= float(p["entry_z"]) <= 5):
+        raise ValueError("Entry z-score must be between 0.5 and 5.")
+    if "adf_p" in p and not (0 < float(p["adf_p"]) <= 1):
+        raise ValueError("ADF p-value limit must be between 0 and 1 (1 = test off).")
+    if "max_hurst" in p and not (0 < float(p["max_hurst"]) <= 1):
+        raise ValueError("Max Hurst must be between 0 and 1 (1 = test off).")
+    if "max_half_life" in p and not (1 <= float(p["max_half_life"]) <= 1000):
+        raise ValueError("Max half-life must be between 1 and 1000 candles.")
+    if strategy == "mean-revert" and not (30 <= int(p["lookback"]) <= 1000):
+        raise ValueError("Mean Revert lookback must be between 30 and 1000 candles.")
     max_size = 100 * float(p.get("max_leverage") or 3)
     if "size_pct" in p and not (1 <= float(p["size_pct"]) <= max_size):
         raise ValueError(f"Position size must be between 1% and {max_size:g}% of equity.")

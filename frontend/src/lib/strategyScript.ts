@@ -97,6 +97,48 @@ export function buildScriptDoc(def: StrategyDef): StrategyScriptDoc {
 
 /** Hand-tuned docs for featured / complex engines. */
 const SCRIPT_OVERRIDES: Record<string, StrategyScriptDoc> = {
+  "mean-revert": {
+    overview:
+      "Mean Revert turns revert.py into trade rules. revert.py tests whether a spread mean-reverts (hedge ratio, ADF p-value, Hurst exponent, half-life). Here the same tests run on every closed candle, and the strategy trades only when all of them pass.",
+    howItWorks: [
+      {
+        title: "Spread",
+        body: "revert.py's spread is log(PEP) − (β·log(KO) + α). Strateo runs one symbol, so the second stock is replaced by time: an OLS trend line on log(close) over the last 120 candles. The spread is the distance from that line.",
+      },
+      {
+        title: "Tests",
+        body: "ADF p-value below 0.05 (1 lag, constant, MacKinnon p-value), Hurst exponent below 0.5, and OU half-life (−ln 2 / λ) at most 30 candles. revert.py took sqrt(std) in its Hurst, which halves the exponent; here it is plain std, so 0.5 really means a random walk.",
+      },
+      {
+        title: "Entry",
+        body: "LONG when the spread z-score is −2 or lower; SHORT when it is +2 or higher. Only closed candles count, and the fill is the next candle's open.",
+      },
+      {
+        title: "Exit",
+        body: "Target is the trend line at the signal candle (spread back to 0). Stop is 2× ATR. The trade closes after 60 candles if neither is hit. An opposite signal also closes it.",
+      },
+    ],
+    keyFeatures: [
+      "ADF + Hurst + half-life gate",
+      "Spread z-score ±2 entries",
+      "Target = trend line",
+      "ATR stop and time exit",
+      "Server bot · paper and live",
+    ],
+    applications: [
+      "Fee-inclusive test on Bybit 4H, 2021–22 and 2023–26: none of 72 settings made money on both BTC and ETH in both periods. Most lost 5–13% in 2023–26.",
+      "The original idea is a two-stock pair (PEP vs KO). One crypto coin against its own trend line is a weaker form of that test.",
+      "Backtest on your symbol and timeframe before deploying a bot.",
+    ],
+    settings: [
+      { title: "Lookback", body: "Default 120 candles. The window for the trend line and all three tests." },
+      { title: "Entry z-score", body: "Default 2." },
+      { title: "Max ADF p / Max Hurst / Max half-life", body: "Defaults 0.05 / 0.5 / 30 candles. Set p or Hurst to 1 to turn that test off." },
+      { title: "Stop · ATR × / Time exit", body: "Defaults 2× ATR and 60 candles." },
+    ],
+    conclusion:
+      "Same statistics as revert.py, used as a gate for spread-extreme trades. Strateo adds real crypto fees, slippage and funding. On BTC and ETH 4H it has not beaten them, so check the backtest first.",
+  },
   "macd-scalp": {
     overview:
       "MACD Scalp is a port of MACD1.py, a backtesting.py script tested on SPY 1H. It trades every MACD 12/26/9 cross in both directions. The stop and target are tight fixed percents, and an opposite cross reverses the trade.",

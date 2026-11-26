@@ -216,6 +216,51 @@ class NativeSignalTests(unittest.TestCase):
         self.assertNotIn("stop_pct", plain)
         self.assertNotIn("size_pct", plain)
 
+    def test_mean_revert_stats_match_known_cases(self):
+        """revert.py ke tests: random walk vs OU spread."""
+        rng = np.random.default_rng(11)
+        walk = np.cumsum(rng.normal(0, 0.01, 400))
+        ou = np.zeros(400)
+        for i in range(1, 400):
+            ou[i] = ou[i - 1] * 0.8 + rng.normal(0, 0.01)
+        rw, mr = ns.spread_stats(walk), ns.spread_stats(ou + 0.001 * np.arange(400))
+        self.assertLess(mr["adf_p"], 0.05)
+        self.assertGreater(rw["adf_p"], 0.05)
+        self.assertLess(mr["hurst"], 0.5)
+        self.assertAlmostEqual(mr["half_life"], -np.log(2) / np.log(0.8), delta=1.5)
+        self.assertAlmostEqual(mr["beta"], 0.001, delta=2e-4)
+        # MacKinnon 5% critical values: constant −2.86, constant + trend −3.41.
+        self.assertAlmostEqual(ns.adf_pvalue(-2.86, "c"), 0.05, delta=0.002)
+        self.assertAlmostEqual(ns.adf_pvalue(-3.41, "ct"), 0.05, delta=0.002)
+        x = np.log(100 + np.cumsum(rng.normal(0, 1, 300)).clip(-50))
+        self.assertAlmostEqual(ns._rolling_hurst(x, 120)[-1], ns.hurst(x[-120:]), places=6)
+
+    def test_mean_revert_trades_target_the_trend_line(self):
+        times, o, h, l, c, v = _series(600, seed=7)
+        eng = ns.ENGINES["mean-revert"]
+        _, _, p = ns.settings("mean-revert", {"capital": 1000, "adf_p": 1, "max_hurst": 1,
+                                              "max_half_life": 1000, "lookback": 60})
+        self.assertEqual((p["tp1_r"], p["tp1_frac"]), (0.0, 1.0))
+        ind = eng.indicators(o, h, l, c, p)
+        sig = np.flatnonzero(ind["long"] | ind["short"])
+        self.assertGreater(len(sig), 3)
+        for k in sig[:5]:
+            st = ns.spread_stats(np.log(c[k - 59:k + 1]))
+            d = 1 if ind["long"][k] else -1
+            self.assertLessEqual(d * st["z"], -2.0)
+            tp = ind["tp_long" if d > 0 else "tp_short"][k]
+            self.assertAlmostEqual(tp, np.exp(st["mean"]), places=6)
+        res = eng.simulate(times, o, h, l, c, params=p, capital=1000, start_index=130)
+        self.assertGreater(len(res["trades"]), 0)
+        self.assertTrue(all(t["bars_held"] <= p["max_bars"] for t in res["trades"]))
+        # Strict tests can only remove signals.
+        _, _, strict = ns.settings("mean-revert", {"capital": 1000, "lookback": 60})
+        tight = eng.indicators(o, h, l, c, strict)
+        self.assertLessEqual(int(tight["long"].sum() + tight["short"].sum()), len(sig))
+        for bad in ({"entry_z": 0.1}, {"adf_p": 0}, {"lookback": 10}, {"max_half_life": 0}):
+            with self.assertRaises(ValueError):
+                ns.settings("mean-revert", {"capital": 1000, **bad})
+
     def test_donchian_does_not_short(self):
         data = _series(400, seed=1)
         res = ns.ENGINES["donchian-breakout-20k"].simulate(
