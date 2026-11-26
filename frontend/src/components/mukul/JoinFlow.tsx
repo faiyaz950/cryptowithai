@@ -26,11 +26,11 @@ export default function JoinFlow() {
   const onVerify = (event: FormEvent) => {
     event.preventDefault();
     if (userId.trim().length < 3) {
-      setError("Exchange User ID likhein.");
+      setError("Enter exchange User ID.");
       return;
     }
     if (contact.trim().length < 5) {
-      setError("Registered mobile ya email likhein.");
+      setError("Enter registered mobile or email.");
       return;
     }
     claimMembership(userId, contact);
@@ -43,17 +43,17 @@ export default function JoinFlow() {
         <header className="mc-top">
           <Link href="/" className="mc-brand">
             <img className="mc-mark" src="/mukul/icon.png" alt="" width={36} height={36} />
-            <strong>Mukul Crypto Club</strong>
+            <strong>Cryptomantra</strong>
           </Link>
           <Link href="/trade">Trading Desk</Link>
         </header>
 
         <main className="mc-join">
-          <p className="mc-kicker">Mukul Crypto Club · Free access</p>
+          <p className="mc-kicker">Cryptomantra · Free access</p>
           <h1>Create your trading account</h1>
           <p className="mc-lede">
-            Club link se exchange account kholiye — yahi aapki entry key hai. Account ban jaane ke baad wapas
-            aakar User ID verify kijiye, aur saare club tools free unlock ho jayenge.
+            Open an exchange account from the club link — that is your entry key. After signup,
+            return here to verify your User ID and unlock all club tools for free.
           </p>
 
           <ol className="mc-steps">
@@ -67,16 +67,16 @@ export default function JoinFlow() {
             Create your trading account
           </button>
           <p className="mc-fine">
-            Exchange naye tab mein khulega. Signup aur KYC wahin poora kijiye, phir is page par wapas aaiye.
+            Exchange opens in a new tab. Complete signup and KYC there, then return here.
           </p>
           {opened && (
             <p className="mc-fine">
-              Link nahi khula? <a href={link} target="_blank" rel="noreferrer">Exchange kholen</a>
+              Link did not open? <a href={link} target="_blank" rel="noreferrer">Open exchange</a>
             </p>
           )}
 
           <form className="mc-form" onSubmit={onVerify}>
-            <h2>Wapas aakar verify karein</h2>
+            <h2>Return and verify</h2>
             <label>
               Exchange User ID
               <input value={userId} onChange={(e) => setUserId(e.target.value)} autoComplete="off" />
@@ -88,13 +88,13 @@ export default function JoinFlow() {
             {error && <p className="mc-error" role="alert">{error}</p>}
             <button type="submit" className="mc-btn mc-btn-gold mc-btn-lg">Verify and enter club</button>
             <p className="mc-fine">
-              Aapka User ID club ke referral record se match kiya jaata hai. Tab tak status “claim recorded” rehta hai.
+              Your User ID is matched to the club referral record. Until then status stays “claim recorded”.
             </p>
           </form>
 
           {club.membership && (
             <p className="mc-fine">
-              Claim pehle se saved hai. <Link href="/club">Club kholen</Link>
+              Claim already saved. <Link href="/club">Open club</Link>
             </p>
           )}
         </main>

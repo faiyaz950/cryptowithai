@@ -3,23 +3,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, RefreshCw, Sliders, TrendingDown, TrendingUp, Wand2 } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import type { BacktestParams, Candle } from "@/lib/cryptoApi";
-import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, fetchCandles, symbolLabel, syncStamp } from "@/lib/cryptoApi";
+import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS, MAX_CHART_CANDLES, fetchCandles, symbolLabel, syncStamp } from "@/lib/cryptoApi";
 import {
   STRATEGIES,
   STRATEGIES_CHANGED_EVENT,
-  bool,
-  num,
   readActiveStrategies,
-  str,
   strategyHref,
   type SignalTone,
   type StrategyDef,
-  type StrategyField,
   type StrategyValues,
 } from "@/lib/strategies";
-import { optionsKind } from "@/lib/optionsBacktest";
 
 interface Props {
   defaultSymbol: string;
@@ -30,12 +25,21 @@ interface Props {
 
 /** Har strategy ka signal nikalne ke liye itni history kaafi hai. */
 const CARD_BARS = 400;
+/**
+ * Trend Rider jaisi strategies ko replay ke liye lambi history chahiye — kam candles par card
+ * strategy page aur bot se alag trade dikhata. Ek fetch sab cards ke kaam aata hai.
+ */
+const HISTORY_BARS = Math.min(MAX_CHART_CANDLES, Math.max(CARD_BARS, ...STRATEGIES.map((d) => d.minHistoryBars ?? 0)));
 
-/** Card par sirf pehle chaar params — baaki strategy ke apne page par. */
-const CARD_FIELD_LIMIT = 4;
+/** Card kis timeframe par chale — Trend Rider jaisi apne research timeframe par hi, scanner chahe kuch bhi ho. */
+function cardTimeframe(def: StrategyDef, interval: string): string {
+  return def.fixedTimeframe ?? interval;
+}
 
-function cardFields(def: StrategyDef): StrategyField[] {
-  return def.fields.filter((f) => f.onCard).slice(0, CARD_FIELD_LIMIT);
+interface CardSeries {
+  candles: Candle[];
+  /** Pro jaisi strategies ke liye — alt coin par BTC ki candles. */
+  btc: Candle[];
 }
 
 /** Options strategies alag family hain — unka backtest asli option data par alag engine se. */
@@ -67,17 +71,78 @@ function accentVars(accent: string): React.CSSProperties {
   };
 }
 
-export default function StrategyCards({ defaultSymbol, running, onTest }: Props) {
+function fmtPx(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4;
+  return n.toLocaleString("en-US", { maximumFractionDigits: digits });
+}
+
+function fmtWhen(t: number): string {
+  const ms = t > 1e12 ? t : t * 1000;
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+/** Price path of the scan. Not a profit curve. */
+function PricePath({ id, candles, accent, pending }: { id: string; candles: Candle[]; accent: string; pending: boolean }) {
+  const closes = candles.map((c) => c.close).filter((n) => Number.isFinite(n));
+  if (closes.length < 2) {
+    return (
+      <div className="prem-chart prem-chart-empty">
+        {pending ? "Candles aa rahe hain" : "Candles ke bina signal nahi banta"}
+      </div>
+    );
+  }
+  const step = Math.max(1, Math.ceil(closes.length / 72));
+  const sampled = closes.filter((_, i) => i % step === 0 || i === closes.length - 1);
+  const min = Math.min(...sampled);
+  const max = Math.max(...sampled);
+  const w = 320;
+  const h = 108;
+  const pts = sampled.map((v, i) => {
+    const x = (i / (sampled.length - 1)) * w;
+    const y = 10 + (1 - (v - min) / (max - min || 1)) * (h - 20);
+    return [x, y] as const;
+  });
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${w} ${h} L0 ${h} Z`;
+  const last = pts[pts.length - 1];
+  const gid = `prem-fill-${id.replace(/[^a-z0-9-]/gi, "")}`;
+  return (
+    <div className="prem-chart">
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label="Price path">
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={accent} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={accent} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={area} fill={`url(#${gid})`} />
+        <path d={line} fill="none" stroke={accent} strokeWidth="2.2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+        <circle cx={last[0]} cy={last[1]} r="3.2" fill={accent} />
+      </svg>
+      <div className="prem-axis">
+        <span>{fmtWhen(candles[0].time)}</span>
+        <span>{fmtWhen(candles[candles.length - 1].time)}</span>
+      </div>
+    </div>
+  );
+}
+
+export default function StrategyCards({ defaultSymbol }: Props) {
   const [values, setValues] = useState<Record<string, StrategyValues>>(() =>
     Object.fromEntries(STRATEGIES.map((def) => [def.id, { ...def.defaults, symbol: defaultSymbol }])),
   );
   const [active, setActive] = useState<Record<string, boolean>>({});
-  const [openTune, setOpenTune] = useState<Record<string, boolean>>({});
+  const [view, setView] = useState<"all" | "spot" | "options">("all");
+  const [query, setQuery] = useState("");
 
   const router = useRouter();
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [interval, setIntervalValue] = useState("1h");
-  const [candles, setCandles] = useState<Candle[]>([]);
+  const [series, setSeries] = useState<Record<string, CardSeries>>({});
   const [loading, setLoading] = useState(true);
   const [scannedAt, setScannedAt] = useState<string | null>(null);
 
@@ -103,11 +168,28 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
   const loadCandles = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchCandles({ symbol, interval, limit: CARD_BARS });
-      setCandles(res.success ? res.candles ?? [] : []);
+      // Har zaroori timeframe ek hi baar — scanner wala, aur strategies ke apne fixed wale.
+      const tfs = [...new Set(STRATEGIES.map((d) => cardTimeframe(d, interval)))];
+      const isBtc = symbol.toUpperCase().startsWith("BTC");
+      const loaded = await Promise.all(
+        tfs.map(async (tf) => {
+          // Pro alt coin ka signal BTC ke regime se pakka karta hai — BTC bhi saath.
+          const wantBtc = !isBtc && STRATEGIES.some((d) => d.needsBtc && cardTimeframe(d, interval) === tf);
+          const [res, btcRes] = await Promise.all([
+            fetchCandles({ symbol, interval: tf, limit: HISTORY_BARS }),
+            wantBtc ? fetchCandles({ symbol: "BTCUSDT", interval: tf, limit: HISTORY_BARS }) : Promise.resolve(null),
+          ]);
+          const set: CardSeries = {
+            candles: res.success ? res.candles ?? [] : [],
+            btc: btcRes?.success ? btcRes.candles ?? [] : [],
+          };
+          return [tf, set] as const;
+        }),
+      );
+      setSeries(Object.fromEntries(loaded));
       setScannedAt(syncStamp());
     } catch {
-      setCandles([]);
+      setSeries({});
     } finally {
       setLoading(false);
     }
@@ -117,67 +199,72 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
     void loadCandles();
   }, [loadCandles]);
 
+  const candles = series[interval]?.candles ?? [];
+
   // Signals sab ek pass mein — strategy page wahi analyze() chalata hai.
   const signals = useMemo(() => {
     if (!candles.length) return {} as Record<string, ReturnType<StrategyDef["analyze"]>["signal"]>;
     return Object.fromEntries(
       STRATEGIES.map((def) => {
-        const merged = { ...values[def.id], symbol, timeframe: interval };
-        return [def.id, def.analyze(candles, merged).signal];
+        const tf = cardTimeframe(def, interval);
+        const set = series[tf];
+        const merged = { ...values[def.id], symbol, timeframe: tf };
+        return [def.id, def.analyze(set?.candles ?? [], merged, { btc: set?.btc }).signal];
       }),
     );
-  }, [candles, values, symbol, interval]);
+  }, [candles.length, series, values, symbol, interval]);
 
-  const activeCount = STRATEGIES.filter((def) => active[def.id]).length;
-  const buyCount = STRATEGIES.filter((def) => signals[def.id]?.tone === "buy").length;
-  const sellCount = STRATEGIES.filter((def) => signals[def.id]?.tone === "sell").length;
-
-  const setField = (id: string, key: string, value: StrategyValues[string]) => {
-    setValues((prev) => ({ ...prev, [id]: { ...prev[id], [key]: value } }));
-  };
-
-  const groups = [
-    { title: "Futures & spot", hint: "Perp / coin price — inka backtest chalta hai · pro setups featured", defs: STRATEGIES.filter((d) => !isOptions(d)) },
-    { title: "Options", hint: "OTM, debit, condor — live signal, strike / legs, aur asli option data par backtest", defs: STRATEGIES.filter(isOptions) },
-  ];
+  const ranked = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const toneRank = (id: string) => {
+      const signal = signals[id];
+      if (signal?.tone === "buy" || signal?.entry) return 0;
+      if (signal?.tone === "sell") return 1;
+      return 2;
+    };
+    return STRATEGIES.filter((def) => {
+      if (view === "options") return isOptions(def);
+      if (view === "spot") return !isOptions(def);
+      return true;
+    })
+      .filter((def) => !q || `${def.name} ${def.category} ${def.blurb}`.toLowerCase().includes(q))
+      .slice()
+      .sort((a, b) => {
+        const byTone = toneRank(a.id) - toneRank(b.id);
+        if (byTone) return byTone;
+        if (!!a.featured !== !!b.featured) return a.featured ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+  }, [query, signals, view]);
 
   return (
-    <div className="space-y-5">
-      <div className="trade-promo">
-        <span className="trade-promo-mark" aria-hidden>
-          <Wand2 className="w-[18px] h-[18px]" />
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13.5px] font-bold tracking-tight">Apni custom strategy banana chahte ho?</div>
-          <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-            No-code Strategy Builder — indicators, risk, aur deploy ek jagah
-          </p>
+    <div className="strat-rank">
+      <div className="trade-page-head">
+        <div className="trade-page-copy">
+          <h2 className="trade-page-title">Strategies</h2>
+          <p className="trade-page-line">Ready strategies. Card kholo, backtest karo, phir paper par chalao.</p>
         </div>
-        <Link href="/trade?tab=builder" className="trade-btn trade-promo-btn">
-          Open builder
-          <ArrowRight className="w-4 h-4" />
-        </Link>
+        <Link href="/trade?tab=builder" className="prem-link">Build your own</Link>
       </div>
 
-      <div className="trade-page-head">
-        <div>
-          <div className="trade-page-kicker">Ready-made</div>
-          <h2 className="trade-page-title">Strategy catalogue</h2>
-          <p className="trade-page-sub">
-            Har strategy abhi kya keh rahi hai — live signal, tune, aur backtest.
-          </p>
-        </div>
-        <div className="trade-page-actions">
-          <span className="trade-signal-pill" style={{ color: "var(--green)" }}>
-            <TrendingUp className="w-3.5 h-3.5" />{buyCount} buy
-          </span>
-          <span className="trade-signal-pill" style={{ color: "var(--red)" }}>
-            <TrendingDown className="w-3.5 h-3.5" />{sellCount} sell
-          </span>
-          <span className={`trade-badge ${activeCount > 0 ? "trade-badge-green" : "trade-badge-neutral"}`}>
-            {activeCount} active
-          </span>
-        </div>
+      <div className="strat-views" role="tablist" aria-label="Strategy views">
+        {([
+          ["all", "All"],
+          ["spot", "Futures & spot"],
+          ["options", "Options"],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={view === id}
+            className="strat-view"
+            data-active={view === id}
+            onClick={() => setView(id)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="trade-panel">
@@ -188,6 +275,16 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
           <select value={interval} onChange={(e) => setIntervalValue(e.target.value)} aria-label="Timeframe" className="trade-select trade-w-history trade-size-sm">
             {CRYPTO_INTERVALS.map((iv) => <option key={iv.value} value={iv.value}>{iv.label}</option>)}
           </select>
+          <label className="strat-search">
+            <Search className="w-3.5 h-3.5" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search strategies"
+              aria-label="Search strategies"
+              className="trade-input trade-size-sm"
+            />
+          </label>
           <div className="flex-1 min-w-[8px]" />
           {scannedAt && (
             <span className="trade-toolbar-meta">
@@ -201,229 +298,100 @@ export default function StrategyCards({ defaultSymbol, running, onTest }: Props)
         </div>
       </div>
 
-      {/* ── Grouped cards ─────────────────────────────────── */}
-      {groups.map((group) => (
-        <section key={group.title}>
-          <div className="strat-section">
-            <h3 className="strat-section-title">{group.title}</h3>
-            <span className="trade-count-chip">{group.defs.length}</span>
-            <span className="strat-section-rule" aria-hidden />
-            <span className="strat-section-hint hidden lg:inline">{group.hint}</span>
-          </div>
-
-          <div className="strat-grid">
-            {group.defs.map((def) => (
-              <StrategyCard
-                key={def.id}
-                def={def}
-                values={values[def.id]}
-                signal={signals[def.id]}
-                loading={loading && !candles.length}
-                active={!!active[def.id]}
-                running={running}
-                tuneOpen={!!openTune[def.id]}
-                onToggleTune={() => setOpenTune((p) => ({ ...p, [def.id]: !p[def.id] }))}
-                onField={(key, value) => setField(def.id, key, value)}
-                onTest={() => {
-                  const tuned = { ...values[def.id], symbol, timeframe: interval };
-                  // Options ka backtest signal replay + legs dikhata hai — wo strategy page par hi chalta hai.
-                  if (optionsKind(def)) {
-                    const href = strategyHref(def, tuned);
-                    router.push(`${href}${href.includes("?") ? "&" : "?"}backtest=1`);
-                    return;
-                  }
-                  onTest(def.toBacktest(tuned));
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-/* ── Card ──────────────────────────────────────────────── */
-
-function StrategyCard({
-  def,
-  values,
-  signal,
-  loading,
-  active,
-  running,
-  tuneOpen,
-  onToggleTune,
-  onField,
-  onTest,
-}: {
-  def: StrategyDef;
-  values: StrategyValues;
-  signal?: ReturnType<StrategyDef["analyze"]>["signal"];
-  loading: boolean;
-  active: boolean;
-  running: boolean;
-  tuneOpen: boolean;
-  onToggleTune: () => void;
-  onField: (key: string, value: StrategyValues[string]) => void;
-  onTest: () => void;
-}) {
-  const router = useRouter();
-  const Icon = def.icon;
-  const href = strategyHref(def, values);
-  const tone = signal?.tone ?? "neutral";
-  const { label: category, pro } = splitCategory(def.category);
-
-  // Card ke khaali hisse par click = strategy page. Controls apna kaam karte rahein.
-  const openFromCard = (event: React.MouseEvent<HTMLElement>) => {
-    if ((event.target as HTMLElement).closest("input, select, button, a, label")) return;
-    router.push(href);
-  };
-
-  return (
-    <article
-      className="strat-card"
-      data-active={active}
-      data-tone={tone}
-      style={accentVars(def.accent)}
-      onClick={openFromCard}
-    >
-      <div className="strat-head">
-        <span className="strat-icon" aria-hidden>
-          <Icon className="w-[17px] h-[17px]" />
-        </span>
-
-        <div className="min-w-0 flex-1">
-          <h4>
-            <Link href={href} className="strat-name">{def.name}</Link>
-          </h4>
-          <div className="strat-meta">
-            <span className="strat-cat">{category}</span>
-            {pro && <span className="strat-tag">Pro</span>}
-            {active && (
-              <span className="trade-badge trade-badge-green"><span className="trade-dot" />Live</span>
-            )}
-          </div>
-        </div>
-
-        {!loading && signal && (
-          <span className="strat-verdict">{toneLabel(tone)}</span>
-        )}
-      </div>
-
-      {/* Live signal — card ka asli content */}
-      <div className="strat-signal">
-        {loading ? (
-          <div className="shimmer rounded h-[13px] w-3/4 mt-1" />
-        ) : signal ? (
-          <p className="strat-headline">{signal.headline}</p>
-        ) : (
-          <p className="strat-headline" style={{ color: "var(--text-muted)" }}>
-            Signal ke liye data nahi mila
-          </p>
-        )}
-      </div>
-
-      {!loading && signal && signal.readouts.length > 0 && (
-        <div className="strat-reads">
-          {signal.readouts.slice(0, 3).map((r) => (
-            <div key={r.label} className="strat-read">
-              <div className="strat-read-label" title={r.label}>{r.label}</div>
-              <div className="strat-read-value" style={{ color: r.color }} title={r.value}>
-                {r.value}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Params — progressive disclosure ke peeche */}
-      {tuneOpen && (
-        <div className="strat-params">
-          {cardFields(def).map((field) => (
-            <CardField key={field.key} def={def} field={field} values={values} onChange={(v) => onField(field.key, v)} />
-          ))}
-        </div>
-      )}
-
-      <div className="flex-1" />
-
-      <div className="strat-actions">
-        <Link href={href} className="trade-btn trade-btn-quiet strat-open flex-1">
-          Open
-          <ArrowRight className="w-3.5 h-3.5" />
-        </Link>
-        <button
-          type="button"
-          onClick={onToggleTune}
-          aria-expanded={tuneOpen}
-          aria-label={`${def.name} ke parameters ${tuneOpen ? "chhupao" : "kholo"}`}
-          className="trade-btn trade-btn-ghost trade-icon-only"
-          data-on={tuneOpen}
-        >
-          <Sliders className="w-3.5 h-3.5" />
-        </button>
-        {def.backtestable !== false && (
-          <button type="button" disabled={running} className="trade-btn trade-btn-ghost" onClick={onTest}>
-            {running ? "…" : "Backtest"}
-          </button>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function CardField({
-  def,
-  field,
-  values,
-  onChange,
-}: {
-  def: StrategyDef;
-  field: StrategyField;
-  values: StrategyValues;
-  onChange: (value: StrategyValues[string]) => void;
-}) {
-  const id = `card-${def.id}-${field.key}`;
-
-  if (field.kind === "toggle") {
-    return (
-      <label className="trade-checkrow" htmlFor={id}>
-        <input id={id} type="checkbox" className="trade-check" checked={bool(values, field.key)} onChange={(e) => onChange(e.target.checked)} />
-        {field.label}
-      </label>
-    );
-  }
-
-  return (
-    <div>
-      <label className="trade-label" htmlFor={id}>{field.label}</label>
-      {field.kind === "time" ? (
-        <input id={id} type="time" className="trade-input" value={str(values, field.key)} onChange={(e) => onChange(e.target.value)} />
-      ) : field.kind === "select" ? (
-        <select id={id} className="trade-select" value={str(values, field.key)} onChange={(e) => onChange(e.target.value)}>
-          {(field.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      ) : field.kind === "symbol" ? (
-        <select id={id} className="trade-select" value={str(values, field.key)} onChange={(e) => onChange(e.target.value)}>
-          {CRYPTO_SYMBOLS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-      ) : field.kind === "interval" ? (
-        <select id={id} className="trade-select" value={str(values, field.key)} onChange={(e) => onChange(e.target.value)}>
-          {CRYPTO_INTERVALS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
+      {ranked.length === 0 ? (
+        <p className="strat-empty prem-empty">Is view mein koi strategy nahi.</p>
       ) : (
-        <input
-          id={id}
-          type="number"
-          className="trade-input"
-          min={field.min}
-          max={field.max}
-          step={field.step}
-          value={num(values, field.key)}
-          onChange={(e) => onChange(Number(e.target.value))}
-        />
+        <div className="prem-grid">
+          {ranked.map((def) => {
+            const tf = cardTimeframe(def, interval);
+            const tuned = { ...values[def.id], symbol, timeframe: tf };
+            const href = strategyHref(def, tuned);
+            const signal = signals[def.id];
+            const path = series[tf]?.candles ?? [];
+            const noData = !loading && path.length < 2;
+            const tone = noData ? "neutral" : signal?.tone ?? "neutral";
+            const status = active[def.id] ? "Live" : loading && !signal ? "…" : noData ? "Data nahi mila" : toneLabel(tone);
+            const { label: category, pro } = splitCategory(def.category);
+            const first = path[0]?.close;
+            const last = path[path.length - 1]?.close;
+            const change = first && last ? ((last - first) / first) * 100 : null;
+            const hi = path.length ? Math.max(...path.map((c) => c.high)) : null;
+            const lo = path.length ? Math.min(...path.map((c) => c.low)) : null;
+            const tfLabel = CRYPTO_INTERVALS.find((iv) => iv.value === tf)?.label ?? tf;
+            const Icon = def.icon;
+            return (
+              <article
+                key={def.id}
+                className="prem-card"
+                style={accentVars(def.accent)}
+                data-tone={tone}
+                data-featured={def.featured ? "true" : "false"}
+                data-live={active[def.id] ? "true" : "false"}
+                onClick={() => router.push(href)}
+              >
+                <div className="prem-head">
+                  <span className="prem-mark" aria-hidden>
+                    <Icon className="w-3.5 h-3.5" />
+                  </span>
+                  <div className="prem-title">
+                    <h3>
+                      <Link href={href} className="strat-name" onClick={(e) => e.stopPropagation()}>{def.name}</Link>
+                    </h3>
+                    <p className="prem-kicker">
+                      {category}
+                      <span>·</span>
+                      {symbolLabel(symbol)}
+                      <span>·</span>
+                      {tfLabel}
+                      {pro && <><span>·</span>Pro</>}
+                    </p>
+                  </div>
+                  <span className="prem-status">
+                    <i />
+                    {status}
+                  </span>
+                </div>
+                <p className="prem-blurb">{noData ? def.blurb : signal?.headline || def.blurb}</p>
+                <PricePath id={def.id} candles={path} accent={def.accent} pending={loading} />
+                {change != null && last != null && hi != null && lo != null && (
+                  <div className="prem-stats">
+                    <div className="prem-stat" data-up={change >= 0}>
+                      <b>{`${change >= 0 ? "+" : ""}${change.toFixed(1)}%`}</b>
+                      <span>Window</span>
+                    </div>
+                    <div className="prem-stat">
+                      <b>{fmtPx(last)}</b>
+                      <span>Last</span>
+                    </div>
+                    <div className="prem-stat">
+                      <b>{fmtPx(hi)}</b>
+                      <span>High</span>
+                    </div>
+                    <div className="prem-stat">
+                      <b>{fmtPx(lo)}</b>
+                      <span>Low</span>
+                    </div>
+                  </div>
+                )}
+                <div className="prem-foot">
+                  <p className="prem-hint">Pehle details, phir paper.</p>
+                  <Link href={href} className="prem-link" onClick={(e) => e.stopPropagation()}>
+                    View details
+                  </Link>
+                </div>
+              </article>
+            );
+          })}
+        </div>
       )}
+
+      <p className="strat-note">
+        {candles.length
+          ? `Buy pehle, phir sell, phir wait. Rank is ${symbolLabel(symbol)} ki is scan par.`
+          : loading
+            ? "Candles aa rahe hain. Signal uske baad aata hai."
+            : "Candles ke bina signal nahi banta. Backend chalao, phir Refresh."}
+      </p>
     </div>
   );
 }

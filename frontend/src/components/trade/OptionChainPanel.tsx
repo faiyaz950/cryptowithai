@@ -79,10 +79,10 @@ export default function OptionChainPanel({ def, values, tone }: Props) {
     setError(null);
     try {
       const res = await fetchOptionChain({ underlying, optionType, minDelta, maxDelta, maxSpreadPct: maxSpread });
-      if (!res.success) throw new Error(res.error || "Option chain load nahi hui");
+      if (!res.success) throw new Error(res.error || "Could not load option chain");
       setChain(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Option chain load nahi hui");
+      setError(err instanceof Error ? err.message : "Could not load option chain");
       setChain(null);
     } finally {
       setLoading(false);

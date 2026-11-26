@@ -1,0 +1,487 @@
+/* Strateo demo wallets — same tokens as strateo.css */
+
+.dw-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, color-mix(in srgb, var(--st-acc) 12%, transparent), transparent 55%),
+    var(--st-bg, var(--tr-bg, #0b0d10));
+  color: var(--st-text, var(--text-primary));
+  padding: 16px 18px 28px;
+  gap: 16px;
+}
+
+.dw-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dw-top-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dw-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--st-acc-soft, color-mix(in srgb, var(--st-acc, #f0a500) 18%, transparent));
+  color: var(--st-acc, #f0a500);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.dw-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.dw-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--st-text-3, var(--text-muted));
+  max-width: 42rem;
+  line-height: 1.4;
+}
+
+.dw-top-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dw-empty {
+  margin: 24px auto;
+  max-width: 420px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 20px;
+  border: 1px solid var(--st-line, var(--tr-line-soft));
+  border-radius: 14px;
+  background: var(--st-panel, color-mix(in srgb, #fff 3%, transparent));
+}
+
+.dw-empty b {
+  font-size: 15px;
+}
+
+.dw-empty span,
+.dw-empty .dw-hint {
+  font-size: 13px;
+  color: var(--st-text-3, var(--text-muted));
+  line-height: 1.45;
+}
+
+.dw-empty[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--st-down, #ff5252) 40%, transparent);
+}
+
+.dw-empty-inline {
+  margin: 0;
+  height: 100%;
+  justify-content: center;
+}
+
+.dw-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  color: #fbbf24;
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, transparent);
+}
+
+.dw-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .dw-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .dw-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.dw-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 14px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--st-line, var(--tr-line-soft));
+  background: var(--st-panel, color-mix(in srgb, #fff 3.5%, transparent));
+}
+
+.dw-stat > span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--st-text-3, var(--text-muted));
+}
+
+.dw-stat > b {
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.dw-stat > small {
+  font-size: 11.5px;
+  color: var(--st-text-3, var(--text-muted));
+  line-height: 1.35;
+}
+
+.dw-stat b[data-pnl="up"],
+.dw-now[data-pnl="up"],
+.dw-detail-grid b[data-pnl="up"],
+.dw-unreal[data-pnl="up"] {
+  color: var(--st-up, #00e676);
+}
+
+.dw-stat b[data-pnl="down"],
+.dw-now[data-pnl="down"],
+.dw-detail-grid b[data-pnl="down"],
+.dw-unreal[data-pnl="down"] {
+  color: var(--st-down, #ff5252);
+}
+
+.dw-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.05fr) minmax(300px, 1fr);
+  gap: 14px;
+  align-items: start;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .dw-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dw-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.dw-section-head h2,
+.dw-detail-head h2,
+.dw-trade h3,
+.dw-events h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.dw-section-head span,
+.dw-events header span {
+  font-size: 11.5px;
+  color: var(--st-text-3, var(--text-muted));
+}
+
+.dw-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dw-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--st-line, var(--tr-line-soft));
+  background: var(--st-panel, color-mix(in srgb, #fff 3%, transparent));
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dw-card:hover {
+  background: var(--st-panel-2, color-mix(in srgb, #fff 5%, transparent));
+}
+
+.dw-card[data-active="true"] {
+  border-color: color-mix(in srgb, var(--st-acc, #f0a500) 55%, transparent);
+  background: color-mix(in srgb, var(--st-acc, #f0a500) 8%, transparent);
+}
+
+.dw-card[data-status="stopped"] {
+  opacity: 0.72;
+}
+
+.dw-card-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.dw-card-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dw-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.dw-card-meta {
+  font-size: 11.5px;
+  color: var(--st-text-3, var(--text-muted));
+}
+
+.dw-card-nums {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-alloc {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dw-now {
+  font-size: 11.5px;
+}
+
+.dw-unreal {
+  font-size: 11px;
+  color: var(--st-text-3, var(--text-muted));
+}
+
+.dw-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid var(--st-line-2, var(--tr-line-soft));
+  color: var(--st-text-3, var(--text-muted));
+}
+
+.dw-pill[data-tone="up"] {
+  color: var(--st-up, #00e676);
+  border-color: color-mix(in srgb, var(--st-up, #00e676) 35%, transparent);
+  background: color-mix(in srgb, var(--st-up, #00e676) 10%, transparent);
+}
+
+.dw-pill[data-tone="down"] {
+  color: var(--st-down, #ff5252);
+  border-color: color-mix(in srgb, var(--st-down, #ff5252) 35%, transparent);
+  background: color-mix(in srgb, var(--st-down, #ff5252) 10%, transparent);
+}
+
+.dw-detail {
+  border: 1px solid var(--st-line, var(--tr-line-soft));
+  border-radius: 14px;
+  background: var(--st-panel, color-mix(in srgb, #fff 3%, transparent));
+  min-height: 320px;
+  padding: 16px;
+}
+
+.dw-detail-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dw-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.dw-detail-head p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--st-text-3, var(--text-muted));
+}
+
+.dw-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dw-detail-grid > div {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--st-line, var(--tr-line-soft));
+  background: color-mix(in srgb, #000 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dw-detail-grid span {
+  font-size: 11px;
+  color: var(--st-text-3, var(--text-muted));
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+
+.dw-detail-grid b {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-trade,
+.dw-events {
+  border-top: 1px solid var(--st-line, var(--tr-line-soft));
+  padding-top: 14px;
+}
+
+.dw-trade header,
+.dw-events header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dw-events header {
+  justify-content: space-between;
+}
+
+.dw-trade-status {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dw-trade[data-open="true"] .dw-trade-status {
+  color: var(--st-acc, #f0a500);
+}
+
+.dw-kv {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .dw-kv,
+  .dw-detail-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.dw-kv > div {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #fff 3%, transparent);
+}
+
+.dw-kv dt {
+  font-size: 10.5px;
+  color: var(--st-text-3, var(--text-muted));
+  margin: 0 0 2px;
+}
+
+.dw-kv dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.dw-muted {
+  margin: 0;
+  font-size: 13px;
+  color: var(--st-text-3, var(--text-muted));
+}
+
+.dw-events ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.dw-events li {
+  display: grid;
+  grid-template-columns: 128px 1fr;
+  gap: 10px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #fff 2.5%, transparent);
+}
+
+.dw-events time {
+  color: var(--st-text-3, var(--text-muted));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dw-footnote {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--st-text-3, var(--text-muted));
+  line-height: 1.45;
+}
+
+.dw-footnote a {
+  color: var(--st-acc, #f0a500);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

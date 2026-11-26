@@ -89,7 +89,7 @@ function parseHoldingsFromLooseText(text: string): ImportResult {
   }
 
   if (!holdings.length) {
-    errors.push("Structured holdings nahi mili — raw document AI ko bheja jayega.");
+    errors.push("No structured holdings found — the raw document will be sent to AI.");
   }
 
   return { holdings, skipped, errors };
@@ -189,7 +189,7 @@ export async function parsePortfolioFile(
       holdings: [],
       skipped: 0,
       errors: [
-        e instanceof Error ? e.message : "File read nahi ho payi",
+        e instanceof Error ? e.message : "Could not read the file",
       ],
       format,
       fileName: file.name,
@@ -201,7 +201,7 @@ export async function parsePortfolioFile(
     return {
       holdings: [],
       skipped: 0,
-      errors: ["File khali hai ya text extract nahi hua"],
+      errors: ["File is empty or text could not be extracted"],
       format,
       fileName: file.name,
       rawText: "",

@@ -27,6 +27,8 @@ import {
   type ExchangePosition,
 } from "@/lib/accountApi";
 import { symbolLabel } from "@/lib/cryptoApi";
+import PaperDesk from "@/components/trade/PaperDesk";
+import { useTradingMode } from "@/lib/tradingMode";
 
 type DeskTab = "open" | "history" | "positions";
 
@@ -45,6 +47,18 @@ interface Props {
 }
 
 export default function TradesDesk({ onPickSymbol }: Props) {
+  const [mode] = useTradingMode();
+  return (
+    <div className="space-y-3">
+      <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+        {mode === "paper" ? "Paper book — virtual fills, live exchange orders yahan nahi aate." : "Live book — exchange orders aur positions. Paper fills alag hain."}
+      </p>
+      {mode === "paper" ? <PaperDesk onPickSymbol={onPickSymbol} /> : <ExchangeTrades onPickSymbol={onPickSymbol} />}
+    </div>
+  );
+}
+
+function ExchangeTrades({ onPickSymbol }: Props) {
   const { token, handleExpiredSession } = useAuth();
   const [tab, setTab] = useState<DeskTab>("open");
   const [loading, setLoading] = useState(false);
@@ -137,7 +151,7 @@ export default function TradesDesk({ onPickSymbol }: Props) {
         handleExpiredSession();
         return;
       }
-      setError(err instanceof Error ? err.message : "Trades load nahi hui");
+      setError(err instanceof Error ? err.message : "Could not load trades");
     } finally {
       setLoading(false);
     }
@@ -316,7 +330,7 @@ export default function TradesDesk({ onPickSymbol }: Props) {
                   <span className="trade-empty-icon">
                     <Inbox className="w-4 h-4" />
                   </span>
-                  Abhi koi open order nahi
+                  No open orders
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -363,7 +377,7 @@ export default function TradesDesk({ onPickSymbol }: Props) {
                 <span className="trade-empty-icon">
                   <Inbox className="w-4 h-4" />
                 </span>
-                Abhi koi BYOK order history nahi
+                No order history
               </div>
             ) : (
               <div className="space-y-2">
@@ -400,7 +414,7 @@ export default function TradesDesk({ onPickSymbol }: Props) {
                 <span className="trade-empty-icon">
                   <Wallet className="w-4 h-4" />
                 </span>
-                Koi open position nahi hai
+                No open positions
               </div>
             ) : (
               <div className="space-y-2">

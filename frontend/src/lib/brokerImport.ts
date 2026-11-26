@@ -312,7 +312,7 @@ export function parseOrderHistoryCsv(text: string): ImportResult {
   }
 
   if (!holdings.length) {
-    errors.push("Order history se koi open holding nahi mili (sab sell ho chuka ya data khali hai).");
+    errors.push("No open holdings found in order history (all sold or data empty).");
   }
 
   return { holdings, skipped, errors };
@@ -451,7 +451,7 @@ export function parseHoldingsCsv(text: string): ImportResult {
   const holdings = dedupeHoldings(rawHoldings);
 
   if (!holdings.length) {
-    errors.push("Koi valid holding nahi mili. CSV format check karein.");
+    errors.push("No valid holdings found. Check the CSV format.");
   }
 
   return { holdings, skipped, errors };

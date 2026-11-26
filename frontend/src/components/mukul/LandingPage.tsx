@@ -1,263 +1,141 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent, RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, RefObject } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import {
-  ArrowRight,
-  Award,
-  BookOpen,
-  Briefcase,
-  FlaskConical,
-  FolderKanban,
-  Layers,
-  LineChart,
-  ListOrdered,
-  Lock,
-  MapPin,
-  Phone,
-  Plug,
-  Quote,
-  Radar,
-  ShieldCheck,
-  Sigma,
-  Sparkles,
-  Star,
-  UserRound,
-  Users,
-  Wand2,
-} from "lucide-react";
+import { ArrowRight, ArrowUpRight, KeyRound, Lock, Play, ShieldCheck, Trash2 } from "lucide-react";
 import { captureVisit } from "@/lib/mukul/store";
-import { MUKUL_VIDEOS_URL } from "@/lib/mukul/videos";
-import VideoGrid from "@/components/mukul/VideoGrid";
+import { DESK_STAGES, type DeskFeature, type DeskStage } from "@/lib/deskFlow";
+import type { MarketTicker } from "@/lib/cryptoApi";
+import { fmtPct, heatRgb, rgbCss, squarify } from "@/lib/marketOverview";
+import LandingVideos from "@/components/mukul/LandingVideos";
+import "./landing.css";
 
-const STATS = [
-  ["3.45M+", "Community members"],
-  ["50K+", "Students padhaye"],
-  ["23+", "Saal market experience"],
-  ["1.8M+", "YouTube subscribers"],
-] as const;
+/* ═══════════════════════ Content ═══════════════════════ */
 
-/* Ticker sirf achievements dikhata hai — koi market data nahi, isliye
-   yahan kuch fetch karne ki zaroorat nahi. */
-const TICKER = [
-  "Guinness World Record · 2022",
-  "Bestselling Author",
-  "23+ saal market experience",
-  "50,000+ students",
-  "TEDx Speaker",
-  "Doctorate in Finance",
-  "3.45M+ community",
-  "100+ workshops",
-  "National Achievers Award · 2019",
-  "IFA Excellence Award · 2021",
-] as const;
+type FeatureCopy = { title: string; desc: string; points?: string[] };
 
-const TRUST = [
-  { icon: Lock, text: "API keys encrypted" },
-  { icon: ShieldCheck, text: "Withdrawal permission kabhi nahi" },
-  { icon: UserRound, text: "Order hamesha aap khud lagate hain" },
-] as const;
-
-const HERO_CHIPS = [
-  { label: "Guinness World Record", value: "2022" },
-  { label: "YouTube family", value: "1.8M+" },
-  { label: "Students", value: "50K+" },
-] as const;
-
-const DESK = [
-  {
-    icon: Sparkles,
-    title: "AI Assistant",
-    href: "/trade?tab=ai",
-    desc: "Live market data par chalne wala Mukul AI — Hindi, Hinglish ya English mein poochhiye.",
-    points: ["Coin ka trend aur setup samjhaaye", "Portfolio aur risk par sawaal", "Chart aur indicators ki explanation"],
+/**
+ * Landing ki copy desk ke apne feature ids par chalti hai (`DESK_STAGES`),
+ * isliye desk mein naya tool aaye to yahan bhi card ban jaata hai — copy na
+ * ho to desk ka apna blurb dikh jaata hai.
+ */
+const COPY: Record<string, FeatureCopy> = {
+  overview: {
+    title: "Market Overview",
+    desc: "Market mood, top movers, a live heatmap and sector moves on one screen.",
+    points: ["Fear & Greed, BTC dominance", "Heatmap, sectors, bubble map"],
   },
-  {
-    icon: LineChart,
-    title: "Markets — Live Chart",
-    href: "/trade?tab=markets",
-    desc: "Professional candlestick chart, live exchange data ke saath. Desk ka main workspace.",
-    points: [
-      "EMA 9 / 21 / 50, RSI, MACD, VWAP, ATR, ADX",
-      "Jis exchange se connected hain, usi ka chart",
-      "1m se 1D tak timeframes, zoom aur scroll",
-    ],
-  },
-  {
-    icon: Radar,
-    title: "Screeners",
-    href: "/trade?tab=screener",
-    desc: "Saare coins ek saath scan — kaun bullish, kaun bearish, ek nazar mein.",
-    points: ["Signal strength aur strategy agreement", "24h change ke hisaab se sort", "Coin par click karke seedha chart"],
-  },
-  {
-    icon: Star,
-    title: "Watchlist",
-    href: "/trade?tab=watchlist",
-    desc: "Apne pasand ke coins ki list — live price aur change hamesha saamne.",
-    points: ["Coins add / remove", "Live price update", "Ek click mein chart kholen"],
-  },
-  {
-    icon: ListOrdered,
-    title: "Trades",
-    href: "/trade?tab=trades",
-    desc: "Apne exchange account ke orders, open positions aur trade history ek jagah.",
-    points: ["Open positions aur P&L", "Order history", "Judi hui exchange ka live data"],
-  },
-  {
-    icon: ShieldCheck,
-    title: "Risk Desk",
-    href: "/trade/risk",
-    desc: "Trade lene se pehle risk calculate kijiye — Mukul ka sabse bada lesson: pehle risk, phir reward.",
-    points: ["Position Planner — size, stop aur liquidation", "Risk Book — saare open plans ka heat", "Ruin Simulator — sizing ka long-term asar"],
-  },
-  {
-    icon: Briefcase,
-    title: "Portfolio",
-    href: "/trade?tab=portfolio",
-    desc: "Apni crypto holdings ek jagah — exchange statement upload kijiye, coin-wise P&L dekhiye.",
-    points: ["Exchange statement CSV / Excel auto-parse", "Coin-wise allocation charts aur P&L", "AI se diversification aur risk analysis"],
-  },
-  {
-    icon: Plug,
-    title: "Exchanges",
-    href: "/trade?tab=exchanges",
-    desc: "Delta, Bybit ya CoinDCX ki API key jodiye — orders aur positions aapke apne account se.",
-    points: [
-      "Multi-exchange — Delta, Bybit, CoinDCX",
-      "API key encrypted; withdrawal permission kabhi nahi",
-      "Disconnect karte hi key permanently delete",
-    ],
-  },
-  {
-    icon: UserRound,
-    title: "Profile & P&L",
-    href: "/profile",
-    desc: "Aapka account, judi hui exchanges aur P&L analytics — sab ek screen par.",
-    points: ["Day-wise P&L chart aur monthly heatmap", "Exchange-wise breakdown", "Balance aur account details"],
-  },
-  {
-    icon: FlaskConical,
-    title: "Backtest",
-    href: "/trade?tab=backtest",
-    desc: "Kisi bhi strategy ko purane data par chala kar dekhiye — paisa lagane se pehle proof.",
-    points: ["Win rate, profit factor, max drawdown", "Har trade ki list aur equity curve", "Options strategies bhi real Delta option data par"],
-  },
-  {
-    icon: Layers,
+  strategies: {
     title: "Strategy Catalogue",
-    href: "/trade?tab=strategies",
-    desc: "Ready-made strategies ka collection — futures, spot aur options, har ek ke rules ke saath.",
-    points: ["Trend, breakout, momentum, mean reversion", "Har strategy ka live verdict", "Seedha backtest ya run kijiye"],
+    desc: "Ready-made strategies with clear rules. Backtest one, then run it on paper.",
+    points: ["Trend, breakout, momentum", "Futures, spot and options"],
   },
-  {
-    icon: FolderKanban,
-    title: "My Strategies",
-    href: "/trade?tab=mine",
-    desc: "Aapki banayi strategies ka dashboard — kaunsi chal rahi hai, kaunsi paused.",
-    points: ["Closed P&L 30 din aur closed trades", "Drafts, paused aur archived", "Edit karke dobara chalaiye"],
-  },
-  {
-    icon: Wand2,
+  builder: {
     title: "Strategy Builder",
-    href: "/trade?tab=builder",
-    desc: "Bina coding apni strategy banaiye — indicator chuniye, entry / exit rules set kijiye.",
-    points: ["Indicator based rules", "Stop-loss, target aur position size", "Futures aur options dono ke liye"],
+    desc: "Turn your own idea into entry and exit rules — no code needed.",
+    points: ["Indicator-based conditions", "Stop-loss, target, position size"],
   },
-  {
-    icon: Sigma,
-    title: "Options",
-    href: "/trade?tab=options",
-    desc: "Crypto options ka poora toolkit — option chain se lekar multi-leg strategies tak.",
-    points: ["Live option chain aur IV", "Spreads aur Iron Condor planner", "Payoff aur analytics"],
+  backtester: {
+    title: "Backtester",
+    desc: "Test rules on history with trading costs included.",
+    points: ["Fees and slippage in every run", "A held-out final test period"],
   },
+  calculators: {
+    title: "Calculators",
+    desc: "35+ calculators for risk, futures, spot and performance.",
+    points: ["Position size, liquidation, R:R", "DCA, grid, fees and tax"],
+  },
+  exchanges: {
+    title: "Connect your exchange",
+    desc: "Add a read + trading API key. Orders and positions run on your own exchange account.",
+  },
+  markets: {
+    title: "Trading Terminal",
+    desc: "A professional candlestick chart on live exchange data, with paper and live orders.",
+  },
+  watchlist: {
+    title: "Watchlists",
+    desc: "Keep the coins you follow in lists with live prices.",
+    points: ["Live price and 24h change", "Open the chart in one click"],
+  },
+  trades: {
+    title: "Trades",
+    desc: "Open positions, orders and trade history in one place.",
+    points: ["Positions and open P&L", "Order history from your exchange"],
+  },
+  bots: {
+    title: "Trading Bots",
+    desc: "DCA, Grid and Combo bots. Set the rules, backtest, then start.",
+    points: ["Paper or live mode", "Backtest before you start"],
+  },
+  mine: {
+    title: "My Strategies",
+    desc: "Every strategy you have saved, running on paper or live.",
+    points: ["Start, pause and edit", "Drafts and archived runs"],
+  },
+  portfolio: {
+    title: "Portfolio",
+    desc: "Upload exchange statements and see holdings, allocation and coin-wise P&L.",
+    points: ["CSV, Excel and PDF statements", "AI diversification and risk check"],
+  },
+  journal: {
+    title: "Trade Journal",
+    desc: "Review paper and live trades day by day.",
+    points: ["Calendar view and tags", "Win rate and results"],
+  },
+  profile: {
+    title: "P&L Analytics",
+    desc: "Your account, connected exchanges and P&L on one screen.",
+    points: ["Day-wise P&L, monthly heatmap", "Exchange-wise breakdown"],
+  },
+  ai: {
+    title: "Mukul AI Assistant",
+    desc: "Ask about live markets, your trades or a chart — in English, Hindi or Hinglish.",
+  },
+};
+
+const STAGE_COPY: Record<DeskStage["id"], { title: string; line: string }> = {
+  research: { title: "Research & Test", line: "Prove an idea before you put money on it." },
+  trade: { title: "Trade & Automate", line: "Trade by hand on your own exchange, or let a strategy run." },
+  track: { title: "Track & Improve", line: "Read the result, then ask what to change." },
+};
+
+/** Har stage ka bada card — baaki tools uske saath chhote cards mein. */
+const FLAGSHIP: Record<DeskStage["id"], string> = { research: "overview", trade: "markets", track: "ai" };
+/** Trade stage mein exchanges poori chaudai ki patti hai, card nahi. */
+const BAND_ID = "exchanges";
+
+const EXCHANGES = ["Delta Exchange India", "Bybit", "CoinDCX"];
+const ASSURANCES = [
+  { icon: Lock, text: "API keys stored encrypted" },
+  { icon: ShieldCheck, text: "Withdrawal permission never requested" },
+  { icon: Trash2, text: "Keys deleted when you disconnect" },
 ];
 
-const ACHIEVEMENTS = [
-  ["2019", "National Achievers Award"],
-  ["2019", "TEDx Talk"],
-  ["2021", "IFA Excellence Award"],
-  ["2022", "Guinness World Record — Largest Financial Investment Lesson"],
-  ["2022", "Doctorate in Finance"],
-] as const;
+const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1D", "1W"];
+const AI_PROMPTS = ["Explain today's BTC trend", "Is my portfolio too risky?", "ETH ka RSI kya bata raha hai?"];
 
-const SOCIAL = {
-  youtube: "https://www.youtube.com/@mukulagrawal",
-  instagram: "https://www.instagram.com/themukulagrawal",
-  telegram: "https://t.me/themukulagrawal",
-  whatsapp: "https://whatsapp.com/channel/0029Va9Geoy72WTt3Qnro42V",
-  x: "https://x.com/themukulagrawal",
-  linkedin: "https://www.linkedin.com/in/themukulagrawal/",
-  facebook: "https://www.facebook.com/themukulagrawal",
-  finowings: "https://www.finowings.com",
-  allLinks: "https://lnk.bio/mukulagrawal",
-} as const;
+const TOOL_COUNT = DESK_STAGES.reduce((n, s) => n + s.items.length, 0);
 
-const COMMUNITY = [
-  { name: "YouTube", count: "1.8M+", href: SOCIAL.youtube },
-  { name: "Facebook", count: "882K+", href: SOCIAL.facebook },
-  { name: "Instagram", count: "670K+", href: SOCIAL.instagram },
-  { name: "Twitter / X", count: "205K+", href: SOCIAL.x },
-  { name: "Telegram", count: "182K+", href: SOCIAL.telegram },
-  { name: "LinkedIn", count: "10K+", href: SOCIAL.linkedin },
-  { name: "WhatsApp Channel", count: "Join", href: SOCIAL.whatsapp },
-] as const;
-
-const FOLLOW_LINKS = [
-  ["YouTube", SOCIAL.youtube],
-  ["Instagram", SOCIAL.instagram],
-  ["Telegram", SOCIAL.telegram],
-  ["WhatsApp Channel", SOCIAL.whatsapp],
-  ["Twitter / X", SOCIAL.x],
-  ["LinkedIn", SOCIAL.linkedin],
-  ["Facebook", SOCIAL.facebook],
-  ["finowings.com", SOCIAL.finowings],
-  ["All links", SOCIAL.allLinks],
-] as const;
-
-const FAQ = [
-  ["Kya main beginner hoon to bhi join kar sakta hoon?", "Bilkul. Dr. Mukul Agrawal ka tareeka hamesha beginners se PRO tak ka raha hai. Pehle Backtest aur Risk Desk se practice kijiye — real paisa lagane se pehle."],
-  ["Kya Trading Desk mere liye auto-trade karega?", "Nahi. Chart, screener aur AI sirf analysis dikhate hain. Order hamesha aap khud lagate hain, apne exchange account se."],
-  ["Kaun kaun se exchange judte hain?", "Delta Exchange India, Bybit aur CoinDCX. API key encrypted store hoti hai, withdrawal permission kabhi nahi maangi jaati, aur disconnect karte hi key delete ho jaati hai."],
-  ["Kya ye investment advice hai?", "Nahi. Mukul Crypto Club ek learning platform hai. Koi bhi readout guaranteed prediction ya personal financial advice nahi hai. Crypto mein risk hota hai."],
-] as const;
-
-/* Showcase chart poori tarah deterministic hai — server aur client dono par
-   ek hi shape banti hai, isliye hydration mismatch nahi hota. */
-const CANDLES = Array.from({ length: 26 }, (_, i) => {
-  const top = 56 - Math.sin(i / 3.1) * 16 - i * 0.7;
-  const body = 6 + Math.abs(Math.cos(i / 1.7)) * 14;
-  return {
-    x: 10 + i * 13,
-    y: top,
-    h: body,
-    wick: 7 + Math.abs(Math.sin(i * 1.3)) * 8,
-    up: Math.sin(i / 2.3) > -0.15,
-  };
-});
-const LINE_PATH = CANDLES.map((c, i) => `${i ? "L" : "M"}${c.x + 4} ${(c.y + c.h / 2).toFixed(1)}`).join(" ");
-const AREA_PATH = `${LINE_PATH} L${CANDLES[CANDLES.length - 1].x + 4} 140 L${CANDLES[0].x + 4} 140 Z`;
-
-function prefersReducedMotion() {
-  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function copyFor(item: DeskFeature): FeatureCopy {
+  return COPY[item.id] ?? { title: item.label, desc: item.blurb };
 }
 
-/* Server par useLayoutEffect warn karta hai, isliye wahan useEffect. */
+/* ═══════════════════════ Hooks ═══════════════════════ */
+
 const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 /**
- * Reveal animation ka switch JS hi on karta hai — root par data-anim="on"
- * lagne ke baad hi elements chhupte hain. JS band ho ya reduced-motion ho to
- * page bina animation ke poora dikhta hai, kabhi blank nahi rehta. Flag paint
- * se pehle (layout effect) lagta hai, isliye koi flicker nahi hota.
+ * Scroll reveal — JS hi `data-anim="on"` lagata hai, tab hi elements chhupte
+ * hain. JS band ho ya reduced-motion ho to page bina animation ke poora dikhta hai.
  */
 function useReveal(rootRef: RefObject<HTMLDivElement | null>) {
   useIsoLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
-    if (prefersReducedMotion() || !("IntersectionObserver" in window)) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) return;
     root.setAttribute("data-anim", "on");
     const io = new IntersectionObserver(
       (entries) => {
@@ -267,7 +145,7 @@ function useReveal(rootRef: RefObject<HTMLDivElement | null>) {
           io.unobserve(entry.target);
         });
       },
-      { threshold: 0.06, rootMargin: "0px 0px -8% 0px" },
+      { root, threshold: 0.08, rootMargin: "0px 0px -6% 0px" },
     );
     root.querySelectorAll<HTMLElement>("[data-reveal]").forEach((node) => io.observe(node));
     return () => {
@@ -277,416 +155,522 @@ function useReveal(rootRef: RefObject<HTMLDivElement | null>) {
   }, [rootRef]);
 }
 
-/** Top bar ka stuck state aur reading-progress bar. */
-function useChrome(scrollRef: RefObject<HTMLDivElement | null>) {
-  const [stuck, setStuck] = useState(false);
-  const [progress, setProgress] = useState(0);
+type LiveState = { status: "loading" } | { status: "error" } | { status: "ready"; tickers: MarketTicker[]; at: number };
+const LIVE_REFRESH_MS = 30_000;
+
+/** Hero heatmap aur Overview card dono ek hi fetch se chalte hain. */
+function useLiveTickers(): LiveState {
+  const [state, setState] = useState<LiveState>({ status: "loading" });
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    let raf = 0;
-    const read = () => {
-      raf = 0;
-      const max = el.scrollHeight - el.clientHeight;
-      setStuck(el.scrollTop > 16);
-      setProgress(max > 0 ? Math.min(1, el.scrollTop / max) : 0);
+    let alive = true;
+    const load = () => {
+      if (document.hidden) return;
+      fetch("/api/overview/tickers", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((data: { tickers?: MarketTicker[] }) => {
+          if (!alive) return;
+          const tickers = (Array.isArray(data.tickers) ? data.tickers : []).filter(
+            (t) => t.price != null && Number.isFinite(t.price) && t.change_24h != null,
+          );
+          setState((prev) =>
+            tickers.length
+              ? { status: "ready", tickers, at: Date.now() }
+              : prev.status === "ready"
+                ? prev
+                : { status: "error" },
+          );
+        })
+        .catch(() => {
+          if (alive) setState((prev) => (prev.status === "ready" ? prev : { status: "error" }));
+        });
     };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(read);
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    read();
+    load();
+    const id = window.setInterval(load, LIVE_REFRESH_MS);
     return () => {
-      el.removeEventListener("scroll", onScroll);
-      if (raf) cancelAnimationFrame(raf);
+      alive = false;
+      window.clearInterval(id);
     };
-  }, [scrollRef]);
-  return { stuck, progress };
+  }, []);
+  return state;
 }
 
-/** "3.45M+" jaise number ko view mein aate hi 0 se count-up karta hai. */
-function Counter({ value }: { value: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [shown, setShown] = useState(value);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const parts = /^([^0-9]*)([0-9][0-9.,]*)(.*)$/.exec(value);
-    if (!parts || prefersReducedMotion() || !("IntersectionObserver" in window)) return;
-    const [, prefix, digits, suffix] = parts;
-    const target = Number(digits.replace(/,/g, ""));
-    if (!Number.isFinite(target)) return;
-    const decimals = digits.includes(".") ? digits.split(".")[1].length : 0;
-    const grouped = digits.includes(",");
-    const format = (n: number) => {
-      const fixed = n.toFixed(decimals);
-      return grouped
-        ? Number(fixed).toLocaleString("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-        : fixed;
-    };
-
-    setShown(prefix + format(0) + suffix);
-    let raf = 0;
-    let started = 0;
-    const DURATION = 1400;
-    const step = (now: number) => {
-      if (!started) started = now;
-      const p = Math.min(1, (now - started) / DURATION);
-      const eased = 1 - Math.pow(1 - p, 3);
-      setShown(prefix + format(target * eased) + suffix);
-      if (p < 1) raf = requestAnimationFrame(step);
-    };
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        io.disconnect();
-        raf = requestAnimationFrame(step);
-      },
-      { threshold: 0.35 },
-    );
-    io.observe(el);
-    return () => {
-      io.disconnect();
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [value]);
-
-  return <span ref={ref}>{shown}</span>;
-}
-
-function DeskShowcase() {
-  return (
-    <div className="mc-showcase" data-reveal aria-hidden>
-      <div className="mc-showcase-bar">
-        <span className="mc-dot mc-dot-red" />
-        <span className="mc-dot mc-dot-amber" />
-        <span className="mc-dot mc-dot-green" />
-        <strong>BTCUSD · 15m</strong>
-        <em>Mukul Crypto Club — Trading Desk</em>
-      </div>
-      <div className="mc-showcase-body">
-        <svg className="mc-showcase-chart" viewBox="0 0 352 150" preserveAspectRatio="none" role="presentation">
-          <defs>
-            <linearGradient id="mc-area" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#19a2dd" stopOpacity="0.32" />
-              <stop offset="100%" stopColor="#19a2dd" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {[30, 60, 90, 120].map((y) => (
-            <line key={y} x1="0" y1={y} x2="352" y2={y} className="mc-grid-line" />
-          ))}
-          {CANDLES.map((c, i) => (
-            <g key={c.x} className="mc-candle" data-up={c.up} style={{ "--i": i } as CSSProperties}>
-              <rect x={c.x + 3.4} y={c.y - c.wick / 2} width="1.2" height={c.h + c.wick} rx="0.6" />
-              <rect x={c.x} y={c.y} width="8" height={c.h} rx="1.2" />
-            </g>
-          ))}
-          <path className="mc-showcase-area" d={AREA_PATH} fill="url(#mc-area)" />
-          <path className="mc-showcase-line" d={LINE_PATH} />
-        </svg>
-        <ul className="mc-showcase-side">
-          <li><span>Signal</span><strong data-tone="up">Bullish</strong></li>
-          <li><span>RSI 14</span><strong>58.4</strong></li>
-          <li><span>Risk / trade</span><strong>1.0%</strong></li>
-          <li><span>Open P&amp;L</span><strong data-tone="up">+2.7%</strong></li>
-        </ul>
-      </div>
-    </div>
-  );
-}
+/* ═══════════════════════ Page ═══════════════════════ */
 
 export default function LandingPage() {
   const params = useSearchParams();
   const rootRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const { stuck, progress } = useChrome(scrollRef);
+  const live = useLiveTickers();
   useReveal(rootRef);
 
   useEffect(() => {
     captureVisit(params);
   }, [params]);
 
-  const spotlight = (event: ReactMouseEvent<HTMLUListElement>) => {
-    const card = (event.target as HTMLElement).closest<HTMLElement>(".mc-desk-card");
-    if (!card) return;
-    const box = card.getBoundingClientRect();
-    card.style.setProperty("--mx", `${event.clientX - box.left}px`);
-    card.style.setProperty("--my", `${event.clientY - box.top}px`);
-  };
-
   return (
-    <div className="mukul-club" ref={rootRef}>
-      <div className="mukul-scroll" ref={scrollRef}>
-        <div className="mc-progress" aria-hidden>
-          <i style={{ transform: `scaleX(${progress})` }} />
-        </div>
-
-        <header className="mc-top mc-top-dark" data-stuck={stuck}>
-          <Link href="/" className="mc-brand" aria-label="Mukul Crypto Club home">
-            <img className="mc-logo" src="/mukul/logo-MA.webp" alt="Mukul Agrawal" width={132} height={66} />
-            <span className="mc-brand-club">Crypto Club</span>
+    <div className="lp" ref={rootRef}>
+      <header className="lp-top">
+        <div className="lp-wrap lp-top-inner">
+          <Link href="/" className="lp-brand" aria-label="Cryptomantra home">
+            <img src="/mukul/icon.png" alt="" width={36} height={36} />
+            <span>
+              <strong>Cryptomantra</strong>
+              <small>by Dr. Mukul Agrawal</small>
+            </span>
           </Link>
-          <nav className="mc-top-nav" aria-label="Club">
-            <a href="#desk">Desk Features</a>
-            <a href="#about-mukul">About Mukul</a>
-            <a href="#videos">Crypto Videos</a>
-            <Link href="/trade" className="mc-btn mc-btn-primary">Open Trading Desk</Link>
+          <nav className="lp-nav" aria-label="Page">
+            <a href="#features">Features</a>
+            <a href="#videos">Videos</a>
+            <Link href="/trade/overview" className="lp-btn lp-btn-primary lp-btn-sm">
+              <span>
+                Open <span className="lp-hide-xs">Trading </span>Desk
+              </span>
+            </Link>
           </nav>
-        </header>
+        </div>
+      </header>
 
-        <section className="mc-hero">
-          <div className="mc-aurora" aria-hidden>
-            <span className="mc-aurora-gold" />
-            <span className="mc-aurora-blue" />
-            <span className="mc-aurora-grid" />
-          </div>
-
-          <div className="mc-hero-grid">
-            <div className="mc-hero-copy">
-              <p className="mc-pill" data-rise style={{ "--d": 0 } as CSSProperties}>
-                <Sparkles aria-hidden /> Dr. Mukul Agrawal presents
+      <main>
+        {/* ── Hero ─────────────────────────────────────── */}
+        <section className="lp-hero">
+          <div className="lp-hero-bg" aria-hidden />
+          <div className="lp-wrap lp-hero-grid">
+            <div className="lp-hero-copy">
+              <p className="lp-eyebrow lp-rise" style={{ "--d": 0 } as CSSProperties}>
+                <i aria-hidden /> {TOOL_COUNT} tools · Free to start
               </p>
-              <h1 data-rise style={{ "--d": 1 } as CSSProperties}>
-                Mukul <span>Crypto</span> Club
+              <h1 className="lp-rise" style={{ "--d": 1 } as CSSProperties}>
+                Research it.
+                <br />
+                Trade it.
+                <span>Learn from it.</span>
               </h1>
-              <p className="mc-hero-sub" data-rise style={{ "--d": 2 } as CSSProperties}>
-                Trader · Investor · Bestselling Author · Guinness World Record Holder
+              <p className="lp-lede lp-rise" style={{ "--d": 2 } as CSSProperties}>
+                Cryptomantra is a complete crypto trading desk — {TOOL_COUNT} tools that run on your own exchange
+                account, plus free crypto lessons from Dr. Mukul Agrawal.
               </p>
-              <p className="mc-lede" data-rise style={{ "--d": 3 } as CSSProperties}>
-                Crypto simplified — beginners se PRO tak. Ek professional crypto trading desk, Mukul AI aur
-                Mukul ke crypto videos, sab ek hi jagah.
-              </p>
-              <div className="mc-hero-actions" data-rise style={{ "--d": 4 } as CSSProperties}>
-                <Link href="/trade" className="mc-btn mc-btn-gold mc-btn-lg">
+              <div className="lp-hero-cta lp-rise" style={{ "--d": 3 } as CSSProperties}>
+                <Link href="/trade/overview" className="lp-btn lp-btn-primary lp-btn-lg">
                   Open Trading Desk <ArrowRight aria-hidden />
                 </Link>
-                <a href="#videos" className="mc-btn mc-btn-lg">Crypto Videos dekhiye</a>
-              </div>
-              <ul className="mc-trust" data-rise style={{ "--d": 5 } as CSSProperties}>
-                {TRUST.map(({ icon: Icon, text }) => (
-                  <li key={text}><Icon aria-hidden /> {text}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="mc-stage" data-rise style={{ "--d": 3 } as CSSProperties}>
-              <span className="mc-stage-halo" aria-hidden />
-              <span className="mc-stage-ring" aria-hidden />
-              <img
-                className="mc-stage-portrait"
-                src="/mukul/mkm.webp"
-                alt="Dr. Mukul Agrawal"
-                width={1536}
-                height={1024}
-              />
-              <ul className="mc-stage-chips" aria-hidden>
-                {HERO_CHIPS.map(({ label, value }, i) => (
-                  <li key={label} style={{ "--i": i } as CSSProperties}>
-                    <strong>{value}</strong>
-                    <span>{label}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <dl className="mc-stats" data-rise style={{ "--d": 6 } as CSSProperties}>
-            {STATS.map(([value, label], i) => (
-              <div key={label} style={{ "--i": i } as CSSProperties}>
-                <dt>{label}</dt>
-                <dd><Counter value={value} /></dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-
-        <div className="mc-ticker" aria-hidden>
-          <div className="mc-ticker-track">
-            {[0, 1].map((copy) => (
-              <ul key={copy}>
-                {TICKER.map((item) => (
-                  <li key={item}><span /> {item}</li>
-                ))}
-              </ul>
-            ))}
-          </div>
-        </div>
-
-        <section className="mc-section mc-section-soft" id="desk" aria-labelledby="desk-heading">
-          <div className="mc-section-intro" data-reveal>
-            <p className="mc-kicker">Mukul Crypto Club Trading Desk</p>
-            <h2 id="desk-heading">Trading Desk mein kya kya hai</h2>
-            <p>
-              Ek professional crypto trading terminal — chart, AI, screener, risk, backtest aur strategies.
-              Har box par click karke seedha wo tool kholiye.
-            </p>
-          </div>
-
-          <DeskShowcase />
-
-          <ul className="mc-desk" onMouseMove={spotlight}>
-            {DESK.map(({ icon: Icon, title, href, desc, points }, i) => (
-              <li key={title} data-reveal style={{ "--d": i % 3 } as CSSProperties}>
-                <Link href={href} className="mc-desk-card">
-                  <span className="mc-desk-glow" aria-hidden />
-                  <span className="mc-desk-head">
-                    <span className="mc-feature-icon"><Icon aria-hidden /></span>
-                    <h3>{title}</h3>
-                  </span>
-                  <p>{desc}</p>
-                  <ul>
-                    {points.map((point) => <li key={point}>{point}</li>)}
-                  </ul>
-                  <span className="mc-desk-open">Kholen <ArrowRight aria-hidden /></span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-
-          <div className="mc-center" data-reveal>
-            <Link href="/trade" className="mc-btn mc-btn-gold mc-btn-lg">
-              Poora desk kholiye <ArrowRight aria-hidden />
-            </Link>
-          </div>
-        </section>
-
-        <section className="mc-section mc-about" id="about-mukul" aria-labelledby="about-mukul-heading">
-          <div className="mc-about-grid">
-            <div className="mc-about-copy" data-reveal>
-              <p className="mc-kicker">The man behind the markets</p>
-              <h2 id="about-mukul-heading">Dr. Mukul Agrawal</h2>
-              <figure className="mc-quote">
-                <Quote aria-hidden />
-                <blockquote>Financial independence is a right, not a privilege.</blockquote>
-              </figure>
-              <p>
-                Dr. Mukul Agrawal trader, investor, entrepreneur, bestselling author aur financial educator hain —
-                23+ saal ka market experience. YouTube par unki crypto series — Bitcoin price analysis, crypto futures
-                course, AI se crypto trading, crypto tax rules aur beginners ke liye crypto portfolio — simple Hinglish mein.
-                Mukul Crypto Club usi padhai ko live tools ke saath practice mein badalta hai.
-              </p>
-              <ul className="mc-creds">
-                <li><Award aria-hidden /><span><strong>Guinness World Record</strong> Largest Financial Investment Lesson, 2022</span></li>
-                <li><BookOpen aria-hidden /><span><strong>Bestselling author</strong> “The Simplest Book of Technical Analysis” &amp; “Money &amp; You”</span></li>
-                <li><LineChart aria-hidden /><span><strong>Founder</strong> Agrawal Corporate (2003) &amp; Finowings (2022)</span></li>
-                <li><Users aria-hidden /><span><strong>Creator since 2017</strong> 50,000+ students, 100+ workshops aur events</span></li>
-              </ul>
-            </div>
-
-            <div className="mc-about-side" data-reveal style={{ "--d": 1 } as CSSProperties}>
-              <figure className="mc-avatar-stage">
-                <span className="mc-avatar-halo" aria-hidden />
-                <img src="/mukul/mkn.webp" alt="Dr. Mukul Agrawal" width={1159} height={1357} />
-                <figcaption>
-                  <strong>Dr. Mukul Agrawal</strong>
-                  <span>Crypto Simplified</span>
-                </figcaption>
-              </figure>
-              <ol className="mc-timeline">
-                {ACHIEVEMENTS.map(([year, title], i) => (
-                  <li key={title} data-reveal style={{ "--d": i } as CSSProperties}>
-                    <span>{year}</span>
-                    <strong>{title}</strong>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </div>
-        </section>
-
-        <div id="videos" className="mc-section mc-section-soft">
-          <VideoGrid />
-        </div>
-
-        <section className="mc-section mc-section-navy" aria-labelledby="community-heading">
-          <img className="mc-watermark" src="/mukul/mkn.webp" alt="" aria-hidden width={1159} height={1357} />
-          <div className="mc-section-intro" data-reveal>
-            <p className="mc-kicker mc-kicker-gold">Social media family</p>
-            <h2 id="community-heading">3 million+ followers ke saath seekhiye</h2>
-          </div>
-          <ul className="mc-community">
-            {COMMUNITY.map(({ name, count, href }, i) => (
-              <li key={name} data-reveal style={{ "--d": i % 3 } as CSSProperties}>
-                <a href={href} target="_blank" rel="noreferrer" aria-label={`Mukul Agrawal on ${name}`}>
-                  <strong>{/\d/.test(count) ? <Counter value={count} /> : count}</strong>
-                  <span>{name}</span>
+                <a href="#videos" className="lp-btn lp-btn-ghost lp-btn-lg">
+                  <Play aria-hidden /> Watch free lessons
                 </a>
-              </li>
-            ))}
-          </ul>
-          <div className="mc-center" data-reveal>
-            <a className="mc-btn mc-btn-gold" href={MUKUL_VIDEOS_URL} target="_blank" rel="noreferrer">
-              YouTube par subscribe karein
-            </a>
-            <a className="mc-btn" href={SOCIAL.allLinks} target="_blank" rel="noreferrer">
-              Saare links dekhiye
-            </a>
-          </div>
-        </section>
+              </div>
+              <p className="lp-hero-note lp-rise" style={{ "--d": 4 } as CSSProperties}>
+                Works with <strong>Delta Exchange India</strong>, <strong>Bybit</strong> and <strong>CoinDCX</strong>.
+                Charts and AI need no account.
+              </p>
+            </div>
 
-        <section className="mc-section" aria-labelledby="faq-heading">
-          <div className="mc-section-intro" data-reveal>
-            <p className="mc-kicker">FAQ</p>
-            <h2 id="faq-heading">Aksar pooche jaane wale sawaal</h2>
-          </div>
-          <div className="mc-faq">
-            {FAQ.map(([q, a], i) => (
-              <details key={q} data-reveal style={{ "--d": i % 3 } as CSSProperties}>
-                <summary>{q}</summary>
-                <p>{a}</p>
-              </details>
-            ))}
-          </div>
-        </section>
-
-        <section className="mc-cta" aria-labelledby="cta-heading">
-          <div className="mc-cta-inner" data-reveal>
-            <p className="mc-kicker mc-kicker-gold">Ready?</p>
-            <h2 id="cta-heading">Aaj hi desk kholiye — beginners se PRO tak</h2>
-            <p>
-              Chart, AI, screener, risk planner aur backtest — sab free mein try kijiye. Exchange baad mein jodiye,
-              jab aap taiyaar hon.
-            </p>
-            <div className="mc-center">
-              <Link href="/trade" className="mc-btn mc-btn-gold mc-btn-lg">
-                Open Trading Desk <ArrowRight aria-hidden />
-              </Link>
+            <div className="lp-rise" style={{ "--d": 2 } as CSSProperties}>
+              <HeroHeatmap live={live} />
             </div>
           </div>
-        </section>
 
-        <footer className="mc-foot">
-          <div className="mc-foot-grid">
-            <div>
-              <img className="mc-logo" src="/mukul/logo-MA.webp" alt="Mukul Agrawal" width={150} height={75} />
-              <p>Empowering everyday Indians to invest with confidence — through real market experience, not just theory.</p>
-            </div>
-            <div>
-              <h3>Club</h3>
-              <Link href="/trade">Trading Desk</Link>
-              <Link href="/ai">Mukul AI</Link>
-              <Link href="/profile">Profile &amp; P&amp;L</Link>
-            </div>
-            <div>
-              <h3>Follow Mukul</h3>
-              {FOLLOW_LINKS.map(([label, href]) => (
-                <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
+          <div className="lp-wrap">
+            <ol className="lp-loop lp-rise" style={{ "--d": 5 } as CSSProperties}>
+              {DESK_STAGES.map((stage) => (
+                <li key={stage.id}>
+                  <a href={`#stage-${stage.id}`}>
+                    <span className="lp-loop-step">0{stage.step}</span>
+                    <span className="lp-loop-text">
+                      <strong>{STAGE_COPY[stage.id].title}</strong>
+                      <span>{stage.items.map((i) => copyFor(i).title).join(" · ")}</span>
+                    </span>
+                    <ArrowRight className="lp-loop-arrow" aria-hidden />
+                  </a>
+                </li>
               ))}
-            </div>
-            <div>
-              <h3>Contact</h3>
-              <p><MapPin aria-hidden /> Finowings Training Academy, C-1, Bank of Baroda, Sector-M, Mama Chauraha, Kursi Road, Lucknow, UP 226022</p>
-              <p><Phone aria-hidden /> <a href="tel:+919708094321">+91 97080 94321</a></p>
-              <p><a href="https://mukulagrawal.com/" target="_blank" rel="noreferrer">mukulagrawal.com</a></p>
-            </div>
+            </ol>
           </div>
-          <p className="mc-foot-legal">
-            Mukul Crypto Club ek learning platform hai. Koi bhi readout guaranteed prediction ya personal financial advice nahi hai.
-            Crypto assets high-risk hain — sirf utna lagaiye jitna kho sakte hain. © {new Date().getFullYear()} Mukul Agrawal. All rights reserved.
+        </section>
+
+        {/* ── Features ─────────────────────────────────── */}
+        <section className="lp-section" id="features" aria-labelledby="features-heading">
+          <div className="lp-wrap">
+            <header className="lp-section-head" data-reveal>
+              <p className="lp-kicker">The trading desk</p>
+              <h2 id="features-heading">
+                {TOOL_COUNT} tools. <span>One loop.</span>
+              </h2>
+              <p>
+                Every tool sits in one of three steps — research it, trade it, then learn from it. Click any card to
+                open that tool.
+              </p>
+            </header>
+
+            {DESK_STAGES.map((stage) => (
+              <StageBlock key={stage.id} stage={stage} live={live} />
+            ))}
+          </div>
+        </section>
+
+        {/* ── Videos ───────────────────────────────────── */}
+        <section className="lp-section lp-section-alt" id="videos" aria-labelledby="videos-heading">
+          <div className="lp-wrap">
+            <LandingVideos />
+          </div>
+        </section>
+      </main>
+
+      <footer className="lp-foot">
+        <div className="lp-wrap">
+          <div className="lp-foot-row">
+            <Link href="/" className="lp-brand" aria-label="Cryptomantra home">
+              <img src="/mukul/icon.png" alt="" width={32} height={32} />
+              <span>
+                <strong>Cryptomantra</strong>
+                <small>by Dr. Mukul Agrawal</small>
+              </span>
+            </Link>
+            <nav className="lp-foot-links" aria-label="Footer">
+              <Link href="/trade/overview">Trading Desk</Link>
+              <a href="#features">Features</a>
+              <a href="#videos">Videos</a>
+              <a href="https://www.youtube.com/@mukulagrawal" target="_blank" rel="noreferrer">
+                YouTube <ArrowUpRight aria-hidden />
+              </a>
+            </nav>
+          </div>
+          <p className="lp-legal">
+            Cryptomantra is a learning platform. Nothing here is a guaranteed prediction or personal financial advice.
+            Crypto is high-risk — only risk what you can afford to lose. © {new Date().getFullYear()} Mukul Agrawal.
           </p>
-        </footer>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+/* ═══════════════════════ Features ═══════════════════════ */
+
+function StageBlock({ stage, live }: { stage: DeskStage; live: LiveState }) {
+  const flagship = stage.items.find((i) => i.id === FLAGSHIP[stage.id]);
+  const band = stage.items.find((i) => i.id === BAND_ID);
+  const rest = stage.items.filter((i) => i !== flagship && i !== band);
+
+  return (
+    <section className="lp-stage" id={`stage-${stage.id}`} aria-labelledby={`stage-${stage.id}-title`}>
+      <header className="lp-stage-head" data-reveal>
+        <span className="lp-stage-step">0{stage.step}</span>
+        <h3 id={`stage-${stage.id}-title`}>{STAGE_COPY[stage.id].title}</h3>
+        <p>{STAGE_COPY[stage.id].line}</p>
+      </header>
+
+      <ul className="lp-bento" data-flip={stage.step % 2 === 0}>
+        {flagship && (
+          <li className="lp-cell-flagship" data-reveal>
+            <FlagshipCard item={flagship} live={live} />
+          </li>
+        )}
+        {rest.map((item, i) => (
+          <li
+            key={item.id}
+            className={i === 0 && rest.length % 2 === 1 ? "lp-cell-wide" : undefined}
+            data-reveal
+            style={{ "--d": i % 4 } as CSSProperties}
+          >
+            <FeatureCard item={item} />
+          </li>
+        ))}
+        {band && (
+          <li className="lp-cell-band" data-reveal>
+            <ExchangeBand item={band} />
+          </li>
+        )}
+      </ul>
+    </section>
+  );
+}
+
+function FeatureCard({ item }: { item: DeskFeature }) {
+  const { title, desc, points } = copyFor(item);
+  const Icon = item.icon;
+  return (
+    <Link href={item.href} className="lp-card">
+      <span className="lp-card-icon">
+        <Icon aria-hidden />
+      </span>
+      <h4>{title}</h4>
+      <p>{desc}</p>
+      {points && (
+        <ul className="lp-card-points">
+          {points.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      )}
+      <span className="lp-card-open">
+        Open <ArrowRight aria-hidden />
+      </span>
+    </Link>
+  );
+}
+
+function FlagshipCard({ item, live }: { item: DeskFeature; live: LiveState }) {
+  const { title, desc } = copyFor(item);
+  const Icon = item.icon;
+  return (
+    <Link href={item.href} className="lp-card lp-card-flagship">
+      <span className="lp-card-icon">
+        <Icon aria-hidden />
+      </span>
+      <h4>{title}</h4>
+      <p>{desc}</p>
+      <div className="lp-visual">
+        {item.id === "overview" && <MoversVisual live={live} />}
+        {item.id === "markets" && <TerminalVisual />}
+        {item.id === "ai" && <AiVisual />}
       </div>
+      <span className="lp-card-open">
+        Open {title} <ArrowRight aria-hidden />
+      </span>
+    </Link>
+  );
+}
+
+function ExchangeBand({ item }: { item: DeskFeature }) {
+  const { title, desc } = copyFor(item);
+  return (
+    <Link href={item.href} className="lp-card lp-band">
+      <div className="lp-band-copy">
+        <span className="lp-card-icon">
+          <KeyRound aria-hidden />
+        </span>
+        <h4>{title}</h4>
+        <p>{desc}</p>
+        <ul className="lp-band-exchanges" aria-label="Supported exchanges">
+          {EXCHANGES.map((x) => (
+            <li key={x}>{x}</li>
+          ))}
+        </ul>
+      </div>
+      <ul className="lp-band-assure">
+        {ASSURANCES.map(({ icon: I, text }) => (
+          <li key={text}>
+            <I aria-hidden /> {text}
+          </li>
+        ))}
+      </ul>
+    </Link>
+  );
+}
+
+/* ═══════════════════════ Visuals ═══════════════════════ */
+
+const HEAT_W = 600;
+const HEAT_H = 380;
+const HEAT_COUNT = 24;
+
+function HeroHeatmap({ live }: { live: LiveState }) {
+  const coins = useMemo(() => (live.status === "ready" ? live.tickers : []), [live]);
+  const top = useMemo(
+    () => [...coins].sort((a, b) => (b.turnover_usd || 0) - (a.turnover_usd || 0)).slice(0, HEAT_COUNT),
+    [coins],
+  );
+  const rects = useMemo(
+    () =>
+      squarify(
+        top.map((t) => ({ id: t.symbol, value: Math.sqrt(Math.max(t.turnover_usd || 0, 1)) })),
+        HEAT_W,
+        HEAT_H,
+      ),
+    [top],
+  );
+  const bySymbol = useMemo(() => new Map(top.map((t) => [t.symbol, t])), [top]);
+  const up = coins.filter((t) => (t.change_24h ?? 0) > 0).length;
+  const down = coins.filter((t) => (t.change_24h ?? 0) < 0).length;
+  const upShare = up + down ? up / (up + down) : 0.5;
+
+  return (
+    <Link href="/trade/overview" className="lp-window" aria-label="Open the live market overview">
+      <div className="lp-window-bar">
+        <span className="lp-dots" aria-hidden>
+          <i />
+          <i />
+          <i />
+        </span>
+        <strong>Market overview</strong>
+        <span className="lp-live" data-state={live.status}>
+          <i aria-hidden /> {live.status === "error" ? "Offline" : "Live"}
+        </span>
+      </div>
+
+      <div className="lp-heat" aria-hidden={live.status !== "ready"}>
+        {live.status === "ready" &&
+          rects.map((r) => {
+            const t = bySymbol.get(r.id);
+            if (!t) return null;
+            const area = r.w * r.h;
+            const size = area > 22000 ? "xl" : area > 11000 ? "lg" : area > 5000 ? "md" : area > 2200 ? "sm" : "xs";
+            return (
+              <span
+                key={r.id}
+                className="lp-tile"
+                data-size={size}
+                title={`${t.base} ${fmtPct(t.change_24h)}`}
+                style={{
+                  left: `${(r.x / HEAT_W) * 100}%`,
+                  top: `${(r.y / HEAT_H) * 100}%`,
+                  width: `${(r.w / HEAT_W) * 100}%`,
+                  height: `${(r.h / HEAT_H) * 100}%`,
+                  background: rgbCss(heatRgb(t.change_24h)),
+                }}
+              >
+                <strong>{t.base}</strong>
+                <span>{fmtPct(t.change_24h)}</span>
+              </span>
+            );
+          })}
+        {live.status === "loading" && <span className="lp-heat-skel" />}
+        {live.status === "error" && <span className="lp-heat-empty">Live market data is unavailable right now.</span>}
+      </div>
+
+      <div className="lp-window-foot">
+        <span className="lp-breadth-label">
+          <b data-tone="up">{up}</b> up
+        </span>
+        <span className="lp-breadth" aria-hidden>
+          <i style={{ width: `${upShare * 100}%` }} />
+        </span>
+        <span className="lp-breadth-label">
+          <b data-tone="down">{down}</b> down
+        </span>
+        <span className="lp-window-sub">Perpetual futures · 24h</span>
+      </div>
+    </Link>
+  );
+}
+
+function MoversVisual({ live }: { live: LiveState }) {
+  if (live.status !== "ready") {
+    return (
+      <div className="lp-movers" aria-hidden>
+        {[0, 1].map((col) => (
+          <div key={col}>
+            {[0, 1, 2, 3, 4].map((r) => (
+              <span key={r} className="lp-skel-row" />
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  const liquid = live.tickers.filter((t) => (t.turnover_usd || 0) > 1_000_000);
+  const sorted = [...(liquid.length >= 6 ? liquid : live.tickers)].sort(
+    (a, b) => (b.change_24h ?? 0) - (a.change_24h ?? 0),
+  );
+  const cols = [
+    { label: "Top gainers", rows: sorted.slice(0, 5) },
+    { label: "Top losers", rows: sorted.slice(-5).reverse() },
+  ];
+  return (
+    <div className="lp-movers">
+      {cols.map((col) => (
+        <div key={col.label}>
+          <span className="lp-movers-label">{col.label}</span>
+          <ol>
+            {col.rows.map((t) => {
+              const tone = (t.change_24h ?? 0) >= 0 ? "up" : "down";
+              return (
+                <li key={t.symbol}>
+                  <span className="lp-coin">{t.base.slice(0, 3)}</span>
+                  <strong>{t.base}</strong>
+                  <em data-tone={tone}>{fmtPct(t.change_24h)}</em>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Terminal card ka chart sirf illustration hai — koi price ya number nahi. */
+type Candle = { o: number; c: number; h: number; l: number };
+function buildCandles(n: number): Candle[] {
+  let seed = 23;
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  };
+  const out: Candle[] = [];
+  let p = 100;
+  for (let i = 0; i < n; i++) {
+    const o = p;
+    const c = o + (rand() - 0.42) * 8;
+    out.push({ o, c, h: Math.max(o, c) + rand() * 3.5, l: Math.min(o, c) - rand() * 3.5 });
+    p = c;
+  }
+  return out;
+}
+const T_CANDLES = buildCandles(34);
+const T_W = 340;
+const T_H = 130;
+
+function TerminalVisual() {
+  const lo = Math.min(...T_CANDLES.map((c) => c.l));
+  const hi = Math.max(...T_CANDLES.map((c) => c.h));
+  const y = (v: number) => 6 + ((hi - v) / (hi - lo)) * (T_H - 12);
+  const step = T_W / T_CANDLES.length;
+  const ema = T_CANDLES.map((_, i) => {
+    const win = T_CANDLES.slice(Math.max(0, i - 6), i + 1);
+    const avg = win.reduce((s, c) => s + c.c, 0) / win.length;
+    return `${(i * step + step / 2).toFixed(1)},${y(avg).toFixed(1)}`;
+  }).join(" ");
+
+  return (
+    <div className="lp-term" aria-hidden>
+      <div className="lp-term-tf">
+        {TIMEFRAMES.map((tf) => (
+          <span key={tf} data-on={tf === "4h"}>
+            {tf}
+          </span>
+        ))}
+        <span className="lp-term-ind">45+ indicators</span>
+      </div>
+      <svg viewBox={`0 0 ${T_W} ${T_H}`} preserveAspectRatio="none">
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line key={f} x1="0" x2={T_W} y1={T_H * f} y2={T_H * f} className="lp-term-grid" />
+        ))}
+        {T_CANDLES.map((c, i) => {
+          const x = i * step + step / 2;
+          const top = y(Math.max(c.o, c.c));
+          return (
+            <g key={i} className={c.c >= c.o ? "up" : "down"}>
+              <line x1={x} x2={x} y1={y(c.h)} y2={y(c.l)} />
+              <rect
+                x={x - step * 0.28}
+                y={top}
+                width={step * 0.56}
+                height={Math.max(1.2, Math.abs(y(c.o) - y(c.c)))}
+                rx={1}
+              />
+            </g>
+          );
+        })}
+        <polyline points={ema} className="lp-term-ema" />
+      </svg>
+    </div>
+  );
+}
+
+function AiVisual() {
+  return (
+    <div className="lp-ai" aria-hidden>
+      <span className="lp-ai-label">Try asking</span>
+      <ul>
+        {AI_PROMPTS.map((p) => (
+          <li key={p}>{p}</li>
+        ))}
+      </ul>
+      <span className="lp-ai-input">
+        Ask Mukul AI anything…
+        <i>
+          <ArrowRight />
+        </i>
+      </span>
     </div>
   );
 }

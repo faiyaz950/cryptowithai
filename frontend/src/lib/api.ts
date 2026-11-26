@@ -85,7 +85,7 @@ export async function sendMessageStream(
       });
     }
   } catch {
-    callbacks.onError("Backend connect nahi ho raha. backend/ folder mein server start karein (port 8000).");
+    callbacks.onError("Cannot reach the backend. Start the server in the backend/ folder (port 8000).");
     return;
   }
 
@@ -143,7 +143,7 @@ export async function sendMessageStream(
         } else if (event.type === "error") {
           callbacks.onError(
             event.message === "Failed to fetch" || !event.message
-              ? "Backend connect nahi ho raha. backend/ folder mein server start karein (port 8000)."
+              ? "Cannot reach the backend. Start the server in the backend/ folder (port 8000)."
               : (event.message ?? "Unknown error"),
           );
         }

@@ -46,7 +46,7 @@ export default function AdminDesk() {
     try {
       await navigator.clipboard.writeText(absolute);
     } catch {
-      window.prompt("Link copy karein", absolute);
+      window.prompt("Copy link", absolute);
     }
   };
 
@@ -63,8 +63,8 @@ export default function AdminDesk() {
         <main className="mc-admin">
           <h1>Business dashboard</h1>
           <p className="mc-fine">
-            Numbers isi club ke tracked events hain — browser aur local server log. Example 50,000 visitors yahan nahi dikhaye,
-            kyunki wo real count nahi hain. Revenue tab aayega jab exchange fee report connect ho.
+            Numbers are tracked events for this club — browser and local server logs. Example 50,000 visitors are not shown here,
+            because they are not real counts. Revenue appears when exchange fee reporting is connected.
           </p>
           <section>
             <h2>Acquisition</h2>

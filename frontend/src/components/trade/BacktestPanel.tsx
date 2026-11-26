@@ -5,6 +5,7 @@ import { AlertCircle, Play } from "lucide-react";
 import BacktestResults from "@/components/trade/BacktestResults";
 import type { BacktestParams, BacktestResult } from "@/lib/cryptoApi";
 import { CRYPTO_INTERVALS, CRYPTO_SYMBOLS } from "@/lib/cryptoApi";
+import { isBgrhStrategy } from "@/lib/buyGridRecovery";
 import { RANGE_TIMEZONES, STRATEGIES } from "@/lib/strategies";
 import { optionsKind } from "@/lib/optionsBacktest";
 
@@ -22,8 +23,8 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
     symbol: defaults.symbol ?? "BTCUSDT",
     timeframe: defaults.timeframe ?? "5m",
     days: defaults.days ?? 30,
-    sl_points: defaults.sl_points ?? 400,
-    target_points: defaults.target_points ?? 800,
+    sl_points: defaults.sl_points ?? 0,
+    target_points: defaults.target_points ?? 0,
     lots: defaults.lots ?? 1,
     ema9: defaults.ema9 ?? 9,
     ema21: defaults.ema21 ?? 21,
@@ -49,21 +50,26 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
    * se chal sakti hain. Options wali yahan nahi hain — unka backtest asli option
    * data par strategy page se chalta hai, points wale is form se nahi.
    */
-  const backtestable = STRATEGIES.filter((d) => d.backtestable !== false && !optionsKind(d));
+  // BGRH / options run on their strategy page (client or options engine), not this EMA form.
+  const backtestable = STRATEGIES.filter(
+    (d) => d.backtestable !== false && !optionsKind(d) && !isBgrhStrategy(d.id),
+  );
   const [strategyId, setStrategyId] = useState<string>(() => backtestable[0]?.id ?? "custom-ema");
   const selectedDef = STRATEGIES.find((d) => d.id === strategyId);
 
   const pickStrategy = (id: string) => {
     const def = STRATEGIES.find((d) => d.id === id);
-    if (!def || def.backtestable === false || optionsKind(def)) return;
+    if (!def || def.backtestable === false || optionsKind(def) || isBgrhStrategy(def.id)) return;
     setStrategyId(id);
-    // Us strategy ke apne parameters le aao, par market/window jaisa hai waisa rakho.
+    // Us strategy ke apne parameters le aao, par market/window aur SL/target jaisa hai waisa rakho.
     setParams((prev) => ({
       ...def.toBacktest(def.defaults),
       symbol: prev.symbol,
       timeframe: prev.timeframe,
       days: prev.days,
       lots: prev.lots,
+      sl_points: prev.sl_points,
+      target_points: prev.target_points,
     }));
   };
 
@@ -77,9 +83,7 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
         <div>
           <div className="trade-page-kicker">Simulation</div>
           <h2 className="trade-page-title">Backtest</h2>
-          <p className="trade-page-sub">
-            Strategy, risk aur window set karo — historical candles par run dekho.
-          </p>
+          <p className="trade-page-line">Strategy aur window set karo. Result purani candles par aata hai.</p>
         </div>
       </div>
 
@@ -104,11 +108,6 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
                 <option key={def.id} value={def.id}>{def.name}</option>
               ))}
             </select>
-            {selectedDef?.engineNote && (
-              <p className="text-[11.5px] mt-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                {selectedDef.engineNote}
-              </p>
-            )}
           </section>
 
           <section>
@@ -142,13 +141,16 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="trade-label" htmlFor="bt-sl">Stop loss · pts</label>
-                <input id="bt-sl" type="number" value={params.sl_points} onChange={(e) => set("sl_points", Number(e.target.value))} className="trade-input" />
+                <input id="bt-sl" type="number" min={0} value={params.sl_points} onChange={(e) => set("sl_points", Math.max(0, Number(e.target.value) || 0))} className="trade-input" />
               </div>
               <div>
                 <label className="trade-label" htmlFor="bt-target">Target · pts</label>
-                <input id="bt-target" type="number" value={params.target_points} onChange={(e) => set("target_points", Number(e.target.value))} className="trade-input" />
+                <input id="bt-target" type="number" min={0} value={params.target_points} onChange={(e) => set("target_points", Math.max(0, Number(e.target.value) || 0))} className="trade-input" />
               </div>
             </div>
+            <p className="text-[11.5px] mt-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+              0 = off. {isRange ? "Tab trade din ki aakhri candle par band hoti hai." : "Tab trade ulta crossover aane par band hoti hai."}
+            </p>
             {!isRange && (
               <label className="trade-checkrow mt-1">
                 <input type="checkbox" className="trade-check" checked={params.use_no_entry_window} onChange={(e) => set("use_no_entry_window", e.target.checked)} />
@@ -253,7 +255,7 @@ export default function BacktestPanel({ defaults, running, result, error, onRun 
           result={result}
           fallbackSymbol={params.symbol}
           fallbackTimeframe={params.timeframe}
-          emptyHint={<>Left panel se settings choose karke <b>Run backtest</b>{" "}dabao — trades, win rate aur P&amp;L yahan aayenge.</>}
+          emptyHint={<>Set settings on the left, then <b>Run backtest</b> — trades, win rate, and P&amp;L show here.</>}
         />
       </div>
     </div>

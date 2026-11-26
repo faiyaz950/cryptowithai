@@ -19,10 +19,10 @@ import { fmtINR, fmtPct } from "@/lib/portfolio";
 
 // Light surface palette for charts
 export const CHART_COLORS = {
-  profit: "#0ca678",
-  loss: "#e5484d",
-  stock: "#2563eb",
-  crypto: "#c98500",
+  profit: "#22c55e",
+  loss: "#ef4444",
+  stock: "#3b82f6",
+  crypto: "#f97316",
   mf: "var(--accent)",
   value: "var(--accent)",
   grid: "var(--border)",

@@ -9,6 +9,7 @@ import {
   type SpreadResponse,
 } from "@/lib/cryptoApi";
 import { num, str, type SignalTone, type StrategyDef, type StrategyValues } from "@/lib/strategies";
+import PayoffGraph from "@/components/trade/PayoffGraph";
 
 interface Props {
   def: StrategyDef;
@@ -48,10 +49,10 @@ export default function SpreadPanel({ def, values, tone }: Props) {
     setError(null);
     try {
       const res = await fetchOptionSpread({ underlying, optionType, width, longDelta, maxSpreadPct: maxSpread });
-      if (!res.success) throw new Error(res.error || "Spread load nahi hua");
+      if (!res.success) throw new Error(res.error || "Could not load spread");
       setData(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Spread load nahi hua");
+      setError(err instanceof Error ? err.message : "Could not load spread");
       setData(null);
     } finally {
       setLoading(false);
@@ -142,6 +143,21 @@ export default function SpreadPanel({ def, values, tone }: Props) {
                 </div>
               </div>
             </div>
+
+            {/* ── Payoff Graph ──────────────────────────── */}
+            {spread.spot != null && (
+              <PayoffGraph
+                type="spread"
+                spot={spread.spot}
+                longStrike={spread.long_leg.strike}
+                shortStrike={spread.short_leg.strike}
+                netDebit={spread.net_debit}
+                maxProfit={spread.max_profit}
+                breakeven={spread.breakeven}
+                isCall={isCall}
+                underlying={underlying}
+              />
+            )}
 
             {/* ── Net greeks ────────────────────────────── */}
             <div>

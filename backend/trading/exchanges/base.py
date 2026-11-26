@@ -133,6 +133,22 @@ class ExchangeAdapter:
     def cancel_order(self, order_id):
         return self.fail("order_not_supported")
 
+    # Strategy bot ka stop exchange par stop order ki tarah rehta hai. Jo adapter ye nahi
+    # deta, uspar live bot nahi chalta — stop sirf hamare server ke bharose nahi chhodte.
+    def place_stop_order(self, *, symbol, side, contracts, stop_price, client_order_id=None):
+        """Reduce-only stop-market. {order_id, state, stop_price, size, unfilled_size} ya None."""
+        return self.fail("order_not_supported")
+
+    def edit_stop_order(self, order_id, symbol, stop_price):
+        return self.fail("order_not_supported")
+
+    def cancel_stop_order(self, order_id, symbol):
+        return self.fail("order_not_supported")
+
+    def get_order(self, order_id):
+        """Ek order ki haalat — place_stop_order jaisa shape. Fail par None."""
+        return self.fail("order_not_supported")
+
     def pnl_history(self, start_ms: int, end_ms: int) -> Optional[List[Dict[str, Any]]]:
         """
         Beete dinon ka realized P&L: [{date, amount, asset}].

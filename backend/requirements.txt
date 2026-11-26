@@ -25,6 +25,7 @@ flask-cors>=3.0.0
 requests>=2.31.0
 pandas>=1.5.0
 websocket-client>=1.5.0
+ccxt>=4.0.0
 
 # ── Storage aur crypto ────────────────────────────────────
 django>=4.2,<5

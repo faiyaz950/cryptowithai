@@ -337,3 +337,43 @@ class DeltaAdapter(ExchangeAdapter):
     def cancel_order(self, order_id):
         result = self.client.cancel_order(order_id)
         return result if result else self._absorb_error()
+
+    # ── stop orders (strategy bot ka exchange-side stop) ──
+
+    @staticmethod
+    def _stop_row(r: Dict[str, Any], fallback_price=None) -> Dict[str, Any]:
+        return {
+            "order_id": str(r.get("id") or ""),
+            "state": str(r.get("state") or "").lower(),
+            "stop_price": fnum(r.get("stop_price")) or fallback_price,
+            "size": fnum(r.get("size")),
+            "unfilled_size": fnum(r.get("unfilled_size")),
+        }
+
+    def place_stop_order(self, *, symbol, side, contracts, stop_price, client_order_id=None):
+        raw = self.client.place_stop_order(symbol, side, contracts, stop_price, client_order_id=client_order_id)
+        r = raw.get("result") if isinstance(raw, dict) else None
+        if not isinstance(r, dict) or not r.get("id"):
+            return self._absorb_error()
+        self.clear_error()
+        return self._stop_row(r, stop_price)
+
+    def edit_stop_order(self, order_id, symbol, stop_price):
+        raw = self.client.edit_stop_order(order_id, symbol, stop_price)
+        r = raw.get("result") if isinstance(raw, dict) else None
+        if not isinstance(r, dict):
+            return self._absorb_error()
+        self.clear_error()
+        return self._stop_row(r, stop_price)
+
+    def cancel_stop_order(self, order_id, symbol):
+        result = self.client.cancel_order_by_id(order_id, symbol)
+        return result if result else self._absorb_error()
+
+    def get_order(self, order_id):
+        raw = self.client.get_order(order_id)
+        r = raw.get("result") if isinstance(raw, dict) else None
+        if not isinstance(r, dict):
+            return self._absorb_error()
+        self.clear_error()
+        return self._stop_row(r)

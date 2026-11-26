@@ -486,9 +486,9 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
           )
         );
       } else {
-        const errMsg = err instanceof Error ? err.message : "Kuch gadbad ho gayi. Dobara try karein.";
+        const errMsg = err instanceof Error ? err.message : "Something went wrong. Please try again.";
         const friendlyMsg = errMsg === "Failed to fetch"
-          ? "Backend connect nahi ho raha. backend/ folder mein server start karein (port 8000)."
+          ? "Cannot reach the backend. Start the server in the backend/ folder (port 8000)."
           : errMsg;
         setError(friendlyMsg);
         setConversations((prev) =>
@@ -640,12 +640,12 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
               onClick={() => router.push("/login")}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-sm font-semibold transition-all duration-150"
               style={{
-                background: "linear-gradient(135deg, #005a8e, #19a2dd)",
+                background: "linear-gradient(135deg, #c2410c, #f97316)",
                 color: "#ffffff",
-                boxShadow: "0 8px 20px rgba(25, 162, 221, 0.22)",
+                boxShadow: "0 8px 20px rgba(249, 115, 22, 0.22)",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 24px rgba(37, 99, 235, 0.28)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 8px 20px rgba(25, 162, 221, 0.22)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 8px 20px rgba(249, 115, 22, 0.22)"; }}
             >
               Login
             </button>
@@ -667,7 +667,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
               >
                 <div
                   className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                  style={{ background: "linear-gradient(135deg, #005a8e, #19a2dd)", color: "#ffffff" }}
+                  style={{ background: "linear-gradient(135deg, #c2410c, #f97316)", color: "#ffffff" }}
                 >
                   {user.avatar}
                 </div>
@@ -693,7 +693,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
                       <div className="flex items-center gap-3">
                         <div
                           className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-                          style={{ background: "linear-gradient(135deg, #005a8e, #19a2dd)", color: "#ffffff" }}
+                          style={{ background: "linear-gradient(135deg, #c2410c, #f97316)", color: "#ffffff" }}
                         >
                           {user.avatar}
                         </div>
@@ -707,7 +707,7 @@ export default function AiAssistant({ embedded = false }: AiAssistantProps) {
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium"
                           style={
                             user.plan === "pro"
-                              ? { background: "rgba(37, 99, 235, 0.1)", color: "var(--accent)", border: "1px solid rgba(25, 162, 221, 0.22)" }
+                              ? { background: "rgba(37, 99, 235, 0.1)", color: "var(--accent)", border: "1px solid rgba(249, 115, 22, 0.22)" }
                               : { background: "var(--bg-hover)", color: "var(--text-muted)" }
                           }
                         >

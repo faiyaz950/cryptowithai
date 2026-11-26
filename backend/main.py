@@ -40,6 +40,8 @@ os.environ["MERGED_BACKEND"] = "1"
 load_dotenv(BASE_DIR / ".env")
 
 from ai.main import app  # noqa: E402  — FastAPI app, CORS aur routes ke saath
+import backend_api  # noqa: E402
+import bot_worker  # noqa: E402
 from backend_api import app as trading_app  # noqa: E402  — Flask app (trading/ se)
 
 try:
@@ -49,5 +51,11 @@ except ImportError:  # pragma: no cover - fallback for older installs
 
 # Sabse aakhir mein mount — taaki FastAPI ke apne routes pehle match hon.
 app.mount("/", WSGIMiddleware(trading_app))
+
+# Strategy bots ka executor — server process ke saath chalta hai, browser tab ke saath nahi.
+# Import par nahi, startup par: tests/scripts jo sirf `main` import karein unme orders na lagein.
+# Band karna ho to BOT_WORKER=0.
+app.add_event_handler("startup", lambda: bot_worker.start(backend_api))
+app.add_event_handler("shutdown", bot_worker.stop)
 
 __all__ = ["app"]
